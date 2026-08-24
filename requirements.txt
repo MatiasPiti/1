@@ -1,0 +1,13 @@
+# Núcleo (todas las apps)
+requests>=2.31
+
+# Panel del Dueño: gráficos, PDF, Excel
+matplotlib>=3.8
+pdfplumber>=0.10
+openpyxl>=3.1
+
+# Empaquetado a .exe portable
+pyinstaller>=6.3
+
+# Servicio real de Windows (solo services/stock_windows_service.py, Windows)
+pywin32>=306; sys_platform == "win32"
