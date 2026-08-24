@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+database/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+SYNC_DATA/
+logs/
+build/dist/
+dist/
+*.spec.bak
+config.ini
+.venv/
+venv/
