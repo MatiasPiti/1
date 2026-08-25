@@ -9,6 +9,22 @@ o G:. Esto es lo que permite que el mismo USB funcione en cualquier PC.
 import os
 import sys
 
+_base_override = None
+
+
+def set_base_override(path: str) -> None:
+    """Fuerza la 'carpeta base' de la app a un valor explícito.
+
+    Lo usan los 3 ejecutables del Sistema Maestro (Caja, Dueño y el
+    Servicio oculto de stock) para apuntar los tres a la MISMA
+    database/config/logs, aunque cada uno viva en su propia subcarpeta
+    de instalación (así lo genera PyInstaller --onedir: un exe por
+    carpeta). Los USBs de emergencia NUNCA llaman a esto: cada uno debe
+    seguir siendo autocontenido en su propia carpeta portable.
+    """
+    global _base_override
+    _base_override = path
+
 
 def get_base_path() -> str:
     """Devuelve la carpeta base de la aplicación en ejecución.
@@ -22,9 +38,23 @@ def get_base_path() -> str:
     - Si corre como script .py normal (desarrollo), usamos la carpeta del
       archivo que se está ejecutando.
     """
+    if _base_override:
+        return _base_override
     if getattr(sys, "frozen", False):
         return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.abspath(sys.argv[0]))
+
+
+def set_base_override_to_parent_dir() -> None:
+    """Atajo: usa la carpeta PADRE de donde vive este ejecutable como
+    base compartida. Es la convención de instalación del Maestro:
+    C:\\SistemaDual\\MaestroCaja\\MaestroCaja.exe
+    C:\\SistemaDual\\MaestroDueno\\MaestroDueno.exe
+    C:\\SistemaDual\\StockService\\StockService.exe
+    Los tres, aplicando esto, terminan compartiendo C:\\SistemaDual\\database\\stock.db.
+    """
+    actual = get_base_path()
+    set_base_override(os.path.dirname(actual))
 
 
 def get_resource_path(relative_path: str) -> str:

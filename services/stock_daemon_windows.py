@@ -18,13 +18,21 @@ Caja se cerró de golpe justo después de grabar el ticket).
 """
 
 import logging
+import os
 import sys
 import time
 
+from pos_core.paths import logs_dir, set_base_override_to_parent_dir
+
+# Este demonio SIEMPRE es parte del Maestro (nunca corre en un USB), y
+# tiene que apuntar a la MISMA database/ que Caja y Dueño Maestro (ver
+# apps/master_caja/main.py y apps/master_dueno/main.py). Se aplica acá
+# arriba de todo, antes de calcular logs_dir()/init_db(), porque este
+# módulo también se importa como librería desde stock_windows_service.py.
+set_base_override_to_parent_dir()
+
 from pos_core.db import get_connection, init_db
-from pos_core.paths import logs_dir
 from pos_core import stock_service
-import os
 
 logging.basicConfig(
     filename=os.path.join(logs_dir(), "stock_daemon.log"),

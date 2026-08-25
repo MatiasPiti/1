@@ -382,5 +382,8 @@ class AppDueno(tk.Tk):
 
 
 if __name__ == "__main__":
+    from pos_core.paths import set_base_override_to_parent_dir
+    # Caja y Dueño Maestro comparten UNA sola DB (carpeta padre de instalación).
+    set_base_override_to_parent_dir()
     init_db()
     AppDueno().mainloop()
