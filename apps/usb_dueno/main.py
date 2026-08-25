@@ -26,7 +26,7 @@ maestro_mod.USUARIO = os.environ.get("USERNAME", "dueño_emergencia")
 class AppUsbDueno(maestro_mod.AppDueno):
     def __init__(self):
         super().__init__()
-        self.title("Panel del Dueño - USB EMERGENCIA")
+        self.title("Otter Dueño (Emergencia)")
 
         # el módulo oculto de conciliación es exclusivo del Sistema Maestro
         self.unbind_all("<Control-Shift-M>")

@@ -27,7 +27,7 @@ class AppUsbCaja(tk.Tk):
     def __init__(self):
         super().__init__()
         aplicar_tema(self)
-        self.title("Caja - USB EMERGENCIA")
+        self.title("Otter Caja (Emergencia)")
         self.geometry("980x800")
         self.carrito = []
         self.carrito_seleccionado = None

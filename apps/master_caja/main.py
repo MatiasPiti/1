@@ -29,7 +29,7 @@ class AppCaja(tk.Tk):
     def __init__(self):
         super().__init__()
         aplicar_tema(self)
-        self.title("Caja - Sistema Maestro")
+        self.title("Otter Caja")
         self.geometry("980x760")
         self.carrito = []  # list[{codigo,nombre,cantidad,precio_unitario}]
         self.carrito_seleccionado = None  # código de la línea elegida para "Quitar línea"

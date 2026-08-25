@@ -12,36 +12,37 @@ REM Windows es comun que pip instale el .exe en una carpeta Scripts que no
 REM esta en el PATH; invocandolo como modulo de Python siempre funciona,
 REM sin depender de esa configuracion.
 set PYI=python -m PyInstaller --noconfirm --clean --onedir --windowed
-set DATA=--add-data "sql\schema.sql;sql"
+set DATA=--add-data "sql\schema.sql;sql" --add-data "apps\assets;apps\assets"
+set ICON=--icon apps\assets\logo_otter.ico
 
 echo.
-echo === 1/5 Sistema Maestro - Caja ===
-%PYI% %DATA% --name MaestroCaja --paths . apps\master_caja\main.py
+echo === 1/5 Otter Caja ===
+%PYI% %DATA% %ICON% --name MaestroCaja --paths . apps\master_caja\main.py
 
 echo.
-echo === 2/5 Sistema Maestro - Panel del Dueno ===
-%PYI% %DATA% --name MaestroDueno --paths . ^
+echo === 2/5 Otter Dueno ===
+%PYI% %DATA% %ICON% --name MaestroDueno --paths . ^
     --hidden-import matplotlib.backends.backend_tkagg ^
     apps\master_dueno\main.py
 
 echo.
 echo === 3/5 USB Caja (emergencia) ===
-%PYI% %DATA% --name USB_Caja --paths . apps\usb_caja\main.py
+%PYI% %DATA% %ICON% --name USB_Caja --paths . apps\usb_caja\main.py
 
 echo.
 echo === 4/5 USB Dueno (emergencia) ===
-%PYI% %DATA% --name USB_Dueno --paths . ^
+%PYI% %DATA% %ICON% --name USB_Dueno --paths . ^
     --hidden-import matplotlib.backends.backend_tkagg ^
     apps\usb_dueno\main.py
 
 echo.
 echo === 5/5 USB Mantenimiento (Desarrollador) ===
-%PYI% %DATA% --name USB_Mantenimiento --paths . apps\usb_dev\mantenimiento.py
+%PYI% %DATA% %ICON% --name USB_Mantenimiento --paths . apps\usb_dev\mantenimiento.py
 
 echo.
 echo === Servicio oculto de stock (Windows Service, consola oculta) ===
 REM --noconsole = pythonw.exe embebido, sin ventana visible.
-python -m PyInstaller --noconfirm --clean --onedir --noconsole %DATA% ^
+python -m PyInstaller --noconfirm --clean --onedir --noconsole %DATA% %ICON% ^
     --name StockService --paths . ^
     --hidden-import win32timezone ^
     services\stock_windows_service.py

@@ -6,8 +6,13 @@ Uso: `from apps.theme import aplicar_tema; aplicar_tema(self)` como
 primera línea del __init__ de la ventana principal.
 """
 
+import os
 import tkinter as tk
 from tkinter import ttk
+
+NOMBRE_PRODUCTO = "Otter"
+_ICONO_RUTA = os.path.join("apps", "assets", "logo_otter_128.png")
+_icono_cache = None  # PhotoImage: hay que mantener una referencia viva o Tk la descarta
 
 COLORS = {
     "bg": "#F6F7FB",
@@ -29,8 +34,24 @@ COLORS = {
 FONT_FAMILY = "Segoe UI"
 
 
+def set_icon(root: tk.Misc) -> None:
+    """Pone el logo de Otter como ícono de la ventana (esquina y barra de
+    tareas). Si por algún motivo no se encuentra el archivo, la app sigue
+    funcionando igual sin ícono — nunca debe romper el arranque por esto.
+    """
+    global _icono_cache
+    try:
+        from pos_core.paths import get_resource_path
+        if _icono_cache is None:
+            _icono_cache = tk.PhotoImage(file=get_resource_path(_ICONO_RUTA))
+        root.iconphoto(True, _icono_cache)
+    except Exception:
+        pass
+
+
 def aplicar_tema(root: tk.Misc) -> ttk.Style:
     root.configure(background=COLORS["bg"])
+    set_icon(root)
     style = ttk.Style(root)
     try:
         style.theme_use("clam")  # base que sí respeta colores custom en Windows

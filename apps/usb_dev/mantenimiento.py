@@ -140,7 +140,7 @@ class AppMantenimiento(tk.Tk):
     def __init__(self):
         super().__init__()
         aplicar_tema(self)
-        self.title("Herramienta de Mantenimiento - USB Desarrollador")
+        self.title("Otter Mantenimiento")
         self.geometry("750x550")
 
         top = tk.Frame(self, padx=8, pady=8)

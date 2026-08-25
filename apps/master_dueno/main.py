@@ -27,7 +27,7 @@ class AppDueno(tk.Tk):
     def __init__(self):
         super().__init__()
         aplicar_tema(self)
-        self.title("Panel del Dueño - Sistema Maestro")
+        self.title("Otter Dueño")
         self.geometry("1180x760")
 
         # Estado del filtro que se está armando/editando en la pestaña de

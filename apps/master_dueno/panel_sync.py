@@ -37,7 +37,7 @@ class PanelSincronizacion(tk.Toplevel):
     def __init__(self, master):
         super().__init__(master)
         aplicar_tema(self)
-        self.title("[DEV] Sincronización y Conciliación")
+        self.title("Otter [DEV] Sincronización y Conciliación")
         self.geometry("800x600")
         self.grab_set()
 
