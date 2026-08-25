@@ -3,6 +3,11 @@
 Pantalla de cobro: buscar producto por código/nombre, armar carrito,
 cobrar. El stock NUNCA se muestra ni se puede editar desde acá
 (requisito "Stock Invisible").
+
+El carrito se pensó para que lo pueda leer con comodidad el cliente
+parado frente al mostrador: nombre del producto en mayúsculas y
+negrita, subtotal en negrita y más grande que el resto, y el total en
+un cartel grande de alto contraste.
 """
 
 import os
@@ -14,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from pos_core.db import init_db
 from pos_core import sales
-from apps.theme import aplicar_tema, estriar_treeview, tag_fila
+from apps.theme import COLORS, aplicar_tema, estriar_treeview, tag_fila
 
 ORIGEN = "MAESTRO"
 USUARIO = os.environ.get("USERNAME", "cajero")
@@ -25,8 +30,9 @@ class AppCaja(tk.Tk):
         super().__init__()
         aplicar_tema(self)
         self.title("Caja - Sistema Maestro")
-        self.geometry("960x640")
+        self.geometry("980x760")
         self.carrito = []  # list[{codigo,nombre,cantidad,precio_unitario}]
+        self.carrito_seleccionado = None  # código de la línea elegida para "Quitar línea"
 
         self._construir_ui()
         self.buscador.focus_set()
@@ -45,7 +51,7 @@ class AppCaja(tk.Tk):
         cuerpo = ttk.Frame(self, padding=(16, 0))
         cuerpo.pack(fill="both", expand=True)
 
-        self.resultados = ttk.Treeview(cuerpo, columns=("codigo", "nombre", "precio"), show="headings", height=6)
+        self.resultados = ttk.Treeview(cuerpo, columns=("codigo", "nombre", "precio"), show="headings", height=5)
         for col, txt, w in [("codigo", "Código", 130), ("nombre", "Nombre", 420), ("precio", "Precio", 110)]:
             self.resultados.heading(col, text=txt)
             self.resultados.column(col, width=w)
@@ -54,19 +60,18 @@ class AppCaja(tk.Tk):
         self.resultados.bind("<Double-1>", self._agregar_al_carrito)
 
         ttk.Label(cuerpo, text="Carrito", style="Header.TLabel").pack(anchor="w", pady=(0, 6))
-        self.carrito_tree = ttk.Treeview(
-            cuerpo, columns=("codigo", "nombre", "cant", "precio", "subtotal"), show="headings", height=11)
-        for col, txt, w in [("codigo", "Código", 110), ("nombre", "Nombre", 340),
-                             ("cant", "Cant.", 70), ("precio", "P. Unit.", 100), ("subtotal", "Subtotal", 110)]:
-            self.carrito_tree.heading(col, text=txt)
-            self.carrito_tree.column(col, width=w)
-        estriar_treeview(self.carrito_tree)
-        self.carrito_tree.pack(fill="both", expand=True)
+        self._armar_grilla_carrito(cuerpo)
 
         bottom = ttk.Frame(self, padding=16, style="Card.TFrame")
         bottom.pack(fill="x", side="bottom")
-        self.lbl_total = ttk.Label(bottom, text="TOTAL: $0.00", style="Total.TLabel")
-        self.lbl_total.pack(side="left")
+
+        total_box = tk.Frame(bottom, bg=COLORS["accent"])
+        total_box.pack(side="left")
+        tk.Label(total_box, text="TOTAL A PAGAR", bg=COLORS["accent"], fg="white",
+                 font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=20, pady=(10, 0))
+        self.lbl_total = tk.Label(total_box, text="$0.00", bg=COLORS["accent"], fg="white",
+                                   font=("Segoe UI", 30, "bold"))
+        self.lbl_total.pack(anchor="w", padx=20, pady=(0, 12))
 
         ttk.Label(bottom, text="Pago:").pack(side="left", padx=(28, 6))
         self.metodo_pago = ttk.Combobox(bottom, values=["EFECTIVO", "TARJETA", "TRANSFERENCIA", "MIXTO"],
@@ -79,11 +84,70 @@ class AppCaja(tk.Tk):
                    ).pack(side="right", padx=4)
         self.bind("<F12>", lambda e: self._cobrar())
 
+    # ------------------------------------------------------------------ #
+    # Grilla del carrito armada a mano (Treeview no permite negrita en
+    # una sola columna manteniendo el resto normal dentro de la misma fila)
+    # ------------------------------------------------------------------ #
+    def _armar_grilla_carrito(self, parent):
+        contenedor = ttk.Frame(parent)
+        contenedor.pack(fill="both", expand=True, pady=(0, 4))
+
+        canvas = tk.Canvas(contenedor, bg=COLORS["surface"], highlightthickness=1,
+                            highlightbackground=COLORS["border"])
+        vsb = ttk.Scrollbar(contenedor, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+
+        self.carrito_grid = tk.Frame(canvas, bg=COLORS["surface"])
+        canvas.create_window((0, 0), window=self.carrito_grid, anchor="nw")
+        self.carrito_grid.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        self.carrito_grid.grid_columnconfigure(1, weight=1)
+
+        encabezados = [("CÓDIGO", "w"), ("PRODUCTO", "w"), ("CANT.", "center"), ("P. UNIT.", "e"), ("SUBTOTAL", "e")]
+        for col, (texto, anchor) in enumerate(encabezados):
+            tk.Label(self.carrito_grid, text=texto, bg=COLORS["accent"], fg="white",
+                     font=("Segoe UI", 10, "bold"), padx=10, pady=8, anchor=anchor
+                     ).grid(row=0, column=col, sticky="nsew")
+
+    def _refrescar_grilla_carrito(self):
+        for w in list(self.carrito_grid.grid_slaves()):
+            if int(w.grid_info()["row"]) > 0:
+                w.destroy()
+
+        total = 0.0
+        for i, item in enumerate(self.carrito, start=1):
+            subtotal = item["cantidad"] * item["precio_unitario"]
+            total += subtotal
+            seleccionada = item["codigo"] == self.carrito_seleccionado
+            bg = COLORS["accent_light"] if seleccionada else (COLORS["stripe"] if i % 2 == 0 else COLORS["surface"])
+
+            celdas = [
+                (item["codigo"], ("Segoe UI", 10), COLORS["muted"], "w"),
+                (item["nombre"].upper(), ("Segoe UI", 12, "bold"), COLORS["text"], "w"),
+                (str(item["cantidad"]), ("Segoe UI", 11), COLORS["text"], "center"),
+                (f"${item['precio_unitario']:.2f}", ("Segoe UI", 10), COLORS["muted"], "e"),
+                (f"${subtotal:.2f}", ("Segoe UI", 15, "bold"), COLORS["accent"], "e"),
+            ]
+            for col, (texto, font, color, anchor) in enumerate(celdas):
+                lbl = tk.Label(self.carrito_grid, text=texto, bg=bg, fg=color, font=font,
+                               padx=10, pady=7, anchor=anchor)
+                lbl.grid(row=i, column=col, sticky="nsew")
+                lbl.bind("<Button-1>", lambda e, c=item["codigo"]: self._seleccionar_linea(c))
+
+        self.lbl_total.config(text=f"${total:.2f}")
+        return total
+
+    def _seleccionar_linea(self, codigo):
+        self.carrito_seleccionado = codigo
+        self._refrescar_grilla_carrito()
+
+    # ------------------------------------------------------------------ #
     def _refrescar_resultados(self, productos):
         for row in self.resultados.get_children():
             self.resultados.delete(row)
         for i, p in enumerate(productos):
-            self.resultados.insert("", "end", values=(p["codigo"], p["nombre"], f"{p['precio_venta']:.2f}"),
+            self.resultados.insert("", "end", values=(p["codigo"], p["nombre"].upper(), f"{p['precio_venta']:.2f}"),
                                     tags=(tag_fila(i),))
 
     def _on_buscar(self, event=None):
@@ -116,27 +180,16 @@ class AppCaja(tk.Tk):
                 break
         else:
             self.carrito.append({"codigo": codigo, "nombre": nombre, "cantidad": 1, "precio_unitario": precio})
-        self._refrescar_carrito()
+        self._refrescar_grilla_carrito()
 
     def _quitar_linea(self):
-        sel = self.carrito_tree.selection()
-        if not sel:
+        if not self.carrito_seleccionado:
+            messagebox.showinfo("Elegí un producto",
+                                 "Hacé clic sobre una línea del carrito y después presioná 'Quitar línea'.")
             return
-        codigo = self.carrito_tree.item(sel[0], "values")[0]
-        self.carrito = [i for i in self.carrito if i["codigo"] != codigo]
-        self._refrescar_carrito()
-
-    def _refrescar_carrito(self):
-        for row in self.carrito_tree.get_children():
-            self.carrito_tree.delete(row)
-        total = 0.0
-        for i, item in enumerate(self.carrito):
-            subtotal = item["cantidad"] * item["precio_unitario"]
-            total += subtotal
-            self.carrito_tree.insert("", "end", values=(
-                item["codigo"], item["nombre"], item["cantidad"],
-                f"{item['precio_unitario']:.2f}", f"{subtotal:.2f}"), tags=(tag_fila(i),))
-        self.lbl_total.config(text=f"TOTAL: ${total:.2f}")
+        self.carrito = [i for i in self.carrito if i["codigo"] != self.carrito_seleccionado]
+        self.carrito_seleccionado = None
+        self._refrescar_grilla_carrito()
 
     def _cobrar(self):
         if not self.carrito:
@@ -159,7 +212,8 @@ class AppCaja(tk.Tk):
             messagebox.showinfo("Venta cobrada", f"Ticket {resultado['venta_uuid'][:8]}... "
                                                   f"por ${resultado['total']:.2f}")
         self.carrito = []
-        self._refrescar_carrito()
+        self.carrito_seleccionado = None
+        self._refrescar_grilla_carrito()
         self.buscador.delete(0, "end")
         self.buscador.focus_set()
 

@@ -28,8 +28,9 @@ class AppUsbCaja(tk.Tk):
         super().__init__()
         aplicar_tema(self)
         self.title("Caja - USB EMERGENCIA")
-        self.geometry("960x680")
+        self.geometry("980x800")
         self.carrito = []
+        self.carrito_seleccionado = None
 
         banner = tk.Label(self, text="⚠  MODO EMERGENCIA PORTÁTIL - DATOS NO SINCRONIZADOS  ⚠",
                            bg=COLORS["danger"], fg="white", font=("Segoe UI", 12, "bold"), pady=8)
@@ -54,7 +55,7 @@ class AppUsbCaja(tk.Tk):
         cuerpo = ttk.Frame(self, padding=(16, 0))
         cuerpo.pack(fill="both", expand=True)
 
-        self.resultados = ttk.Treeview(cuerpo, columns=("codigo", "nombre", "precio"), show="headings", height=6)
+        self.resultados = ttk.Treeview(cuerpo, columns=("codigo", "nombre", "precio"), show="headings", height=5)
         for col, txt, w in [("codigo", "Código", 130), ("nombre", "Nombre", 420), ("precio", "Precio", 110)]:
             self.resultados.heading(col, text=txt)
             self.resultados.column(col, width=w)
@@ -62,31 +63,89 @@ class AppUsbCaja(tk.Tk):
         self.resultados.pack(fill="x", pady=(4, 12))
         self.resultados.bind("<Double-1>", self._agregar_al_carrito)
 
-        self.carrito_tree = ttk.Treeview(
-            cuerpo, columns=("codigo", "nombre", "cant", "precio", "subtotal"), show="headings", height=11)
-        for col, txt, w in [("codigo", "Código", 100), ("nombre", "Nombre", 320),
-                             ("cant", "Cant.", 60), ("precio", "P. Unit.", 90), ("subtotal", "Subtotal", 100)]:
-            self.carrito_tree.heading(col, text=txt)
-            self.carrito_tree.column(col, width=w)
-        estriar_treeview(self.carrito_tree)
-        self.carrito_tree.pack(fill="both", expand=True)
+        ttk.Label(cuerpo, text="Carrito", style="Header.TLabel").pack(anchor="w", pady=(0, 6))
+        self._armar_grilla_carrito(cuerpo)
 
         bottom = ttk.Frame(self, padding=16, style="Card.TFrame")
         bottom.pack(fill="x", side="bottom")
-        self.lbl_total = ttk.Label(bottom, text="TOTAL: $0.00", style="Total.TLabel")
-        self.lbl_total.pack(side="left")
+
+        total_box = tk.Frame(bottom, bg=COLORS["accent"])
+        total_box.pack(side="left")
+        tk.Label(total_box, text="TOTAL A PAGAR", bg=COLORS["accent"], fg="white",
+                 font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=20, pady=(10, 0))
+        self.lbl_total = tk.Label(total_box, text="$0.00", bg=COLORS["accent"], fg="white",
+                                   font=("Segoe UI", 30, "bold"))
+        self.lbl_total.pack(anchor="w", padx=20, pady=(0, 12))
+
         self.metodo_pago = ttk.Combobox(bottom, values=["EFECTIVO", "TARJETA", "TRANSFERENCIA", "MIXTO"],
                                          state="readonly", width=15)
         self.metodo_pago.set("EFECTIVO")
         self.metodo_pago.pack(side="left", padx=16)
+        ttk.Button(bottom, text="Quitar línea", command=self._quitar_linea).pack(side="right", padx=4)
         ttk.Button(bottom, text="COBRAR (F12)", style="Accent.TButton", command=self._cobrar).pack(side="right")
         self.bind("<F12>", lambda e: self._cobrar())
 
+    # ------------------------------------------------------------------ #
+    def _armar_grilla_carrito(self, parent):
+        contenedor = ttk.Frame(parent)
+        contenedor.pack(fill="both", expand=True, pady=(0, 4))
+
+        canvas = tk.Canvas(contenedor, bg=COLORS["surface"], highlightthickness=1,
+                            highlightbackground=COLORS["border"])
+        vsb = ttk.Scrollbar(contenedor, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+
+        self.carrito_grid = tk.Frame(canvas, bg=COLORS["surface"])
+        canvas.create_window((0, 0), window=self.carrito_grid, anchor="nw")
+        self.carrito_grid.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        self.carrito_grid.grid_columnconfigure(1, weight=1)
+
+        encabezados = [("CÓDIGO", "w"), ("PRODUCTO", "w"), ("CANT.", "center"), ("P. UNIT.", "e"), ("SUBTOTAL", "e")]
+        for col, (texto, anchor) in enumerate(encabezados):
+            tk.Label(self.carrito_grid, text=texto, bg=COLORS["accent"], fg="white",
+                     font=("Segoe UI", 10, "bold"), padx=10, pady=8, anchor=anchor
+                     ).grid(row=0, column=col, sticky="nsew")
+
+    def _refrescar_grilla_carrito(self):
+        for w in list(self.carrito_grid.grid_slaves()):
+            if int(w.grid_info()["row"]) > 0:
+                w.destroy()
+
+        total = 0.0
+        for i, item in enumerate(self.carrito, start=1):
+            subtotal = item["cantidad"] * item["precio_unitario"]
+            total += subtotal
+            seleccionada = item["codigo"] == self.carrito_seleccionado
+            bg = COLORS["accent_light"] if seleccionada else (COLORS["stripe"] if i % 2 == 0 else COLORS["surface"])
+
+            celdas = [
+                (item["codigo"], ("Segoe UI", 10), COLORS["muted"], "w"),
+                (item["nombre"].upper(), ("Segoe UI", 12, "bold"), COLORS["text"], "w"),
+                (str(item["cantidad"]), ("Segoe UI", 11), COLORS["text"], "center"),
+                (f"${item['precio_unitario']:.2f}", ("Segoe UI", 10), COLORS["muted"], "e"),
+                (f"${subtotal:.2f}", ("Segoe UI", 15, "bold"), COLORS["accent"], "e"),
+            ]
+            for col, (texto, font, color, anchor) in enumerate(celdas):
+                lbl = tk.Label(self.carrito_grid, text=texto, bg=bg, fg=color, font=font,
+                               padx=10, pady=7, anchor=anchor)
+                lbl.grid(row=i, column=col, sticky="nsew")
+                lbl.bind("<Button-1>", lambda e, c=item["codigo"]: self._seleccionar_linea(c))
+
+        self.lbl_total.config(text=f"${total:.2f}")
+        return total
+
+    def _seleccionar_linea(self, codigo):
+        self.carrito_seleccionado = codigo
+        self._refrescar_grilla_carrito()
+
+    # ------------------------------------------------------------------ #
     def _refrescar_resultados(self, productos):
         for row in self.resultados.get_children():
             self.resultados.delete(row)
         for i, p in enumerate(productos):
-            self.resultados.insert("", "end", values=(p["codigo"], p["nombre"], f"{p['precio_venta']:.2f}"),
+            self.resultados.insert("", "end", values=(p["codigo"], p["nombre"].upper(), f"{p['precio_venta']:.2f}"),
                                     tags=(tag_fila(i),))
 
     def _on_buscar(self, event=None):
@@ -116,19 +175,16 @@ class AppUsbCaja(tk.Tk):
                 break
         else:
             self.carrito.append({"codigo": codigo, "nombre": nombre, "cantidad": 1, "precio_unitario": precio})
-        self._refrescar_carrito()
+        self._refrescar_grilla_carrito()
 
-    def _refrescar_carrito(self):
-        for row in self.carrito_tree.get_children():
-            self.carrito_tree.delete(row)
-        total = 0.0
-        for i, item in enumerate(self.carrito):
-            subtotal = item["cantidad"] * item["precio_unitario"]
-            total += subtotal
-            self.carrito_tree.insert("", "end", values=(
-                item["codigo"], item["nombre"], item["cantidad"],
-                f"{item['precio_unitario']:.2f}", f"{subtotal:.2f}"), tags=(tag_fila(i),))
-        self.lbl_total.config(text=f"TOTAL: ${total:.2f}")
+    def _quitar_linea(self):
+        if not self.carrito_seleccionado:
+            messagebox.showinfo("Elegí un producto",
+                                 "Hacé clic sobre una línea del carrito y después presioná 'Quitar línea'.")
+            return
+        self.carrito = [i for i in self.carrito if i["codigo"] != self.carrito_seleccionado]
+        self.carrito_seleccionado = None
+        self._refrescar_grilla_carrito()
 
     def _cobrar(self):
         if not self.carrito:
@@ -144,7 +200,8 @@ class AppUsbCaja(tk.Tk):
                              f"Ticket {resultado['venta_uuid'][:8]}... por ${resultado['total']:.2f}\n"
                              f"Recordá 'Preparar sincronización' antes de sacar el USB.")
         self.carrito = []
-        self._refrescar_carrito()
+        self.carrito_seleccionado = None
+        self._refrescar_grilla_carrito()
         self.buscador.delete(0, "end")
         self.buscador.focus_set()
 
