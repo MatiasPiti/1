@@ -47,12 +47,43 @@ def _construir_sql(nodo: dict) -> tuple:
 
 
 def aplicar_filtro(definicion: dict) -> list:
+    """Aplica un filtro guardado. Soporta dos tipos de definición:
+    - {"tipo": "manual", "codigos": [...]}: el dueño eligió a mano,
+      producto por producto, qué entra en el filtro (sin depender de
+      ningún campo en común entre ellos).
+    - árbol AND/OR de condiciones (formato legado, ver _construir_sql):
+      sigue funcionando para quien lo haya guardado antes.
+    """
+    if definicion.get("tipo") == "manual":
+        codigos = definicion.get("codigos", [])
+        if not codigos:
+            return []
+        conn = get_connection()
+        placeholders = ",".join("?" for _ in codigos)
+        rows = conn.execute(
+            f"SELECT * FROM Productos WHERE activo = 1 AND codigo IN ({placeholders})", codigos
+        ).fetchall()
+        # se preserva el orden en que el dueño los eligió, no el de la DB
+        por_codigo = {r["codigo"]: dict(r) for r in rows}
+        return [por_codigo[c] for c in codigos if c in por_codigo]
+
     where_sql, params = _construir_sql(definicion)
     conn = get_connection()
     rows = conn.execute(
         f"SELECT * FROM Productos WHERE activo = 1 AND ({where_sql})", params
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def guardar_filtro_manual(nombre: str, codigos: list) -> None:
+    """Crea/actualiza un filtro con una lista explícita de productos,
+    elegidos uno por uno por el dueño desde la grilla de selección."""
+    guardar_filtro(nombre, {"tipo": "manual", "codigos": list(codigos)})
+
+
+def eliminar_filtro(nombre: str) -> None:
+    with transaction() as conn:
+        conn.execute("DELETE FROM Filtros_Guardados WHERE nombre = ?", (nombre,))
 
 
 def guardar_filtro(nombre: str, definicion: dict) -> None:

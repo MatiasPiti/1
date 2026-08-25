@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from pos_core.db import init_db
 from pos_core import sales, sync_export
-from pos_core.paths import get_base_path
+from apps.theme import COLORS, aplicar_tema, estriar_treeview, tag_fila
 
 ORIGEN = "USB_CAJA"
 USUARIO = os.environ.get("USERNAME", "cajero_emergencia")
@@ -26,70 +26,90 @@ USUARIO = os.environ.get("USERNAME", "cajero_emergencia")
 class AppUsbCaja(tk.Tk):
     def __init__(self):
         super().__init__()
+        aplicar_tema(self)
         self.title("Caja - USB EMERGENCIA")
-        self.geometry("900x650")
+        self.geometry("960x680")
         self.carrito = []
 
-        banner = tk.Label(self, text="⚠ MODO EMERGENCIA PORTÁTIL - DATOS NO SINCRONIZADOS ⚠",
-                           bg="#c0392b", fg="white", font=("", 12, "bold"), pady=6)
+        banner = tk.Label(self, text="⚠  MODO EMERGENCIA PORTÁTIL - DATOS NO SINCRONIZADOS  ⚠",
+                           bg=COLORS["danger"], fg="white", font=("Segoe UI", 12, "bold"), pady=8)
         banner.pack(fill="x")
 
         self._construir_ui()
         self.buscador.focus_set()
 
     def _construir_ui(self):
-        top = ttk.Frame(self, padding=8)
+        top = ttk.Frame(self, padding=(16, 14))
         top.pack(fill="x")
-        ttk.Label(top, text="Buscar (código o nombre):").pack(side="left")
-        self.buscador = ttk.Entry(top, width=40)
-        self.buscador.pack(side="left", padx=6)
+        fila = ttk.Frame(top)
+        fila.pack(fill="x")
+        ttk.Label(fila, text="Buscar o escanear:").pack(side="left")
+        self.buscador = ttk.Entry(fila, width=40, font=("Segoe UI", 12))
+        self.buscador.pack(side="left", padx=8, ipady=3)
         self.buscador.bind("<Return>", self._on_buscar)
-        ttk.Button(top, text="Buscar", command=self._on_buscar).pack(side="left")
-        ttk.Button(top, text="Preparar sincronización", command=self._preparar_sync
+        ttk.Button(fila, text="Buscar", command=self._on_buscar).pack(side="left")
+        ttk.Button(fila, text="Preparar sincronización", command=self._preparar_sync
                    ).pack(side="right")
 
-        self.resultados = ttk.Treeview(self, columns=("codigo", "nombre", "precio"), show="headings", height=6)
-        for col, txt, w in [("codigo", "Código", 120), ("nombre", "Nombre", 400), ("precio", "Precio", 100)]:
+        cuerpo = ttk.Frame(self, padding=(16, 0))
+        cuerpo.pack(fill="both", expand=True)
+
+        self.resultados = ttk.Treeview(cuerpo, columns=("codigo", "nombre", "precio"), show="headings", height=6)
+        for col, txt, w in [("codigo", "Código", 130), ("nombre", "Nombre", 420), ("precio", "Precio", 110)]:
             self.resultados.heading(col, text=txt)
             self.resultados.column(col, width=w)
-        self.resultados.pack(fill="x", padx=8)
+        estriar_treeview(self.resultados)
+        self.resultados.pack(fill="x", pady=(4, 12))
         self.resultados.bind("<Double-1>", self._agregar_al_carrito)
 
-        ttk.Separator(self).pack(fill="x", pady=6)
         self.carrito_tree = ttk.Treeview(
-            self, columns=("codigo", "nombre", "cant", "precio", "subtotal"), show="headings", height=12)
+            cuerpo, columns=("codigo", "nombre", "cant", "precio", "subtotal"), show="headings", height=11)
         for col, txt, w in [("codigo", "Código", 100), ("nombre", "Nombre", 320),
                              ("cant", "Cant.", 60), ("precio", "P. Unit.", 90), ("subtotal", "Subtotal", 100)]:
             self.carrito_tree.heading(col, text=txt)
             self.carrito_tree.column(col, width=w)
-        self.carrito_tree.pack(fill="both", expand=True, padx=8)
+        estriar_treeview(self.carrito_tree)
+        self.carrito_tree.pack(fill="both", expand=True)
 
-        bottom = ttk.Frame(self, padding=8)
-        bottom.pack(fill="x")
-        self.lbl_total = ttk.Label(bottom, text="TOTAL: $0.00", font=("", 16, "bold"))
+        bottom = ttk.Frame(self, padding=16, style="Card.TFrame")
+        bottom.pack(fill="x", side="bottom")
+        self.lbl_total = ttk.Label(bottom, text="TOTAL: $0.00", style="Total.TLabel")
         self.lbl_total.pack(side="left")
         self.metodo_pago = ttk.Combobox(bottom, values=["EFECTIVO", "TARJETA", "TRANSFERENCIA", "MIXTO"],
                                          state="readonly", width=15)
         self.metodo_pago.set("EFECTIVO")
-        self.metodo_pago.pack(side="left", padx=10)
-        ttk.Button(bottom, text="COBRAR (F12)", command=self._cobrar).pack(side="right")
+        self.metodo_pago.pack(side="left", padx=16)
+        ttk.Button(bottom, text="COBRAR (F12)", style="Accent.TButton", command=self._cobrar).pack(side="right")
         self.bind("<F12>", lambda e: self._cobrar())
+
+    def _refrescar_resultados(self, productos):
+        for row in self.resultados.get_children():
+            self.resultados.delete(row)
+        for i, p in enumerate(productos):
+            self.resultados.insert("", "end", values=(p["codigo"], p["nombre"], f"{p['precio_venta']:.2f}"),
+                                    tags=(tag_fila(i),))
 
     def _on_buscar(self, event=None):
         termino = self.buscador.get().strip()
-        for row in self.resultados.get_children():
-            self.resultados.delete(row)
         if not termino:
+            self._refrescar_resultados([])
             return
-        for p in sales.buscar_productos(termino):
-            self.resultados.insert("", "end", values=(p["codigo"], p["nombre"], f"{p['precio_venta']:.2f}"))
+        productos = sales.buscar_productos(termino)
+        self._refrescar_resultados(productos)
+
+        if len(productos) == 1 and productos[0]["codigo"] == termino:
+            self._agregar_producto(productos[0]["codigo"], productos[0]["nombre"], productos[0]["precio_venta"])
+            self.buscador.delete(0, "end")
+            self._refrescar_resultados([])
 
     def _agregar_al_carrito(self, event=None):
         sel = self.resultados.selection()
         if not sel:
             return
         codigo, nombre, precio = self.resultados.item(sel[0], "values")
-        precio = float(precio)
+        self._agregar_producto(codigo, nombre, float(precio))
+
+    def _agregar_producto(self, codigo: str, nombre: str, precio: float):
         for item in self.carrito:
             if item["codigo"] == codigo:
                 item["cantidad"] += 1
@@ -102,12 +122,12 @@ class AppUsbCaja(tk.Tk):
         for row in self.carrito_tree.get_children():
             self.carrito_tree.delete(row)
         total = 0.0
-        for item in self.carrito:
+        for i, item in enumerate(self.carrito):
             subtotal = item["cantidad"] * item["precio_unitario"]
             total += subtotal
             self.carrito_tree.insert("", "end", values=(
                 item["codigo"], item["nombre"], item["cantidad"],
-                f"{item['precio_unitario']:.2f}", f"{subtotal:.2f}"))
+                f"{item['precio_unitario']:.2f}", f"{subtotal:.2f}"), tags=(tag_fila(i),))
         self.lbl_total.config(text=f"TOTAL: ${total:.2f}")
 
     def _cobrar(self):

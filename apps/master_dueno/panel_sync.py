@@ -13,6 +13,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from pos_core import reconciliation
+from apps.theme import aplicar_tema
 
 USUARIO_DEV = os.environ.get("USERNAME", "dev")
 
@@ -35,6 +36,7 @@ def _detectar_unidades_con_sync_data():
 class PanelSincronizacion(tk.Toplevel):
     def __init__(self, master):
         super().__init__(master)
+        aplicar_tema(self)
         self.title("[DEV] Sincronización y Conciliación")
         self.geometry("800x600")
         self.grab_set()

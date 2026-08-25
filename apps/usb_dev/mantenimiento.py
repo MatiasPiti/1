@@ -22,6 +22,7 @@ from tkinter import filedialog, messagebox, scrolledtext
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from pos_core.paths import get_base_path
+from apps.theme import aplicar_tema
 
 NOMBRE_SERVICIO_WINDOWS = "SistemaDualStockService"
 
@@ -138,6 +139,7 @@ def ejecutar_mantenimiento(carpeta_instalacion: str) -> list:
 class AppMantenimiento(tk.Tk):
     def __init__(self):
         super().__init__()
+        aplicar_tema(self)
         self.title("Herramienta de Mantenimiento - USB Desarrollador")
         self.geometry("750x550")
 
