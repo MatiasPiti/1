@@ -14,10 +14,20 @@ param(
 $Escritorio = [Environment]::GetFolderPath("Desktop")
 $Shell = New-Object -ComObject WScript.Shell
 
+# Borra accesos directos de nombres viejos (de antes del rebranding a Otter)
+# para no dejar duplicados apuntando a lo mismo.
+foreach ($viejo in @("Caja", "Panel del Dueno")) {
+    $rutaVieja = Join-Path $Escritorio "$viejo.lnk"
+    if (Test-Path $rutaVieja) {
+        Remove-Item $rutaVieja -Force
+        Write-Host "Eliminado acceso directo viejo: $rutaVieja"
+    }
+}
+
 # Nombre visible => ruta relativa a $Raiz del .exe
 $Apps = @{
-    "Caja"           = "MaestroCaja\MaestroCaja.exe"
-    "Panel del Dueno" = "MaestroDueno\MaestroDueno.exe"
+    "Otter Caja"  = "MaestroCaja\MaestroCaja.exe"
+    "Otter Dueno" = "MaestroDueno\MaestroDueno.exe"
 }
 
 foreach ($nombre in $Apps.Keys) {
