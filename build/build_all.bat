@@ -7,7 +7,11 @@ REM Genera cada app en --onedir (carpeta con .exe + dependencias), que es
 REM lo que necesitan los USBs (estructura de carpetas portable).
 REM =====================================================================
 
-set PYI=pyinstaller --noconfirm --clean --onedir --windowed
+REM Se usa "python -m PyInstaller" en vez de "pyinstaller" a secas porque en
+REM Windows es comun que pip instale el .exe en una carpeta Scripts que no
+REM esta en el PATH; invocandolo como modulo de Python siempre funciona,
+REM sin depender de esa configuracion.
+set PYI=python -m PyInstaller --noconfirm --clean --onedir --windowed
 set DATA=--add-data "sql\schema.sql;sql"
 
 echo.
@@ -37,7 +41,7 @@ echo === 5/5 USB Mantenimiento (Desarrollador) ===
 echo.
 echo === Servicio oculto de stock (Windows Service, consola oculta) ===
 REM --noconsole = pythonw.exe embebido, sin ventana visible.
-pyinstaller --noconfirm --clean --onedir --noconsole %DATA% ^
+python -m PyInstaller --noconfirm --clean --onedir --noconsole %DATA% ^
     --name StockService --paths . ^
     --hidden-import win32timezone ^
     services\stock_windows_service.py
