@@ -17,7 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from pos_core.db import init_db
 from pos_core import sales, sync_export, audit, ticket_printer
-from apps.theme import COLORS, aplicar_tema, estriar_treeview, tag_fila
+from apps.theme import (COLORS, aplicar_tema, estriar_treeview, tag_fila,
+                         celda_texto, habilitar_copiar_pegar_global)
 
 ORIGEN = "USB_CAJA"
 USUARIO = os.environ.get("USERNAME", "cajero_emergencia")
@@ -37,6 +38,7 @@ class AppUsbCaja(tk.Tk):
         banner.pack(fill="x")
 
         self._construir_ui()
+        habilitar_copiar_pegar_global(self)
         self.buscador.focus_set()
 
     def _construir_ui(self):
@@ -129,10 +131,9 @@ class AppUsbCaja(tk.Tk):
                 (f"${subtotal:.2f}", ("Segoe UI", 15, "bold"), COLORS["accent"], "e"),
             ]
             for col, (texto, font, color, anchor) in enumerate(celdas):
-                lbl = tk.Label(self.carrito_grid, text=texto, bg=bg, fg=color, font=font,
-                               padx=10, pady=7, anchor=anchor)
-                lbl.grid(row=i, column=col, sticky="nsew")
-                lbl.bind("<Button-1>", lambda e, c=item["codigo"]: self._seleccionar_linea(c))
+                celda = celda_texto(self.carrito_grid, texto, font=font, color=color, bg=bg, anchor=anchor)
+                celda.grid(row=i, column=col, sticky="nsew", ipady=7, padx=(10 if col == 0 else 0, 10))
+                celda.bind("<Button-1>", lambda e, c=item["codigo"]: self._seleccionar_linea(c), add="+")
 
         self.lbl_total.config(text=f"${total:.2f}")
         return total
@@ -273,6 +274,7 @@ class AppUsbCaja(tk.Tk):
 
         tree.bind("<Double-1>", _reimprimir)
         ttk.Button(top, text="Imprimir", style="Accent.TButton", command=_reimprimir).pack(pady=12)
+        habilitar_copiar_pegar_global(top)
 
     def _preparar_sync(self):
         try:

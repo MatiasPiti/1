@@ -119,3 +119,97 @@ def estriar_treeview(tree: ttk.Treeview) -> None:
 
 def tag_fila(indice: int) -> str:
     return "odd" if indice % 2 else "even"
+
+
+def celda_texto(parent, texto: str, *, font, color: str, bg: str, anchor: str = "w") -> tk.Entry:
+    """Celda de una grilla armada a mano (carrito, etc.) que SE PUEDE
+    seleccionar con el mouse y copiar (Ctrl+C / clic derecho): un
+    tk.Entry de solo lectura en vez de un tk.Label, que visualmente se
+    ve idéntico pero sí permite arrastrar el mouse sobre el texto.
+    """
+    justify = {"w": "left", "e": "right", "center": "center"}.get(anchor, "left")
+    entry = tk.Entry(parent, font=font, fg=color, bg=bg, readonlybackground=bg,
+                      relief="flat", bd=0, justify=justify, highlightthickness=0)
+    entry.insert(0, texto)
+    entry.config(state="readonly")
+    habilitar_menu_contextual(entry)
+    return entry
+
+
+def _seleccionar_todo(widget) -> None:
+    try:
+        if isinstance(widget, tk.Text):
+            widget.tag_add("sel", "1.0", "end")
+        else:
+            widget.select_range(0, "end")
+    except tk.TclError:
+        pass
+
+
+def habilitar_menu_contextual(widget) -> None:
+    """Clic derecho con Cortar/Copiar/Pegar/Seleccionar todo sobre un
+    Entry/Combobox/Text — Tkinter no lo agrega solo como sí hacen los
+    controles nativos de Windows. Ctrl+C/Ctrl+V ya andan por default en
+    estos widgets; esto suma la opción visible de clic derecho."""
+    menu = tk.Menu(widget, tearoff=0)
+    menu.add_command(label="Cortar", command=lambda: widget.event_generate("<<Cut>>"))
+    menu.add_command(label="Copiar", command=lambda: widget.event_generate("<<Copy>>"))
+    menu.add_command(label="Pegar", command=lambda: widget.event_generate("<<Paste>>"))
+    menu.add_separator()
+    menu.add_command(label="Seleccionar todo", command=lambda: _seleccionar_todo(widget))
+
+    def _mostrar(event):
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    widget.bind("<Button-3>", _mostrar)
+
+
+def habilitar_copiar_treeview(tree: ttk.Treeview) -> None:
+    """Clic derecho sobre una grilla (Treeview) con "Copiar fila(s)" —
+    ttk.Treeview no permite seleccionar texto letra por letra, así que
+    esta es la forma de poder copiar lo que se ve en una lista."""
+    menu = tk.Menu(tree, tearoff=0)
+
+    def _copiar():
+        sel = tree.selection()
+        if not sel:
+            return
+        filas = ["\t".join(str(v) for v in tree.item(i, "values")) for i in sel]
+        tree.clipboard_clear()
+        tree.clipboard_append("\n".join(filas))
+
+    menu.add_command(label="Copiar fila(s) seleccionada(s)", command=_copiar)
+
+    def _mostrar(event):
+        fila = tree.identify_row(event.y)
+        if fila and fila not in tree.selection():
+            tree.selection_set(fila)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    tree.bind("<Button-3>", _mostrar)
+
+
+def habilitar_copiar_pegar_global(root: tk.Misc) -> None:
+    """Recorre TODOS los widgets ya construidos de una ventana y les
+    agrega los menús de arriba según el tipo — Entry/Combobox/Text
+    reciben Cortar/Copiar/Pegar, los Treeview reciben Copiar fila.
+    Se llama una sola vez, al final de armar cada ventana (o Toplevel).
+    """
+    def _recorrer(widget):
+        clase = widget.winfo_class()
+        if clase in ("TEntry", "Entry", "TCombobox"):
+            habilitar_menu_contextual(widget)
+        elif clase == "Text":
+            habilitar_menu_contextual(widget)
+        elif clase == "Treeview":
+            habilitar_copiar_treeview(widget)
+        for hijo in widget.winfo_children():
+            _recorrer(hijo)
+
+    _recorrer(root)

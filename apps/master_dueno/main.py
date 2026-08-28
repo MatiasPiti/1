@@ -18,7 +18,7 @@ from pos_core import (stock_service, bulk_edit, pdf_import, excel_import, filter
                        audit, products, ofertas, reports)
 from pos_core.paths import sync_dir
 from pos_core import reconciliation
-from apps.theme import aplicar_tema, estriar_treeview, tag_fila
+from apps.theme import aplicar_tema, estriar_treeview, tag_fila, habilitar_copiar_pegar_global
 
 USUARIO = os.environ.get("USERNAME", "dueño")
 ORIGEN = "MAESTRO"
@@ -38,6 +38,7 @@ class AppDueno(tk.Tk):
 
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=10, pady=10)
+        self.nb = nb
 
         self.tab_dashboard = ttk.Frame(nb)
         self.tab_stock = ttk.Frame(nb)
@@ -65,9 +66,28 @@ class AppDueno(tk.Tk):
         self._armar_excel(self.tab_excel)
         self._armar_alertas(self.tab_alertas)
         self._armar_auditoria(self.tab_auditoria)
+        habilitar_copiar_pegar_global(self)
+
+        nb.bind("<<NotebookTabChanged>>", self._on_cambio_pestana)
 
         # Módulo oculto de sincronización/conciliación (desarrollador)
         self.bind_all("<Control-Shift-M>", self._abrir_panel_sync)
+
+        # Bot de Telegram: revisa umbrales cada 5 minutos mientras el
+        # panel esté abierto (independiente del monitoreo 24/7 que corre
+        # en el servicio oculto de stock en el Maestro).
+        self._iniciar_monitor_alertas()
+
+    def _iniciar_monitor_alertas(self):
+        # El bot es "best effort": si falla al iniciar (falta una librería,
+        # lo que sea), el Panel del Dueño tiene que abrir igual.
+        self._monitor_alertas = None
+        try:
+            from pos_core.telegram_bot import MonitorAlertas
+            self._monitor_alertas = MonitorAlertas(intervalo_segundos=300)
+            self._monitor_alertas.start()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ #
     # Dashboard
@@ -198,29 +218,67 @@ class AppDueno(tk.Tk):
         ttk.Button(lector, text="Enfocar lector", command=lambda: self.lector_entry.focus_set()
                    ).pack(side="left")
 
-        self.stock_log = tk.Text(frame, height=14, bg="#FFFFFF", relief="flat",
-                                  highlightthickness=1, highlightbackground="#E3E6ED", padx=8, pady=8)
-        self.stock_log.pack(fill="both", expand=True)
+        stock_actual = ttk.LabelFrame(frame, text="Stock actual", padding=12)
+        stock_actual.pack(fill="both", expand=True)
 
-    def _log_stock(self, msg):
-        self.stock_log.insert("end", msg + "\n")
-        self.stock_log.see("end")
+        buscador_fila = ttk.Frame(stock_actual)
+        buscador_fila.pack(fill="x", pady=(0, 8))
+        ttk.Label(buscador_fila, text="Buscar:").pack(side="left")
+        self.stock_actual_buscar = ttk.Entry(buscador_fila)
+        self.stock_actual_buscar.pack(side="left", fill="x", expand=True, padx=6)
+        self.stock_actual_buscar.bind("<KeyRelease>", lambda e: self._refrescar_stock_actual())
+
+        self.tree_stock_actual = ttk.Treeview(
+            stock_actual, columns=("codigo", "nombre", "stock"), show="headings", height=16)
+        self.tree_stock_actual.heading("codigo", text="Código")
+        self.tree_stock_actual.heading("nombre", text="Nombre")
+        self.tree_stock_actual.heading("stock", text="Stock actual")
+        self.tree_stock_actual.column("codigo", width=130)
+        self.tree_stock_actual.column("nombre", width=420)
+        self.tree_stock_actual.column("stock", width=110, anchor="center")
+        estriar_treeview(self.tree_stock_actual)
+        self.tree_stock_actual.pack(fill="both", expand=True)
+
+        self._refrescar_stock_actual()
+
+    def _on_cambio_pestana(self, event=None):
+        if self.nb.select() == str(self.tab_stock):
+            self._refrescar_stock_actual()
+
+    def _refrescar_stock_actual(self):
+        for row in self.tree_stock_actual.get_children():
+            self.tree_stock_actual.delete(row)
+        termino = self.stock_actual_buscar.get().strip()
+        conn = get_connection()
+        if termino:
+            like = f"%{termino}%"
+            rows = conn.execute(
+                "SELECT codigo, nombre, stock FROM Productos WHERE activo=1 "
+                "AND (codigo LIKE ? OR nombre LIKE ?) ORDER BY nombre", (like, like)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT codigo, nombre, stock FROM Productos WHERE activo=1 ORDER BY nombre"
+            ).fetchall()
+        for i, r in enumerate(rows):
+            self.tree_stock_actual.insert("", "end", values=(r["codigo"], r["nombre"], r["stock"]),
+                                           tags=(tag_fila(i),))
 
     def _sumar_stock(self):
         try:
-            nuevo = stock_service.sumar_stock_manual(
+            stock_service.sumar_stock_manual(
                 self.stock_codigo.get().strip(), int(self.stock_cantidad.get()),
                 usuario=USUARIO, origen=ORIGEN)
-            self._log_stock(f"[+] {self.stock_codigo.get()} -> nuevo stock: {nuevo}")
+            self._refrescar_stock_actual()
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
     def _restar_stock(self):
         try:
-            nuevo = stock_service.restar_stock_manual(
+            stock_service.restar_stock_manual(
                 self.stock_codigo.get().strip(), int(self.stock_cantidad.get()),
                 usuario=USUARIO, origen=ORIGEN)
-            self._log_stock(f"[-] {self.stock_codigo.get()} -> nuevo stock: {nuevo}")
+            self._refrescar_stock_actual()
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
@@ -230,10 +288,10 @@ class AppDueno(tk.Tk):
         if not codigo:
             return
         try:
-            nuevo = stock_service.restar_stock_por_lector(codigo, usuario=USUARIO, origen=ORIGEN)
-            self._log_stock(f"[lector] {codigo} -> nuevo stock: {nuevo}")
+            stock_service.restar_stock_por_lector(codigo, usuario=USUARIO, origen=ORIGEN)
+            self._refrescar_stock_actual()
         except Exception as e:
-            self._log_stock(f"[lector] ERROR con {codigo}: {e}")
+            messagebox.showerror("Error con el lector", f"{codigo}: {e}")
 
     def _crear_producto_nuevo(self):
         try:
@@ -257,7 +315,7 @@ class AppDueno(tk.Tk):
             entry.delete(0, "end")
         self.alta_stock.delete(0, "end")
         self.alta_stock.insert(0, "0")
-        self._log_stock(f"[alta] Producto nuevo creado: {codigo}")
+        self._refrescar_stock_actual()
         messagebox.showinfo("Producto creado", "El producto nuevo ya está disponible en la Caja.")
 
     # ------------------------------------------------------------------ #

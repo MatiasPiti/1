@@ -80,6 +80,16 @@ def ciclo_watchdog():
 def main():
     init_db()
     log.info("Servicio de stock iniciado (oculto, sin ventana)")
+
+    # Bot de Telegram: corre acá para que las alertas de stoploss/sobre-stock
+    # lleguen 24/7 aunque nadie tenga abierto el Panel del Dueño.
+    try:
+        from pos_core.telegram_bot import MonitorAlertas
+        MonitorAlertas(intervalo_segundos=300).start()
+        log.info("Monitor de alertas de Telegram iniciado")
+    except Exception:
+        log.exception("No se pudo iniciar el monitor de alertas de Telegram")
+
     while True:
         try:
             ciclo_watchdog()

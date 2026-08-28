@@ -13,7 +13,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from pos_core import reconciliation
-from apps.theme import aplicar_tema
+from apps.theme import aplicar_tema, habilitar_copiar_pegar_global
 
 USUARIO_DEV = os.environ.get("USERNAME", "dev")
 
@@ -60,6 +60,7 @@ class PanelSincronizacion(tk.Toplevel):
         self.archivos = []
         self.archivo_actual = None
         self._buscar()
+        habilitar_copiar_pegar_global(self)
 
     def _buscar(self):
         self.archivos = []
