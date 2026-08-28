@@ -80,8 +80,15 @@ def cerrar_ticket(carrito: list, *, metodo_pago: str, usuario: str,
 def buscar_productos(termino: str, *, limite: int = 30) -> list:
     """Búsqueda de productos por código o nombre para la pantalla de
     cobro. Deliberadamente NO devuelve la columna 'stock': el cajero no
-    debe ver disponibilidad (requisito 3.1 'Stock Invisible')."""
+    debe ver disponibilidad (requisito 3.1 'Stock Invisible').
+
+    El precio devuelto ya tiene aplicada cualquier oferta vigente para
+    ese producto (ver pos_core.ofertas) — la Caja siempre cobra el
+    precio efectivo del momento, sin tener que saber nada de ofertas.
+    """
     from pos_core.db import get_connection
+    from pos_core import ofertas
+
     conn = get_connection()
     like = f"%{termino}%"
     rows = conn.execute(
@@ -90,4 +97,41 @@ def buscar_productos(termino: str, *, limite: int = 30) -> list:
            ORDER BY nombre LIMIT ?""",
         (like, like, limite),
     ).fetchall()
+
+    resultados = []
+    for r in rows:
+        precio_efectivo, oferta = ofertas.precio_con_oferta(r["codigo"], r["precio_venta"])
+        resultados.append({
+            "codigo": r["codigo"],
+            "nombre": r["nombre"],
+            "precio_venta": precio_efectivo,
+            "en_oferta": oferta is not None,
+        })
+    return resultados
+
+
+def listar_ventas_de_hoy() -> list:
+    """Para el historial del día en la Caja: solo lo de HOY (la consulta
+    filtra por fecha actual, así que un día nuevo automáticamente deja
+    de mostrar lo de ayer, sin necesidad de borrar nada)."""
+    from pos_core.db import get_connection
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT uuid_unico, fecha_hora, total FROM Ventas
+           WHERE date(fecha_hora) = date('now','localtime') AND anulada = 0
+           ORDER BY fecha_hora DESC"""
+    ).fetchall()
     return [dict(r) for r in rows]
+
+
+def obtener_venta_con_detalle(venta_uuid: str) -> dict:
+    """Para reimprimir un ticket ya cobrado, las veces que haga falta."""
+    from pos_core.db import get_connection
+    conn = get_connection()
+    venta = conn.execute("SELECT * FROM Ventas WHERE uuid_unico = ?", (venta_uuid,)).fetchone()
+    if venta is None:
+        raise ValueError("Venta no encontrada")
+    detalle = conn.execute(
+        "SELECT * FROM Detalle_Ventas WHERE venta_uuid = ? ORDER BY id", (venta_uuid,)
+    ).fetchall()
+    return {"venta": dict(venta), "detalle": [dict(d) for d in detalle]}

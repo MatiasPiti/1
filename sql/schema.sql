@@ -135,3 +135,42 @@ CREATE TABLE IF NOT EXISTS Log_Sincronizacion (
     precios_actualizados INTEGER NOT NULL DEFAULT 0,
     detalle_json        TEXT
 );
+
+-- ---------------------------------------------------------------------
+-- Lineas_Eliminadas (auditoría anti-robo: cada "Quitar línea" en la Caja)
+-- Solo visible desde el Panel del Dueño, nunca desde la Caja.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS Lineas_Eliminadas (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid_unico          TEXT UNIQUE NOT NULL,
+    producto_codigo     TEXT NOT NULL,
+    producto_nombre     TEXT NOT NULL,
+    cantidad            INTEGER NOT NULL,
+    precio_unitario     REAL NOT NULL,
+    subtotal            REAL NOT NULL,
+    usuario             TEXT NOT NULL,
+    origen              TEXT NOT NULL DEFAULT 'MAESTRO' CHECK (origen IN ('MAESTRO','USB_CAJA')),
+    fecha_hora          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lineas_eliminadas_fecha ON Lineas_Eliminadas(fecha_hora);
+
+-- ---------------------------------------------------------------------
+-- Ofertas (promociones/rebajas temporales con vencimiento automático)
+-- El precio "normal" (Productos.precio_venta) NUNCA se toca: el
+-- descuento se calcula al vuelo mientras la oferta está vigente, así que
+-- "volver a la normalidad" al vencer no requiere ninguna tarea de fondo.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS Ofertas (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid_unico          TEXT UNIQUE NOT NULL,
+    producto_codigo     TEXT NOT NULL,
+    tipo_descuento      TEXT NOT NULL CHECK (tipo_descuento IN ('PORCENTAJE','MONTO_FIJO','PRECIO_FIJO')),
+    valor               REAL NOT NULL,
+    descripcion         TEXT,
+    fecha_inicio        TEXT NOT NULL,   -- 'YYYY-MM-DD'
+    fecha_fin           TEXT NOT NULL,   -- 'YYYY-MM-DD', fecha_inicio + dias
+    activa              INTEGER NOT NULL DEFAULT 1,   -- permite cancelarla antes de tiempo a mano
+    creado_por          TEXT NOT NULL,
+    creado_en           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ofertas_producto ON Ofertas(producto_codigo);

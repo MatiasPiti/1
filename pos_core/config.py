@@ -7,6 +7,7 @@ from pos_core.paths import config_path
 _DEFAULTS = {
     "telegram": {"bot_token": "", "chat_id_default": "", "habilitado": "false"},
     "general": {"nombre_local": "Mi Negocio", "modo": "MAESTRO"},
+    "impresora": {"nombre": ""},  # vacío = usar la impresora predeterminada de Windows
 }
 
 

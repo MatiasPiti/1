@@ -14,7 +14,8 @@ from tkinter import ttk, messagebox, filedialog
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from pos_core.db import init_db, get_connection
-from pos_core import stock_service, bulk_edit, pdf_import, excel_import, filters, config, alerts
+from pos_core import (stock_service, bulk_edit, pdf_import, excel_import, filters, config, alerts,
+                       audit, products, ofertas, reports)
 from pos_core.paths import sync_dir
 from pos_core import reconciliation
 from apps.theme import aplicar_tema, estriar_treeview, tag_fila
@@ -41,23 +42,29 @@ class AppDueno(tk.Tk):
         self.tab_dashboard = ttk.Frame(nb)
         self.tab_stock = ttk.Frame(nb)
         self.tab_bulk = ttk.Frame(nb)
+        self.tab_ofertas = ttk.Frame(nb)
         self.tab_pdf = ttk.Frame(nb)
         self.tab_excel = ttk.Frame(nb)
         self.tab_alertas = ttk.Frame(nb)
+        self.tab_auditoria = ttk.Frame(nb)
 
         nb.add(self.tab_dashboard, text="Dashboard")
         nb.add(self.tab_stock, text="Stock")
         nb.add(self.tab_bulk, text="Filtros / Edición Masiva")
+        nb.add(self.tab_ofertas, text="Ofertas")
         nb.add(self.tab_pdf, text="Facturas PDF")
         nb.add(self.tab_excel, text="Carga Excel")
         nb.add(self.tab_alertas, text="Alertas")
+        nb.add(self.tab_auditoria, text="Auditoría")
 
         self._armar_dashboard(self.tab_dashboard)
         self._armar_stock(self.tab_stock)
         self._armar_bulk(self.tab_bulk)
+        self._armar_ofertas(self.tab_ofertas)
         self._armar_pdf(self.tab_pdf)
         self._armar_excel(self.tab_excel)
         self._armar_alertas(self.tab_alertas)
+        self._armar_auditoria(self.tab_auditoria)
 
         # Módulo oculto de sincronización/conciliación (desarrollador)
         self.bind_all("<Control-Shift-M>", self._abrir_panel_sync)
@@ -73,6 +80,19 @@ class AppDueno(tk.Tk):
         self.lbl_resumen = ttk.Label(top, text="", style="Header.TLabel")
         self.lbl_resumen.pack(side="left", padx=20)
 
+        metodos = ttk.LabelFrame(frame, text="Dinero movido hoy por método de pago", padding=10)
+        metodos.pack(fill="x", pady=(0, 10))
+        self.tree_metodos_pago = ttk.Treeview(
+            metodos, columns=("metodo", "cantidad", "total"), show="headings", height=4)
+        self.tree_metodos_pago.heading("metodo", text="Método")
+        self.tree_metodos_pago.heading("cantidad", text="Ventas")
+        self.tree_metodos_pago.heading("total", text="Total")
+        self.tree_metodos_pago.column("metodo", width=160)
+        self.tree_metodos_pago.column("cantidad", width=100, anchor="center")
+        self.tree_metodos_pago.column("total", width=140, anchor="e")
+        estriar_treeview(self.tree_metodos_pago)
+        self.tree_metodos_pago.pack(fill="x")
+
         self.chart_frame = ttk.Frame(frame, style="Card.TFrame")
         self.chart_frame.pack(fill="both", expand=True)
         self._refrescar_dashboard()
@@ -85,6 +105,12 @@ class AppDueno(tk.Tk):
         ).fetchone()
         self.lbl_resumen.config(
             text=f"Ventas de hoy: {total_hoy['c']}   ·   Total: ${total_hoy['t']:.2f}")
+
+        for row in self.tree_metodos_pago.get_children():
+            self.tree_metodos_pago.delete(row)
+        for i, m in enumerate(reports.totales_por_metodo_pago()):
+            self.tree_metodos_pago.insert("", "end", values=(m["metodo_pago"], m["cantidad"],
+                                                               f"${m['total']:.2f}"), tags=(tag_fila(i),))
 
         top_productos = conn.execute(
             """SELECT producto_nombre, SUM(cantidad) cant FROM Detalle_Ventas
@@ -120,6 +146,34 @@ class AppDueno(tk.Tk):
     # Stock manual / lector
     # ------------------------------------------------------------------ #
     def _armar_stock(self, frame):
+        alta = ttk.LabelFrame(frame, text="Alta de producto nuevo (no registrado antes)", padding=12)
+        alta.pack(fill="x", pady=(0, 10))
+        ttk.Label(alta, text="Código:").grid(row=0, column=0, sticky="w")
+        self.alta_codigo = ttk.Entry(alta, width=16)
+        self.alta_codigo.grid(row=0, column=1, padx=4)
+        ttk.Label(alta, text="Nombre:").grid(row=0, column=2, sticky="w")
+        self.alta_nombre = ttk.Entry(alta, width=26)
+        self.alta_nombre.grid(row=0, column=3, padx=4)
+        ttk.Label(alta, text="Precio:").grid(row=0, column=4, sticky="w")
+        self.alta_precio = ttk.Entry(alta, width=10)
+        self.alta_precio.grid(row=0, column=5, padx=4)
+        ttk.Label(alta, text="Stock inicial:").grid(row=0, column=6, sticky="w")
+        self.alta_stock = ttk.Entry(alta, width=8)
+        self.alta_stock.insert(0, "0")
+        self.alta_stock.grid(row=0, column=7, padx=4)
+
+        ttk.Label(alta, text="Proveedor:").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.alta_proveedor = ttk.Entry(alta, width=16)
+        self.alta_proveedor.grid(row=1, column=1, padx=4, pady=(6, 0))
+        ttk.Label(alta, text="Marca:").grid(row=1, column=2, sticky="w", pady=(6, 0))
+        self.alta_marca = ttk.Entry(alta, width=16)
+        self.alta_marca.grid(row=1, column=3, padx=4, pady=(6, 0))
+        ttk.Label(alta, text="Categoría:").grid(row=1, column=4, sticky="w", pady=(6, 0))
+        self.alta_categoria = ttk.Entry(alta, width=16)
+        self.alta_categoria.grid(row=1, column=5, padx=4, pady=(6, 0))
+        ttk.Button(alta, text="Agregar producto", style="Accent.TButton",
+                   command=self._crear_producto_nuevo).grid(row=1, column=7, padx=4, pady=(6, 0))
+
         form = ttk.LabelFrame(frame, text="Movimiento manual de stock", padding=12)
         form.pack(fill="x", pady=(0, 10))
 
@@ -180,6 +234,31 @@ class AppDueno(tk.Tk):
             self._log_stock(f"[lector] {codigo} -> nuevo stock: {nuevo}")
         except Exception as e:
             self._log_stock(f"[lector] ERROR con {codigo}: {e}")
+
+    def _crear_producto_nuevo(self):
+        try:
+            precio = float(self.alta_precio.get() or 0)
+            stock_inicial = int(self.alta_stock.get() or 0)
+        except ValueError:
+            messagebox.showerror("Error", "Precio y stock inicial tienen que ser números.")
+            return
+        codigo = self.alta_codigo.get().strip()
+        try:
+            products.crear_producto(
+                codigo=codigo, nombre=self.alta_nombre.get(),
+                precio_venta=precio, stock_inicial=stock_inicial,
+                proveedor=self.alta_proveedor.get().strip(), marca=self.alta_marca.get().strip(),
+                categoria=self.alta_categoria.get().strip(), usuario=USUARIO, origen=ORIGEN)
+        except ValueError as e:
+            messagebox.showerror("No se pudo crear el producto", str(e))
+            return
+        for entry in (self.alta_codigo, self.alta_nombre, self.alta_precio, self.alta_proveedor,
+                      self.alta_marca, self.alta_categoria):
+            entry.delete(0, "end")
+        self.alta_stock.delete(0, "end")
+        self.alta_stock.insert(0, "0")
+        self._log_stock(f"[alta] Producto nuevo creado: {codigo}")
+        messagebox.showinfo("Producto creado", "El producto nuevo ya está disponible en la Caja.")
 
     # ------------------------------------------------------------------ #
     # Filtros 100% manuales (el dueño elige producto por producto) +
@@ -596,6 +675,148 @@ class AppDueno(tk.Tk):
         self.um_prod_min.insert(0, minimo)
         self.um_prod_max.delete(0, "end")
         self.um_prod_max.insert(0, maximo)
+
+    # ------------------------------------------------------------------ #
+    # Ofertas / promociones temporales. El precio "de lista" nunca se
+    # toca: mientras la oferta está vigente el precio efectivo se calcula
+    # al vuelo (ver pos_core.ofertas), así que al vencer la duración en
+    # días, la Caja vuelve sola a cobrar el precio normal sin que nadie
+    # tenga que "deshacer" nada.
+    # ------------------------------------------------------------------ #
+    def _armar_ofertas(self, frame):
+        form = ttk.LabelFrame(frame, text="Crear oferta / promoción", padding=12)
+        form.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(form, text="Código de producto:").grid(row=0, column=0, sticky="w")
+        self.oferta_codigo = ttk.Entry(form, width=16)
+        self.oferta_codigo.grid(row=0, column=1, padx=4)
+
+        ttk.Label(form, text="Tipo de descuento:").grid(row=0, column=2, sticky="w")
+        self.oferta_tipo = ttk.Combobox(
+            form, state="readonly", width=22,
+            values=["% de descuento", "$ fijo de descuento", "Precio fijo promocional"])
+        self.oferta_tipo.current(0)
+        self.oferta_tipo.grid(row=0, column=3, padx=4)
+
+        ttk.Label(form, text="Valor:").grid(row=0, column=4, sticky="w")
+        self.oferta_valor = ttk.Entry(form, width=10)
+        self.oferta_valor.grid(row=0, column=5, padx=4)
+
+        ttk.Label(form, text="Duración (días):").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.oferta_dias = ttk.Entry(form, width=8)
+        self.oferta_dias.insert(0, "7")
+        self.oferta_dias.grid(row=1, column=1, padx=4, pady=(6, 0))
+
+        ttk.Label(form, text="Detalles de la promoción:").grid(row=1, column=2, sticky="w", pady=(6, 0))
+        self.oferta_descripcion = ttk.Entry(form, width=40)
+        self.oferta_descripcion.grid(row=1, column=3, columnspan=2, sticky="ew", padx=4, pady=(6, 0))
+
+        ttk.Button(form, text="Crear oferta", style="Accent.TButton",
+                   command=self._crear_oferta_nueva).grid(row=1, column=5, padx=4, pady=(6, 0))
+
+        listado = ttk.LabelFrame(frame, text="Ofertas (activas, programadas, vencidas y canceladas)", padding=10)
+        listado.pack(fill="both", expand=True)
+        self.tree_ofertas = ttk.Treeview(
+            listado, columns=("producto", "descuento", "descripcion", "desde", "hasta", "estado"),
+            show="headings", height=14)
+        for col, txt, w in [("producto", "Producto", 180), ("descuento", "Descuento", 130),
+                             ("descripcion", "Detalles", 220), ("desde", "Desde", 90),
+                             ("hasta", "Hasta", 90), ("estado", "Estado", 100)]:
+            self.tree_ofertas.heading(col, text=txt)
+            self.tree_ofertas.column(col, width=w)
+        estriar_treeview(self.tree_ofertas)
+        self.tree_ofertas.pack(fill="both", expand=True, pady=(0, 8))
+
+        ttk.Button(listado, text="Cancelar oferta seleccionada", style="Danger.TButton",
+                   command=self._cancelar_oferta_seleccionada).pack(anchor="w")
+
+        self._refrescar_ofertas()
+
+    def _tipo_descuento_interno(self) -> str:
+        return {"% de descuento": "PORCENTAJE", "$ fijo de descuento": "MONTO_FIJO",
+                "Precio fijo promocional": "PRECIO_FIJO"}[self.oferta_tipo.get()]
+
+    def _crear_oferta_nueva(self):
+        try:
+            valor = float(self.oferta_valor.get())
+            dias = int(self.oferta_dias.get())
+        except ValueError:
+            messagebox.showerror("Error", "Valor y duración tienen que ser números.")
+            return
+        try:
+            vence = ofertas.crear_oferta(
+                codigo=self.oferta_codigo.get().strip(), tipo_descuento=self._tipo_descuento_interno(),
+                valor=valor, descripcion=self.oferta_descripcion.get().strip(),
+                dias=dias, usuario=USUARIO)
+        except ValueError as e:
+            messagebox.showerror("No se pudo crear la oferta", str(e))
+            return
+        self.oferta_codigo.delete(0, "end")
+        self.oferta_valor.delete(0, "end")
+        self.oferta_descripcion.delete(0, "end")
+        self._refrescar_ofertas()
+        messagebox.showinfo("Oferta creada", f"Vigente hasta el {vence}. Después, el precio vuelve solo a la normalidad.")
+
+    def _refrescar_ofertas(self):
+        for row in self.tree_ofertas.get_children():
+            self.tree_ofertas.delete(row)
+        etiquetas_tipo = {"PORCENTAJE": "%", "MONTO_FIJO": "$ desc.", "PRECIO_FIJO": "precio $"}
+        for i, o in enumerate(ofertas.listar_ofertas()):
+            descuento = f"{o['valor']} {etiquetas_tipo[o['tipo_descuento']]} (-> ${o['precio_con_descuento']:.2f})"
+            self.tree_ofertas.insert(
+                "", "end", iid=str(o["id"]),
+                values=(o["producto_nombre"], descuento, o["descripcion"] or "",
+                        o["fecha_inicio"], o["fecha_fin"], o["estado"]),
+                tags=(tag_fila(i),))
+
+    def _cancelar_oferta_seleccionada(self):
+        sel = self.tree_ofertas.selection()
+        if not sel:
+            messagebox.showinfo("Elegí una oferta", "Hacé clic sobre una oferta de la lista.")
+            return
+        if not messagebox.askyesno("Confirmar", "¿Cancelar esta oferta? El producto vuelve al precio normal ya mismo."):
+            return
+        ofertas.cancelar_oferta(int(sel[0]))
+        self._refrescar_ofertas()
+
+    # ------------------------------------------------------------------ #
+    # Auditoría anti-robo: cada "Quitar línea" hecho en cualquier Caja.
+    # Solo visible acá, en el Panel del Dueño.
+    # ------------------------------------------------------------------ #
+    def _armar_auditoria(self, frame):
+        top = ttk.Frame(frame, padding=(0, 0, 0, 10))
+        top.pack(fill="x")
+        self.lbl_contador_eliminadas = ttk.Label(top, text="", style="Header.TLabel")
+        self.lbl_contador_eliminadas.pack(side="left")
+        ttk.Button(top, text="Actualizar", command=self._refrescar_auditoria).pack(side="right")
+
+        self.tree_auditoria = ttk.Treeview(
+            frame, columns=("fecha", "codigo", "producto", "cant", "precio", "subtotal", "usuario"),
+            show="headings", height=20)
+        for col, txt, w in [("fecha", "Fecha y hora", 160), ("codigo", "Código", 100),
+                             ("producto", "Producto", 240), ("cant", "Cant.", 60),
+                             ("precio", "P. Unit.", 90), ("subtotal", "Subtotal", 100),
+                             ("usuario", "Usuario", 120)]:
+            self.tree_auditoria.heading(col, text=txt)
+            self.tree_auditoria.column(col, width=w)
+        estriar_treeview(self.tree_auditoria)
+        self.tree_auditoria.pack(fill="both", expand=True)
+
+        self._refrescar_auditoria()
+
+    def _refrescar_auditoria(self):
+        for row in self.tree_auditoria.get_children():
+            self.tree_auditoria.delete(row)
+        registros = audit.listar_lineas_eliminadas()
+        self.lbl_contador_eliminadas.config(
+            text=f"Líneas quitadas del carrito (total histórico): {len(registros)}")
+        for i, r in enumerate(registros):
+            fecha = r["fecha_hora"][:19].replace("T", " ")
+            self.tree_auditoria.insert(
+                "", "end",
+                values=(fecha, r["producto_codigo"], r["producto_nombre"], r["cantidad"],
+                        f"${r['precio_unitario']:.2f}", f"${r['subtotal']:.2f}", r["usuario"]),
+                tags=(tag_fila(i),))
 
     # ------------------------------------------------------------------ #
     # Módulo oculto de sincronización (Ctrl+Shift+M)

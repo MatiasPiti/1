@@ -90,5 +90,11 @@ def logs_dir() -> str:
     return ensure_dir(os.path.join(get_base_path(), "logs"))
 
 
+def tickets_dir() -> str:
+    """Respaldo en texto de los tickets, usado cuando no hay impresora
+    disponible (ver pos_core/ticket_printer.py)."""
+    return ensure_dir(os.path.join(get_base_path(), "tickets"))
+
+
 def config_path() -> str:
     return os.path.join(get_base_path(), "config.ini")

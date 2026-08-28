@@ -8,6 +8,13 @@ El carrito se pensó para que lo pueda leer con comodidad el cliente
 parado frente al mostrador: nombre del producto en mayúsculas y
 negrita, subtotal en negrita y más grande que el resto, y el total en
 un cartel grande de alto contraste.
+
+Cada "Quitar línea" queda registrado en Lineas_Eliminadas (auditoría
+anti-robo, solo visible desde el Panel del Dueño) antes de sacarla del
+carrito. Al cobrar, se imprime el ticket en la impresora configurada (o
+se guarda como respaldo en texto si no hay impresora disponible); desde
+"Historial de hoy" se puede reimprimir cualquier venta del día las veces
+que haga falta.
 """
 
 import os
@@ -18,7 +25,7 @@ from tkinter import ttk, messagebox
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from pos_core.db import init_db
-from pos_core import sales
+from pos_core import sales, audit, ticket_printer
 from apps.theme import COLORS, aplicar_tema, estriar_treeview, tag_fila
 
 ORIGEN = "MAESTRO"
@@ -40,7 +47,13 @@ class AppCaja(tk.Tk):
     def _construir_ui(self):
         top = ttk.Frame(self, padding=(16, 14))
         top.pack(fill="x")
-        ttk.Label(top, text="Buscar o escanear (código o nombre)", style="Header.TLabel").pack(anchor="w")
+        fila_titulo = ttk.Frame(top)
+        fila_titulo.pack(fill="x")
+        ttk.Label(fila_titulo, text="Buscar o escanear (código o nombre)", style="Header.TLabel"
+                  ).pack(side="left", anchor="w")
+        ttk.Button(fila_titulo, text="Historial de hoy", command=self._abrir_historial
+                   ).pack(side="right")
+
         fila_buscar = ttk.Frame(top)
         fila_buscar.pack(fill="x", pady=(8, 0))
         self.buscador = ttk.Entry(fila_buscar, width=46, font=("Segoe UI", 12))
@@ -147,7 +160,10 @@ class AppCaja(tk.Tk):
         for row in self.resultados.get_children():
             self.resultados.delete(row)
         for i, p in enumerate(productos):
-            self.resultados.insert("", "end", values=(p["codigo"], p["nombre"].upper(), f"{p['precio_venta']:.2f}"),
+            nombre = p["nombre"].upper()
+            if p.get("en_oferta"):
+                nombre += "  🔥 OFERTA"
+            self.resultados.insert("", "end", values=(p["codigo"], nombre, f"{p['precio_venta']:.2f}"),
                                     tags=(tag_fila(i),))
 
     def _on_buscar(self, event=None):
@@ -171,6 +187,7 @@ class AppCaja(tk.Tk):
         if not sel:
             return
         codigo, nombre, precio = self.resultados.item(sel[0], "values")
+        nombre = nombre.replace("  🔥 OFERTA", "")
         self._agregar_producto(codigo, nombre, float(precio))
 
     def _agregar_producto(self, codigo: str, nombre: str, precio: float):
@@ -187,9 +204,17 @@ class AppCaja(tk.Tk):
             messagebox.showinfo("Elegí un producto",
                                  "Hacé clic sobre una línea del carrito y después presioná 'Quitar línea'.")
             return
+        item = next((i for i in self.carrito if i["codigo"] == self.carrito_seleccionado), None)
         self.carrito = [i for i in self.carrito if i["codigo"] != self.carrito_seleccionado]
         self.carrito_seleccionado = None
         self._refrescar_grilla_carrito()
+        if item:
+            try:
+                audit.registrar_linea_eliminada(
+                    codigo=item["codigo"], nombre=item["nombre"], cantidad=item["cantidad"],
+                    precio_unitario=item["precio_unitario"], usuario=USUARIO, origen=ORIGEN)
+            except Exception:
+                pass  # la auditoría nunca debe bloquear el trabajo del cajero
 
     def _cobrar(self):
         if not self.carrito:
@@ -201,6 +226,8 @@ class AppCaja(tk.Tk):
         except Exception as e:
             messagebox.showerror("Error al cobrar", str(e))
             return
+
+        self._imprimir_venta(resultado["venta_uuid"], silencioso=True)
 
         if resultado["fallas_stock"]:
             detalle = "\n".join(f"- {f['codigo']}: {f['error']}" for f in resultado["fallas_stock"])
@@ -216,6 +243,65 @@ class AppCaja(tk.Tk):
         self._refrescar_grilla_carrito()
         self.buscador.delete(0, "end")
         self.buscador.focus_set()
+
+    def _imprimir_venta(self, venta_uuid: str, *, silencioso: bool = False):
+        try:
+            info = sales.obtener_venta_con_detalle(venta_uuid)
+            texto = ticket_printer.formatear_ticket(info["venta"], info["detalle"])
+            enviado, detalle = ticket_printer.imprimir_ticket(texto, venta_uuid=venta_uuid)
+        except Exception as e:
+            if not silencioso:
+                messagebox.showerror("Error al imprimir", str(e))
+            return
+        if silencioso:
+            return  # el cobro ya se confirmó con su propio mensaje; no duplicar avisos
+        if enviado:
+            messagebox.showinfo("Ticket impreso", f"Enviado a la impresora ({detalle}).")
+        else:
+            messagebox.showwarning(
+                "Sin impresora configurada",
+                f"No se encontró una impresora de tickets; se guardó como archivo:\n{detalle}")
+
+    # ------------------------------------------------------------------ #
+    # Historial del día: SOLO fecha/hora + reimprimir, nada más. La
+    # consulta siempre filtra por la fecha de hoy, así que un día nuevo
+    # automáticamente deja de mostrar lo de ayer.
+    # ------------------------------------------------------------------ #
+    def _abrir_historial(self):
+        top = tk.Toplevel(self)
+        aplicar_tema(top)
+        top.title("Otter - Historial de hoy")
+        top.geometry("380x520")
+        top.transient(self)
+
+        ttk.Label(top, text="Ventas de hoy", style="Header.TLabel").pack(anchor="w", padx=16, pady=(16, 8))
+
+        tree = ttk.Treeview(top, columns=("hora", "total"), show="headings", height=16)
+        tree.heading("hora", text="Hora")
+        tree.heading("total", text="Total")
+        tree.column("hora", width=140)
+        tree.column("total", width=140, anchor="e")
+        estriar_treeview(tree)
+        tree.pack(fill="both", expand=True, padx=16)
+
+        ventas = sales.listar_ventas_de_hoy()
+        for i, v in enumerate(ventas):
+            hora = v["fecha_hora"][11:19] if len(v["fecha_hora"]) >= 19 else v["fecha_hora"]
+            tree.insert("", "end", iid=v["uuid_unico"], values=(hora, f"${v['total']:.2f}"), tags=(tag_fila(i),))
+
+        if not ventas:
+            ttk.Label(top, text="Todavía no hay ventas hoy.", style="Muted.TLabel").pack(pady=8)
+
+        def _reimprimir(event=None):
+            sel = tree.selection()
+            if not sel:
+                messagebox.showinfo("Elegí una venta", "Hacé clic sobre una venta de la lista.")
+                return
+            self._imprimir_venta(sel[0])
+
+        tree.bind("<Double-1>", _reimprimir)
+        ttk.Button(top, text="Imprimir", style="Accent.TButton", command=_reimprimir
+                   ).pack(pady=12)
 
 
 if __name__ == "__main__":
