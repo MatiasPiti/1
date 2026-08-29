@@ -11,7 +11,7 @@ Idéntico en función a la Caja Maestra, pero:
 import os
 import sys
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -22,6 +22,9 @@ from apps.theme import (COLORS, aplicar_tema, estriar_treeview, tag_fila,
 
 ORIGEN = "USB_CAJA"
 USUARIO = os.environ.get("USERNAME", "cajero_emergencia")
+
+CODIGO_SIN_BARRA = "1"  # caramelos sueltos, fiambre, o cualquier artículo sin código propio
+NOMBRE_SIN_BARRA = "ARTÍCULO SIN CÓDIGO"
 
 
 class AppUsbCaja(tk.Tk):
@@ -158,6 +161,12 @@ class AppUsbCaja(tk.Tk):
         if not termino:
             self._refrescar_resultados([])
             return
+
+        if termino == CODIGO_SIN_BARRA:
+            self.buscador.delete(0, "end")
+            self._agregar_articulo_sin_codigo()
+            return
+
         productos = sales.buscar_productos(termino)
         self._refrescar_resultados(productos)
 
@@ -165,6 +174,8 @@ class AppUsbCaja(tk.Tk):
             self._agregar_producto(productos[0]["codigo"], productos[0]["nombre"], productos[0]["precio_venta"])
             self.buscador.delete(0, "end")
             self._refrescar_resultados([])
+
+        self.buscador.focus_set()
 
     def _agregar_al_carrito(self, event=None):
         sel = self.resultados.selection()
@@ -181,6 +192,17 @@ class AppUsbCaja(tk.Tk):
                 break
         else:
             self.carrito.append({"codigo": codigo, "nombre": nombre, "cantidad": 1, "precio_unitario": precio})
+        self._refrescar_grilla_carrito()
+        self.buscador.focus_set()
+
+    def _agregar_articulo_sin_codigo(self):
+        importe = simpledialog.askfloat(
+            "Artículo sin código", "Importe a cobrar:", parent=self, minvalue=0.01)
+        self.buscador.focus_set()
+        if not importe:
+            return
+        self.carrito.append({"codigo": CODIGO_SIN_BARRA, "nombre": NOMBRE_SIN_BARRA,
+                              "cantidad": 1, "precio_unitario": importe})
         self._refrescar_grilla_carrito()
 
     def _quitar_linea(self):
@@ -199,6 +221,7 @@ class AppUsbCaja(tk.Tk):
                     precio_unitario=item["precio_unitario"], usuario=USUARIO, origen=ORIGEN)
             except Exception:
                 pass
+        self.buscador.focus_set()
 
     def _cobrar(self):
         if not self.carrito:
@@ -275,6 +298,7 @@ class AppUsbCaja(tk.Tk):
         tree.bind("<Double-1>", _reimprimir)
         ttk.Button(top, text="Imprimir", style="Accent.TButton", command=_reimprimir).pack(pady=12)
         habilitar_copiar_pegar_global(top)
+        top.bind("<Destroy>", lambda e: self.buscador.focus_set() if e.widget is top else None)
 
     def _preparar_sync(self):
         try:

@@ -62,6 +62,11 @@ def cerrar_ticket(carrito: list, *, metodo_pago: str, usuario: str,
     # stock se resuelve manualmente sin perder el ticket.
     fallas_stock = []
     for item in carrito:
+        if item["codigo"] == "1":
+            # Artículo sin código de barra (precio libre, caramelos
+            # sueltos, fiambre, etc.): no existe como producto en
+            # Productos, así que no tiene stock que descontar.
+            continue
         try:
             stock_service.descontar_por_venta(
                 item["codigo"], item["cantidad"], ticket_uuid=venta_uuid,
