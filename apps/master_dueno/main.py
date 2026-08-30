@@ -580,8 +580,12 @@ class AppDueno(tk.Tk):
     def _armar_excel(self, frame):
         ttk.Label(frame, text="Columnas esperadas: Código | Nombre | Precio Venta | Stock Inicial | Proveedor",
                   style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
-        ttk.Button(frame, text="Subir Excel/CSV...", style="Accent.TButton",
-                   command=self._subir_excel).pack(pady=(0, 8), anchor="w")
+        botones = ttk.Frame(frame)
+        botones.pack(pady=(0, 8), anchor="w")
+        ttk.Button(botones, text="Subir Excel/CSV...", style="Accent.TButton",
+                   command=self._subir_excel).pack(side="left")
+        ttk.Button(botones, text="Exportar lista de precios (Excel)",
+                   command=self._exportar_precios).pack(side="left", padx=8)
         self.excel_log = tk.Text(frame, height=25, bg="#FFFFFF", relief="flat",
                                   highlightthickness=1, highlightbackground="#E3E6ED", padx=8, pady=8)
         self.excel_log.pack(fill="both", expand=True)
@@ -599,6 +603,23 @@ class AppDueno(tk.Tk):
         self.excel_log.insert("end", f"Creados: {resultado['creados']}  Actualizados: {resultado['actualizados']}\n")
         for e in resultado["errores"]:
             self.excel_log.insert("end", f"  Fila {e['fila']}: {e['error']}\n")
+
+    def _exportar_precios(self):
+        ruta = filedialog.asksaveasfilename(
+            title="Guardar lista de precios", defaultextension=".xlsx",
+            initialfile="Otter_Lista_Precios.xlsx", filetypes=[("Excel", "*.xlsx")])
+        if not ruta:
+            return
+        try:
+            cantidad = excel_import.exportar_lista_precios(ruta)
+        except Exception as e:
+            messagebox.showerror("Error exportando", str(e))
+            return
+        messagebox.showinfo(
+            "Lista de precios exportada",
+            f"Se exportaron {cantidad} productos a:\n{ruta}\n\n"
+            f"Llevá ese archivo a cada USB de emergencia y cargalo desde 'Carga Excel' "
+            f"(en USB_Dueño) para actualizar sus precios.")
 
     # ------------------------------------------------------------------ #
     # Alertas: Telegram + umbral global + umbral personalizado por producto

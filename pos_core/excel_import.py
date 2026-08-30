@@ -104,3 +104,31 @@ def cargar_masivo(ruta: str, *, usuario: str, origen: str = "MAESTRO") -> dict:
             errores.append({"fila": n, "error": str(e)})
 
     return {"creados": creados, "actualizados": actualizados, "errores": errores}
+
+
+def exportar_lista_precios(ruta: str) -> int:
+    """Exporta toda la tabla Productos a un .xlsx con las mismas columnas
+    que espera cargar_masivo() (Código | Nombre | Precio Venta | Stock
+    Inicial | Proveedor), para poder llevar ese mismo archivo a un USB de
+    emergencia y volver a cargarlo desde "Carga Excel": como el código ya
+    existe ahí, cargar_masivo() lo toma como actualización de precio en
+    vez de crear un producto duplicado.
+
+    Devuelve la cantidad de productos exportados.
+    """
+    import openpyxl
+    from pos_core.db import get_connection
+
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT codigo, nombre, precio_venta, stock, proveedor FROM Productos ORDER BY nombre"
+    ).fetchall()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Productos"
+    ws.append(["Código", "Nombre", "Precio Venta", "Stock Inicial", "Proveedor"])
+    for r in rows:
+        ws.append([r["codigo"], r["nombre"], r["precio_venta"], r["stock"], r["proveedor"] or ""])
+    wb.save(ruta)
+    return len(rows)
