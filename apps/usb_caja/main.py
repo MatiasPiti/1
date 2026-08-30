@@ -11,12 +11,12 @@ Idéntico en función a la Caja Maestra, pero:
 import os
 import sys
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, simpledialog, filedialog
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from pos_core.db import init_db
-from pos_core import sales, sync_export, audit, ticket_printer
+from pos_core import sales, sync_export, audit, ticket_printer, excel_import
 from apps.theme import (COLORS, aplicar_tema, estriar_treeview, tag_fila,
                          celda_texto, habilitar_copiar_pegar_global, abrir_dialogo_impresora)
 
@@ -58,6 +58,8 @@ class AppUsbCaja(tk.Tk):
         ttk.Button(fila, text="Preparar sincronización", command=self._preparar_sync
                    ).pack(side="right", padx=4)
         ttk.Button(fila, text="Configurar impresora", command=self._configurar_impresora
+                   ).pack(side="right", padx=4)
+        ttk.Button(fila, text="Cargar productos (Excel)", command=self._cargar_productos
                    ).pack(side="right", padx=4)
 
         cuerpo = ttk.Frame(self, padding=(16, 0))
@@ -182,6 +184,26 @@ class AppUsbCaja(tk.Tk):
     def _configurar_impresora(self):
         top = abrir_dialogo_impresora(self)
         top.bind("<Destroy>", lambda e: self.buscador.focus_set() if e.widget is top else None)
+
+    def _cargar_productos(self):
+        # El USB Caja tiene su propia base de datos, independiente de la
+        # del USB Dueño y de la del Maestro: sin esto, no habría ninguna
+        # forma de meterle un catálogo de productos.
+        ruta = filedialog.askopenfilename(filetypes=[("Excel/CSV", "*.xlsx *.xlsm *.csv")])
+        if not ruta:
+            return
+        try:
+            resultado = excel_import.cargar_masivo(ruta, usuario=USUARIO, origen=ORIGEN)
+        except Exception as e:
+            messagebox.showerror("Error cargando archivo", str(e))
+            self.buscador.focus_set()
+            return
+        mensaje = f"Creados: {resultado['creados']}  Actualizados: {resultado['actualizados']}"
+        if resultado["errores"]:
+            mensaje += f"\n\n{len(resultado['errores'])} fila(s) con error:\n"
+            mensaje += "\n".join(f"  Fila {e['fila']}: {e['error']}" for e in resultado["errores"][:10])
+        messagebox.showinfo("Productos cargados", mensaje)
+        self.buscador.focus_set()
 
     def _agregar_al_carrito(self, event=None):
         sel = self.resultados.selection()
