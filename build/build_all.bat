@@ -48,6 +48,24 @@ python -m PyInstaller --noconfirm --clean --onedir --noconsole %DATA% %ICON% ^
     services\stock_windows_service.py
 
 echo.
+echo === Copiando copia de referencia (espejo_apps) al USB de Mantenimiento ===
+REM El USB de Mantenimiento necesita llevar encima una copia "conocida
+REM buena" de cada app recien compilada: es contra eso que compara y
+REM repone archivos danados/faltantes en una instalacion (ver
+REM apps/usb_dev/mantenimiento.py::reparar_archivos_app). Se copia DESPUES
+REM de compilar todo, asi siempre lleva la version mas reciente del build.
+if exist dist\USB_Mantenimiento\espejo_apps rmdir /S /Q dist\USB_Mantenimiento\espejo_apps
+xcopy /E /I /Y dist\MaestroCaja dist\USB_Mantenimiento\espejo_apps\MaestroCaja >nul
+xcopy /E /I /Y dist\MaestroDueno dist\USB_Mantenimiento\espejo_apps\MaestroDueno >nul
+xcopy /E /I /Y dist\USB_Caja dist\USB_Mantenimiento\espejo_apps\USB_Caja >nul
+xcopy /E /I /Y dist\USB_Dueno dist\USB_Mantenimiento\espejo_apps\USB_Dueno >nul
+xcopy /E /I /Y dist\StockService dist\USB_Mantenimiento\espejo_apps\StockService >nul
+
+echo.
 echo Listo. Los ejecutables quedan en dist\NombreApp\NombreApp.exe
 echo Copia cada carpeta dist\MaestroCaja, dist\MaestroDueno, etc. a su
 echo destino final (disco de la PC fija o raiz del USB correspondiente).
+echo El USB de Mantenimiento (dist\USB_Mantenimiento) ya sale con su
+echo espejo_apps\ incluido: al conectarlo, "REPARAR TODO AUTOMATICAMENTE"
+echo puede reponer archivos danados o desactualizados en cualquier
+echo instalacion usando esta misma copia recien compilada.

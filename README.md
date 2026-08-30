@@ -140,7 +140,12 @@ E:\  (la letra es indistinta, todo es relativo a __file__)
 F:\
 ├── USB_Mantenimiento.exe
 ├── config_espejo\config.ini        # copia de referencia para restaurar
-└── reporte_mantenimiento.txt       # se va acumulando, un bloque por corrida
+├── espejo_apps\                    # copia "conocida buena" de cada app, generada
+│   ├── MaestroCaja\, MaestroDueno\, StockService\, USB_Caja\, USB_Dueno\
+│   │                                # por build_all.bat a partir del ultimo build;
+│   │                                # contra esto se comparan y reponen archivos
+│   │                                # danados/faltantes de cualquier instalacion
+└── reporte_mantenimiento.txt       # se va acumulando (se archiva solo al superar 2 MB)
 ```
 
 ---
@@ -379,10 +384,22 @@ python apps/master_caja/main.py        # ya se puede cobrar
 
 **F) Mantenimiento urgente (USB del desarrollador):**
 1. Insertar el USB de mantenimiento, ejecutar `USB_Mantenimiento.exe`.
-2. Elegir la carpeta de instalación a reparar (Maestro o un USB de emergencia).
-3. "EJECUTAR MANTENIMIENTO": integrity check + reparación, reinicio del servicio de Windows,
-   restauración de `config.ini`, limpieza de logs viejos, informe final en pantalla y en
-   `reporte_mantenimiento.txt`.
+2. Tocar **"REPARAR TODO AUTOMÁTICAMENTE"**: detecta solo el Maestro (`C:\SistemaDual`) y
+   cualquier USB de emergencia conectado, sin elegir ninguna carpeta a mano, y en cada uno
+   corre: espacio en disco, integridad de la base (con backup + reparación .dump/.restore, y
+   si ni eso alcanza, restauración del backup más reciente disponible), migración de estructura
+   (agrega columnas/tablas nuevas que una versión vieja no tenía, sin perder datos), corrección
+   de inconsistencias de datos (p.ej. stock negativo, con su movimiento de auditoría), servicio
+   de Windows (lo reinstala si no está registrado), `config.ini`, logs viejos, y reposición de
+   archivos del programa dañados/faltantes contra `espejo_apps\` (la copia de referencia que el
+   propio USB lleva encima desde el último `build_all.bat`) — esto último es lo que permite que
+   un bug de código ya corregido se resuelva con solo conectar este USB, siempre que se lo haya
+   reconstruido después de aplicar el arreglo.
+3. La opción "Avanzado: reparar una única carpeta a mano" sigue disponible para una instalación
+   en una ruta no estándar que la detección automática no encuentre.
+4. Informe final en pantalla y en `reporte_mantenimiento.txt` (se archiva solo al superar 2 MB):
+   todo lo que se corrigió y todo lo que no se pudo resolver solo queda registrado, nunca en
+   silencio.
 
 ---
 
