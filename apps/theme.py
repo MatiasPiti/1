@@ -213,3 +213,71 @@ def habilitar_copiar_pegar_global(root: tk.Misc) -> None:
             _recorrer(hijo)
 
     _recorrer(root)
+
+
+def abrir_dialogo_impresora(parent: tk.Misc) -> tk.Toplevel:
+    """Diálogo para elegir a qué impresora de Windows van los tickets de
+    venta. Se guarda en config.ini (portable, propio de cada instalación:
+    Maestro y cada USB pueden apuntar a una impresora distinta) y queda
+    ahí hasta que alguien lo vuelva a cambiar — no hay que elegirla en
+    cada venta. Devuelve el Toplevel para que quien lo abra pueda, por
+    ejemplo, atar la devolución del foco a su cierre."""
+    from pos_core import config, ticket_printer
+
+    PREDETERMINADA = "(Predeterminada de Windows)"
+
+    top = tk.Toplevel(parent)
+    aplicar_tema(top)
+    top.title("Configurar impresora de tickets")
+    top.geometry("440x260")
+    top.transient(parent)
+    top.grab_set()
+
+    cfg = config.cargar_config()
+    actual = cfg.get("impresora", "nombre", fallback="")
+
+    ttk.Label(top, text="Impresora para los tickets de venta:", style="Header.TLabel"
+              ).pack(anchor="w", padx=16, pady=(16, 6))
+
+    impresoras = [PREDETERMINADA] + ticket_printer.listar_impresoras()
+    seleccion = tk.StringVar(value=actual if actual in impresoras else PREDETERMINADA)
+    combo = ttk.Combobox(top, textvariable=seleccion, values=impresoras, state="readonly", width=48)
+    combo.pack(padx=16, fill="x")
+
+    if len(impresoras) == 1:
+        ttk.Label(top, text="No se detectó ninguna impresora instalada en este sistema (o no es "
+                             "Windows): mientras tanto se va a usar la predeterminada.",
+                  style="Muted.TLabel", wraplength=400, justify="left").pack(padx=16, pady=(8, 0), anchor="w")
+
+    def _probar():
+        from tkinter import messagebox
+        texto = ("PRUEBA DE IMPRESION\nOTTER\n" + "-" * 32 +
+                 "\nSi ve este texto, la\nimpresora quedo bien\nconfigurada.\n\n\n")
+        elegida = seleccion.get()
+        nombre = None if elegida == PREDETERMINADA else elegida
+        enviado, detalle = ticket_printer.imprimir_ticket(texto, venta_uuid="prueba", nombre_impresora=nombre)
+        if enviado:
+            messagebox.showinfo("Prueba enviada", f"Se envió la prueba a: {detalle}")
+        else:
+            messagebox.showwarning("No se pudo imprimir",
+                                    f"No se pudo enviar a esa impresora; se guardó como archivo:\n{detalle}")
+
+    def _guardar():
+        from tkinter import messagebox
+        elegida = seleccion.get()
+        if "impresora" not in cfg:
+            cfg["impresora"] = {}
+        cfg.set("impresora", "nombre", "" if elegida == PREDETERMINADA else elegida)
+        config.guardar_config(cfg)
+        messagebox.showinfo("Impresora configurada",
+                             f"A partir de ahora los tickets se imprimen en:\n{elegida}\n\n"
+                             f"Esto queda guardado — no hace falta elegirla de nuevo.")
+        top.destroy()
+
+    botones = ttk.Frame(top)
+    botones.pack(fill="x", padx=16, pady=16, side="bottom")
+    ttk.Button(botones, text="Imprimir prueba", command=_probar).pack(side="left")
+    ttk.Button(botones, text="Cancelar", command=top.destroy).pack(side="right")
+    ttk.Button(botones, text="Guardar", style="Accent.TButton", command=_guardar).pack(side="right", padx=6)
+
+    return top

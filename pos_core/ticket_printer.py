@@ -64,6 +64,18 @@ def _guardar_respaldo(texto: str, venta_uuid: str) -> str:
     return ruta
 
 
+def listar_impresoras() -> list:
+    """Nombres de las impresoras instaladas en Windows (locales y de red
+    ya conectadas), para el selector de configuración de la Caja. Lista
+    vacía en cualquier otro sistema operativo o si falla la consulta."""
+    try:
+        import win32print
+        flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+        return sorted(p[2] for p in win32print.EnumPrinters(flags))
+    except Exception:
+        return []
+
+
 def imprimir_ticket(texto: str, venta_uuid: str = "", nombre_impresora: str = None) -> tuple:
     """Devuelve (enviado_a_impresora: bool, detalle: str).
 

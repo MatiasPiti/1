@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from pos_core.db import init_db
 from pos_core import sales, sync_export, audit, ticket_printer
 from apps.theme import (COLORS, aplicar_tema, estriar_treeview, tag_fila,
-                         celda_texto, habilitar_copiar_pegar_global)
+                         celda_texto, habilitar_copiar_pegar_global, abrir_dialogo_impresora)
 
 ORIGEN = "USB_CAJA"
 USUARIO = os.environ.get("USERNAME", "cajero_emergencia")
@@ -56,6 +56,8 @@ class AppUsbCaja(tk.Tk):
         ttk.Button(fila, text="Buscar", command=self._on_buscar).pack(side="left")
         ttk.Button(fila, text="Historial de hoy", command=self._abrir_historial).pack(side="right", padx=4)
         ttk.Button(fila, text="Preparar sincronización", command=self._preparar_sync
+                   ).pack(side="right", padx=4)
+        ttk.Button(fila, text="Configurar impresora", command=self._configurar_impresora
                    ).pack(side="right", padx=4)
 
         cuerpo = ttk.Frame(self, padding=(16, 0))
@@ -176,6 +178,10 @@ class AppUsbCaja(tk.Tk):
             self._refrescar_resultados([])
 
         self.buscador.focus_set()
+
+    def _configurar_impresora(self):
+        top = abrir_dialogo_impresora(self)
+        top.bind("<Destroy>", lambda e: self.buscador.focus_set() if e.widget is top else None)
 
     def _agregar_al_carrito(self, event=None):
         sel = self.resultados.selection()
