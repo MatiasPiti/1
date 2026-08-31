@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from pos_core.db import init_db, get_connection
 from pos_core import (stock_service, bulk_edit, pdf_import, excel_import, filters, config, alerts,
-                       audit, products, ofertas, reports)
+                       audit, products, ofertas, reports, sales, arca)
 from pos_core.paths import sync_dir
 from pos_core import reconciliation
 from apps.theme import aplicar_tema, estriar_treeview, tag_fila, habilitar_copiar_pegar_global
@@ -46,6 +46,7 @@ class AppDueno(tk.Tk):
         self.tab_ofertas = ttk.Frame(nb)
         self.tab_pdf = ttk.Frame(nb)
         self.tab_excel = ttk.Frame(nb)
+        self.tab_arca = ttk.Frame(nb)
         self.tab_alertas = ttk.Frame(nb)
         self.tab_auditoria = ttk.Frame(nb)
 
@@ -55,6 +56,7 @@ class AppDueno(tk.Tk):
         nb.add(self.tab_ofertas, text="Ofertas")
         nb.add(self.tab_pdf, text="Facturas PDF")
         nb.add(self.tab_excel, text="Carga Excel")
+        nb.add(self.tab_arca, text="Facturación ARCA")
         nb.add(self.tab_alertas, text="Alertas")
         nb.add(self.tab_auditoria, text="Auditoría")
 
@@ -64,6 +66,7 @@ class AppDueno(tk.Tk):
         self._armar_ofertas(self.tab_ofertas)
         self._armar_pdf(self.tab_pdf)
         self._armar_excel(self.tab_excel)
+        self._armar_arca(self.tab_arca)
         self._armar_alertas(self.tab_alertas)
         self._armar_auditoria(self.tab_auditoria)
         habilitar_copiar_pegar_global(self)
@@ -620,6 +623,135 @@ class AppDueno(tk.Tk):
             f"Se exportaron {cantidad} productos a:\n{ruta}\n\n"
             f"Llevá ese archivo a cada USB de emergencia y cargalo desde 'Carga Excel' "
             f"(en USB_Dueño) para actualizar sus precios.")
+
+    # ------------------------------------------------------------------ #
+    # Facturación ARCA: configuración de credenciales + qué se cobró
+    # con factura y qué se cobró sin facturar (ver apps/master_caja,
+    # botones/atajos F12 "Cobrar y facturar" y F5 "Cobrar sin facturar").
+    # ------------------------------------------------------------------ #
+    def _armar_arca(self, frame):
+        cfg = config.cargar_config()
+        form = ttk.LabelFrame(frame, text="Configuración de ARCA (ex AFIP)", padding=12)
+        form.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(form, text="CUIT:").grid(row=0, column=0, sticky="w")
+        self.arca_cuit = ttk.Entry(form, width=20)
+        self.arca_cuit.insert(0, cfg.get("arca", "cuit", fallback=""))
+        self.arca_cuit.grid(row=0, column=1, sticky="w", padx=6)
+
+        ttk.Label(form, text="Punto de venta:").grid(row=0, column=2, sticky="w")
+        self.arca_pto_venta = ttk.Entry(form, width=10)
+        self.arca_pto_venta.insert(0, cfg.get("arca", "punto_venta", fallback=""))
+        self.arca_pto_venta.grid(row=0, column=3, sticky="w", padx=6)
+
+        ttk.Label(form, text="Tipo de comprobante:").grid(row=1, column=0, sticky="w")
+        self.arca_tipo = ttk.Combobox(form, values=["B", "C"], state="readonly", width=6)
+        self.arca_tipo.set(cfg.get("arca", "tipo_comprobante", fallback="B") or "B")
+        self.arca_tipo.grid(row=1, column=1, sticky="w", padx=6)
+
+        ttk.Label(form, text="Ambiente:").grid(row=1, column=2, sticky="w")
+        self.arca_ambiente = ttk.Combobox(form, values=["homologacion", "produccion"],
+                                           state="readonly", width=14)
+        self.arca_ambiente.set(cfg.get("arca", "ambiente", fallback="homologacion") or "homologacion")
+        self.arca_ambiente.grid(row=1, column=3, sticky="w", padx=6)
+
+        ttk.Label(form, text="Certificado (.crt/.pem):").grid(row=2, column=0, sticky="w")
+        self.arca_cert = ttk.Entry(form, width=48)
+        self.arca_cert.insert(0, cfg.get("arca", "certificado_path", fallback=""))
+        self.arca_cert.grid(row=2, column=1, columnspan=2, sticky="w", padx=6)
+        ttk.Button(form, text="Elegir...",
+                   command=lambda: self._elegir_archivo_arca(self.arca_cert)).grid(row=2, column=3, sticky="w")
+
+        ttk.Label(form, text="Clave privada (.key/.pem):").grid(row=3, column=0, sticky="w")
+        self.arca_clave = ttk.Entry(form, width=48)
+        self.arca_clave.insert(0, cfg.get("arca", "clave_privada_path", fallback=""))
+        self.arca_clave.grid(row=3, column=1, columnspan=2, sticky="w", padx=6)
+        ttk.Button(form, text="Elegir...",
+                   command=lambda: self._elegir_archivo_arca(self.arca_clave)).grid(row=3, column=3, sticky="w")
+
+        self.arca_habilitado = tk.BooleanVar(
+            value=cfg.get("arca", "habilitado", fallback="false").strip().lower() in ("true", "1", "si", "sí"))
+        ttk.Checkbutton(form, text="Habilitado (si está destildado, F12 en la Caja avisa y no intenta facturar)",
+                         variable=self.arca_habilitado).grid(row=4, column=1, columnspan=3, sticky="w", pady=(6, 0))
+
+        ttk.Button(form, text="Guardar configuración", style="Accent.TButton",
+                   command=self._guardar_config_arca).grid(row=5, column=1, pady=(10, 0), sticky="w")
+        ttk.Label(form, text="El certificado y la clave los genera tu cliente desde el portal de ARCA "
+                              "(no algo que este programa pueda crear). Antes de una factura real, "
+                              "probar a fondo en ambiente 'homologacion'.",
+                  style="Muted.TLabel", wraplength=680, justify="left").grid(
+            row=6, column=0, columnspan=4, sticky="w", pady=(8, 0))
+
+        resumen = ttk.LabelFrame(frame, text="Qué se cobró hoy con factura y qué sin facturar", padding=12)
+        resumen.pack(fill="both", expand=True)
+
+        barra = ttk.Frame(resumen)
+        barra.pack(fill="x", pady=(0, 6))
+        ttk.Button(barra, text="Actualizar", command=self._refrescar_resumen_arca).pack(side="left")
+        ttk.Button(barra, text="Reintentar facturación de la venta seleccionada",
+                   command=self._reintentar_facturacion).pack(side="left", padx=8)
+        self.lbl_resumen_arca = ttk.Label(barra, text="", style="Header.TLabel")
+        self.lbl_resumen_arca.pack(side="left", padx=16)
+
+        self.tree_arca = ttk.Treeview(
+            resumen, columns=("hora", "total", "facturada", "comprobante", "cae", "error"),
+            show="headings", height=14)
+        for col, txt, w in [("hora", "Hora", 90), ("total", "Total", 90), ("facturada", "Facturada", 80),
+                             ("comprobante", "Comprobante", 130), ("cae", "CAE", 140), ("error", "Motivo", 220)]:
+            self.tree_arca.heading(col, text=txt)
+            self.tree_arca.column(col, width=w, anchor="e" if col == "total" else "w")
+        estriar_treeview(self.tree_arca)
+        self.tree_arca.pack(fill="both", expand=True)
+
+        self._refrescar_resumen_arca()
+
+    def _elegir_archivo_arca(self, entry: ttk.Entry):
+        ruta = filedialog.askopenfilename(filetypes=[("Certificados/claves", "*.crt *.pem *.key"),
+                                                       ("Todos los archivos", "*.*")])
+        if ruta:
+            entry.delete(0, "end")
+            entry.insert(0, ruta)
+
+    def _guardar_config_arca(self):
+        cfg = config.cargar_config()
+        cfg.set("arca", "cuit", self.arca_cuit.get().strip())
+        cfg.set("arca", "punto_venta", self.arca_pto_venta.get().strip())
+        cfg.set("arca", "tipo_comprobante", self.arca_tipo.get())
+        cfg.set("arca", "ambiente", self.arca_ambiente.get())
+        cfg.set("arca", "certificado_path", self.arca_cert.get().strip())
+        cfg.set("arca", "clave_privada_path", self.arca_clave.get().strip())
+        cfg.set("arca", "habilitado", "true" if self.arca_habilitado.get() else "false")
+        config.guardar_config(cfg)
+        messagebox.showinfo("Configuración guardada", "La configuración de ARCA quedó guardada.")
+
+    def _refrescar_resumen_arca(self):
+        for row in self.tree_arca.get_children():
+            self.tree_arca.delete(row)
+        resumen = sales.resumen_facturacion()
+        for v in resumen["ventas"]:
+            hora = v["fecha_hora"][11:19] if len(v["fecha_hora"]) >= 19 else v["fecha_hora"]
+            comprobante = f"{v['tipo_comprobante']} Nº {v['numero_comprobante']}" if v["facturada"] else ""
+            self.tree_arca.insert("", "end", iid=v["uuid_unico"], values=(
+                hora, f"${v['total']:.2f}", "Sí" if v["facturada"] else "No",
+                comprobante, v.get("cae") or "", v.get("arca_error") or ""))
+        self.lbl_resumen_arca.config(
+            text=f"Facturado hoy: {len(resumen['facturadas'])} venta(s) por ${resumen['total_facturado']:.2f}   |   "
+                 f"Sin facturar: {len(resumen['sin_facturar'])} venta(s) por ${resumen['total_sin_facturar']:.2f}")
+
+    def _reintentar_facturacion(self):
+        sel = self.tree_arca.selection()
+        if not sel:
+            messagebox.showinfo("Elegí una venta", "Hacé clic sobre una venta sin facturar de la lista.")
+            return
+        venta_uuid = sel[0]
+        try:
+            sales.facturar_venta_arca(venta_uuid)
+        except arca.ArcaError as e:
+            messagebox.showwarning("No se pudo facturar", str(e))
+            self._refrescar_resumen_arca()
+            return
+        messagebox.showinfo("Facturada", "La venta se facturó correctamente con ARCA.")
+        self._refrescar_resumen_arca()
 
     # ------------------------------------------------------------------ #
     # Alertas: Telegram + umbral global + umbral personalizado por producto

@@ -50,6 +50,14 @@ def formatear_ticket(venta: dict, detalle: list) -> str:
     lineas.append(_separador())
     lineas.append(f"TOTAL: ${venta['total']:.2f}".rjust(ANCHO))
     lineas.append(f"Pago: {venta['metodo_pago']}")
+
+    if venta.get("facturada"):
+        lineas.append(_separador())
+        lineas.append(f"Factura {venta.get('tipo_comprobante', '')} "
+                       f"Nº {venta.get('numero_comprobante', '')}"[:ANCHO])
+        lineas.append(f"CAE: {venta.get('cae', '')}"[:ANCHO])
+        lineas.append(f"Vto. CAE: {venta.get('cae_vencimiento', '')}"[:ANCHO])
+
     lineas.append(_separador())
     lineas.append(_centrar("Gracias por su compra!"))
     lineas.append("\n\n\n")  # avance de papel para que el corte no tape texto

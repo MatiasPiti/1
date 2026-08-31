@@ -25,7 +25,7 @@ from tkinter import ttk, messagebox, simpledialog
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from pos_core.db import init_db
-from pos_core import sales, audit, ticket_printer
+from pos_core import sales, audit, ticket_printer, arca
 from apps.theme import (COLORS, aplicar_tema, estriar_treeview, tag_fila,
                          celda_texto, habilitar_copiar_pegar_global, abrir_dialogo_impresora)
 
@@ -99,9 +99,12 @@ class AppCaja(tk.Tk):
         self.metodo_pago.pack(side="left")
 
         ttk.Button(bottom, text="Quitar línea", command=self._quitar_linea).pack(side="right", padx=4)
-        ttk.Button(bottom, text="COBRAR (F12)", style="Accent.TButton", command=self._cobrar
+        ttk.Button(bottom, text="COBRAR Y FACTURAR (F12)", style="Accent.TButton",
+                   command=self._cobrar_y_facturar).pack(side="right", padx=4)
+        ttk.Button(bottom, text="COBRAR SIN FACTURAR (F5)", command=self._cobrar_sin_facturar
                    ).pack(side="right", padx=4)
-        self.bind("<F12>", lambda e: self._cobrar())
+        self.bind("<F12>", lambda e: self._cobrar_y_facturar())
+        self.bind("<F5>", lambda e: self._cobrar_sin_facturar())
 
     # ------------------------------------------------------------------ #
     # Grilla del carrito armada a mano (Treeview no permite negrita en
@@ -256,7 +259,7 @@ class AppCaja(tk.Tk):
                 pass  # la auditoría nunca debe bloquear el trabajo del cajero
         self.buscador.focus_set()
 
-    def _cobrar(self):
+    def _cobrar_sin_facturar(self):
         if not self.carrito:
             messagebox.showwarning("Carrito vacío", "Agregá al menos un producto antes de cobrar.")
             return
@@ -267,17 +270,47 @@ class AppCaja(tk.Tk):
             messagebox.showerror("Error al cobrar", str(e))
             return
 
+        mensaje = f"Ticket {resultado['venta_uuid'][:8]}... por ${resultado['total']:.2f}\n(cobrado sin factura)"
+        self._finalizar_cobro(resultado, mensaje)
+
+    def _cobrar_y_facturar(self):
+        if not self.carrito:
+            messagebox.showwarning("Carrito vacío", "Agregá al menos un producto antes de cobrar.")
+            return
+        try:
+            resultado = sales.cerrar_ticket(
+                self.carrito, metodo_pago=self.metodo_pago.get(), usuario=USUARIO, origen=ORIGEN)
+        except Exception as e:
+            messagebox.showerror("Error al cobrar", str(e))
+            return
+
+        # La venta ya quedó registrada acá arriba: si la factura falla,
+        # NUNCA se deshace el cobro, solo se avisa que hay que facturarla
+        # después (ver Panel del Dueño, pestaña "Facturación ARCA").
+        try:
+            factura = sales.facturar_venta_arca(resultado["venta_uuid"])
+            mensaje = (f"Ticket {resultado['venta_uuid'][:8]}... por ${resultado['total']:.2f}\n"
+                       f"Factura {factura['tipo_comprobante']} Nº {factura['numero_comprobante']}\n"
+                       f"CAE: {factura['cae']}")
+        except arca.ArcaError as e:
+            mensaje = (f"Ticket {resultado['venta_uuid'][:8]}... por ${resultado['total']:.2f}\n\n"
+                       f"La venta se cobró OK, pero NO se pudo facturar con ARCA:\n{e}\n\n"
+                       f"Se puede reintentar después desde el Panel del Dueño "
+                       f"(pestaña 'Facturación ARCA').")
+
+        self._finalizar_cobro(resultado, mensaje)
+
+    def _finalizar_cobro(self, resultado: dict, mensaje: str):
         self._imprimir_venta(resultado["venta_uuid"], silencioso=True)
 
         if resultado["fallas_stock"]:
             detalle = "\n".join(f"- {f['codigo']}: {f['error']}" for f in resultado["fallas_stock"])
-            messagebox.showwarning(
-                "Venta registrada con avisos",
-                f"El ticket se cobró OK, pero hubo problemas descontando stock:\n{detalle}\n"
-                f"El servicio de stock reintentará automáticamente.")
+            mensaje += (f"\n\n(Hubo problemas descontando stock; el servicio los reintenta "
+                        f"solo:\n{detalle})")
+            messagebox.showwarning("Venta registrada con avisos", mensaje)
         else:
-            messagebox.showinfo("Venta cobrada", f"Ticket {resultado['venta_uuid'][:8]}... "
-                                                  f"por ${resultado['total']:.2f}")
+            messagebox.showinfo("Venta cobrada", mensaje)
+
         self.carrito = []
         self.carrito_seleccionado = None
         self._refrescar_grilla_carrito()

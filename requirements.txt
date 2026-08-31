@@ -1,6 +1,10 @@
 # Núcleo (todas las apps)
 requests>=2.31
 
+# Facturación electrónica ARCA (WSAA): firma CMS/PKCS#7 del Ticket de
+# Requerimiento de Acceso, sin depender de tener openssl.exe instalado.
+cryptography>=41
+
 # Panel del Dueño: gráficos, PDF, Excel
 matplotlib>=3.8
 pdfplumber>=0.10

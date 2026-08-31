@@ -82,6 +82,44 @@ def cerrar_ticket(carrito: list, *, metodo_pago: str, usuario: str,
     }
 
 
+def facturar_venta_arca(venta_uuid: str) -> dict:
+    """Intenta facturar con ARCA una venta YA cobrada (ver cerrar_ticket).
+    Deliberadamente separado del cobro: la venta se registra siempre,
+    facturarla es un paso aparte que puede fallar (sin conexión, ARCA
+    caído, comprobante rechazado) sin poner en riesgo el cobro en sí.
+
+    Si tiene éxito, graba el CAE en la Venta y devuelve el resultado. Si
+    falla, graba el motivo en Ventas.arca_error (para que el Panel del
+    Dueño lo pueda ver y reintentar más tarde) y vuelve a lanzar la
+    excepción para que quien llamó (la Caja) le avise al cajero.
+    """
+    from pos_core import arca
+    from pos_core.db import get_connection
+
+    conn = get_connection()
+    venta = conn.execute(
+        "SELECT total, fecha_hora FROM Ventas WHERE uuid_unico = ?", (venta_uuid,)
+    ).fetchone()
+    if venta is None:
+        raise ValueError("Venta no encontrada")
+
+    try:
+        resultado = arca.facturar_venta(dict(venta))
+    except arca.ArcaError as e:
+        with transaction() as conn:
+            conn.execute("UPDATE Ventas SET arca_error = ? WHERE uuid_unico = ?", (str(e), venta_uuid))
+        raise
+
+    with transaction() as conn:
+        conn.execute(
+            """UPDATE Ventas SET facturada = 1, tipo_comprobante = ?, numero_comprobante = ?,
+               cae = ?, cae_vencimiento = ?, arca_error = NULL WHERE uuid_unico = ?""",
+            (resultado["tipo_comprobante"], resultado["numero_comprobante"],
+             resultado["cae"], resultado["cae_vencimiento"], venta_uuid),
+        )
+    return resultado
+
+
 def buscar_productos(termino: str, *, limite: int = 30) -> list:
     """Búsqueda de productos por código o nombre para la pantalla de
     cobro. Deliberadamente NO devuelve la columna 'stock': el cajero no
@@ -127,6 +165,37 @@ def listar_ventas_de_hoy() -> list:
            ORDER BY fecha_hora DESC"""
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def resumen_facturacion(fecha_desde: str = None, fecha_hasta: str = None) -> dict:
+    """Para el Panel del Dueño: separa lo cobrado CON factura de ARCA de
+    lo cobrado SIN facturar, con conteo y total de cada uno. Por defecto
+    mira solo el día de hoy; se le puede pasar un rango ('YYYY-MM-DD')."""
+    from pos_core.db import get_connection
+    conn = get_connection()
+    if not fecha_desde:
+        fecha_desde = conn.execute("SELECT date('now','localtime')").fetchone()[0]
+    if not fecha_hasta:
+        fecha_hasta = fecha_desde
+
+    rows = conn.execute(
+        """SELECT uuid_unico, fecha_hora, total, metodo_pago, facturada, tipo_comprobante,
+                  numero_comprobante, cae, cae_vencimiento, arca_error
+           FROM Ventas WHERE date(fecha_hora) BETWEEN ? AND ? AND anulada = 0
+           ORDER BY fecha_hora DESC""",
+        (fecha_desde, fecha_hasta),
+    ).fetchall()
+    ventas = [dict(r) for r in rows]
+
+    facturadas = [v for v in ventas if v["facturada"]]
+    sin_facturar = [v for v in ventas if not v["facturada"]]
+    return {
+        "ventas": ventas,
+        "facturadas": facturadas,
+        "sin_facturar": sin_facturar,
+        "total_facturado": sum(v["total"] for v in facturadas),
+        "total_sin_facturar": sum(v["total"] for v in sin_facturar),
+    }
 
 
 def obtener_venta_con_detalle(venta_uuid: str) -> dict:

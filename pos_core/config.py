@@ -8,6 +8,15 @@ _DEFAULTS = {
     "telegram": {"bot_token": "", "chat_id_default": "", "habilitado": "false"},
     "general": {"nombre_local": "Mi Negocio", "modo": "MAESTRO"},
     "impresora": {"nombre": ""},  # vacío = usar la impresora predeterminada de Windows
+    "arca": {
+        "habilitado": "false",
+        "ambiente": "homologacion",       # homologacion | produccion
+        "cuit": "",
+        "punto_venta": "",
+        "tipo_comprobante": "B",          # B (Resp. Inscripto a Consumidor Final) | C (Monotributista)
+        "certificado_path": "",           # .crt/.pem del certificado digital emitido por ARCA
+        "clave_privada_path": "",         # .key privada del mismo par (NUNCA se sube a ningún lado)
+    },
 }
 
 

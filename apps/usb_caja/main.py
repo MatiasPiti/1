@@ -92,8 +92,13 @@ class AppUsbCaja(tk.Tk):
         self.metodo_pago.set("EFECTIVO")
         self.metodo_pago.pack(side="left", padx=16)
         ttk.Button(bottom, text="Quitar línea", command=self._quitar_linea).pack(side="right", padx=4)
-        ttk.Button(bottom, text="COBRAR (F12)", style="Accent.TButton", command=self._cobrar).pack(side="right")
-        self.bind("<F12>", lambda e: self._cobrar())
+        ttk.Button(bottom, text="COBRAR SIN FACTURAR (F12 / F5)", style="Accent.TButton",
+                   command=self._cobrar_sin_facturar).pack(side="right")
+        # El USB de emergencia nunca factura con ARCA (no hay conexión garantizada):
+        # F12 y F5 hacen lo mismo acá. La factura de estas ventas se puede emitir
+        # después desde el Maestro, una vez conciliadas (ver Panel de Sincronización).
+        self.bind("<F12>", lambda e: self._cobrar_sin_facturar())
+        self.bind("<F5>", lambda e: self._cobrar_sin_facturar())
 
     # ------------------------------------------------------------------ #
     def _armar_grilla_carrito(self, parent):
@@ -251,7 +256,7 @@ class AppUsbCaja(tk.Tk):
                 pass
         self.buscador.focus_set()
 
-    def _cobrar(self):
+    def _cobrar_sin_facturar(self):
         if not self.carrito:
             messagebox.showwarning("Carrito vacío", "Agregá al menos un producto antes de cobrar.")
             return

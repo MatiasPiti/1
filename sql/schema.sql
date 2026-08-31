@@ -58,7 +58,13 @@ CREATE TABLE IF NOT EXISTS Ventas (
     origen          TEXT NOT NULL DEFAULT 'MAESTRO' CHECK (origen IN ('MAESTRO','USB_CAJA')),
     anulada         INTEGER NOT NULL DEFAULT 0,
     sincronizado    INTEGER NOT NULL DEFAULT 1,
-    importado_en    TEXT   -- NULL si nació en esta DB; fecha real de conciliación si vino de un USB
+    importado_en    TEXT,  -- NULL si nació en esta DB; fecha real de conciliación si vino de un USB
+    facturada           INTEGER NOT NULL DEFAULT 0,   -- 1 = tiene CAE de ARCA asociado
+    tipo_comprobante     TEXT,     -- 'B' | 'C', según lo configurado al momento de facturar
+    numero_comprobante   INTEGER,  -- número correlativo dentro del punto de venta/tipo
+    cae                  TEXT,     -- Código de Autorización Electrónico que devuelve ARCA
+    cae_vencimiento       TEXT,    -- 'YYYY-MM-DD', vencimiento del CAE
+    arca_error            TEXT     -- motivo si se intentó facturar y ARCA lo rechazó (auditoría)
 );
 CREATE INDEX IF NOT EXISTS idx_ventas_fecha ON Ventas(fecha_hora);
 
