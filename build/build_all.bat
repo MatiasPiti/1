@@ -1,6 +1,7 @@
 @echo off
 REM =====================================================================
-REM Compilacion de los 5 ejecutables portables del Sistema Dual.
+REM Compilacion de los 6 ejecutables portables de Otter + el servicio
+REM oculto de stock (7 en total).
 REM Ejecutar desde la raiz del repo: build\build_all.bat
 REM Requiere: pip install -r requirements.txt
 REM Genera cada app en --onedir (carpeta con .exe + dependencias), que es
@@ -36,8 +37,14 @@ echo === 4/5 USB Dueno (emergencia) ===
     apps\usb_dueno\main.py
 
 echo.
-echo === 5/5 USB Mantenimiento (Desarrollador) ===
+echo === 5/6 USB Mantenimiento (Desarrollador) ===
 %PYI% %DATA% %ICON% --name USB_Mantenimiento --paths . apps\usb_dev\mantenimiento.py
+
+echo.
+echo === 6/6 Otter Dueno Remoto (otra PC, vía Tailscale) ===
+%PYI% %DATA% %ICON% --name DuenoRemoto --paths . ^
+    --hidden-import matplotlib.backends.backend_tkagg ^
+    apps\dueno_remoto\main.py
 
 echo.
 echo === Servicio oculto de stock (Windows Service, consola oculta) ===
@@ -69,3 +76,6 @@ echo El USB de Mantenimiento (dist\USB_Mantenimiento) ya sale con su
 echo espejo_apps\ incluido: al conectarlo, "REPARAR TODO AUTOMATICAMENTE"
 echo puede reponer archivos danados o desactualizados en cualquier
 echo instalacion usando esta misma copia recien compilada.
+echo dist\DuenoRemoto se instala en la PC del dueño, en otra ubicación,
+echo conectada a la PC del local por Tailscale (ver README, seccion de
+echo Dueño Remoto, para habilitar [remoto] en el config.ini del Maestro).

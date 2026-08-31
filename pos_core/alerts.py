@@ -10,6 +10,17 @@ este módulo es la capa de escritura/lectura que usa la UI del Dueño.
 from pos_core.db import get_connection, transaction
 
 
+def set_umbral_global(stock_minimo: int, stock_maximo: int) -> None:
+    with transaction() as conn:
+        conn.execute(
+            """INSERT INTO Configuracion_Alertas (producto_codigo, stock_minimo, stock_maximo, activo)
+               VALUES (NULL, ?, ?, 1)
+               ON CONFLICT(producto_codigo) DO UPDATE SET
+                  stock_minimo = excluded.stock_minimo, stock_maximo = excluded.stock_maximo""",
+            (stock_minimo, stock_maximo),
+        )
+
+
 def set_umbral_producto(codigo: str, stock_minimo: int, stock_maximo: int) -> None:
     with transaction() as conn:
         conn.execute(

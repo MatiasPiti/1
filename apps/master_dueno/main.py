@@ -4,6 +4,13 @@ Acceso total: dashboard, stock (manual/PDF/lector), filtros + edición
 masiva, carga Excel inicial, configuración de alertas de Telegram, y el
 módulo oculto de sincronización/conciliación (Ctrl+Shift+M) para cuando
 se conecta un USB de emergencia.
+
+Todo el acceso a datos pasa por `self.backend` (ver
+pos_core/dueno_backend.py) en vez de importar los módulos de pos_core
+directamente: así el mismo código de esta ventana sirve sin cambios para
+el Maestro local (LocalBackend, el uso de siempre) y para el Dueño
+Remoto (RemoteBackend, ver apps/dueno_remoto/main.py) que habla con el
+Maestro por HTTP a través de una VPN privada tipo Tailscale.
 """
 
 import os
@@ -13,11 +20,8 @@ from tkinter import ttk, messagebox, filedialog
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from pos_core.db import init_db, get_connection
-from pos_core import (stock_service, bulk_edit, pdf_import, excel_import, filters, config, alerts,
-                       audit, products, ofertas, reports, sales, arca)
-from pos_core.paths import sync_dir
-from pos_core import reconciliation
+from pos_core.db import init_db
+from pos_core.dueno_backend import LocalBackend
 from apps.theme import aplicar_tema, estriar_treeview, tag_fila, habilitar_copiar_pegar_global
 
 USUARIO = os.environ.get("USERNAME", "dueño")
@@ -25,9 +29,11 @@ ORIGEN = "MAESTRO"
 
 
 class AppDueno(tk.Tk):
-    def __init__(self):
+    def __init__(self, backend=None):
         super().__init__()
         aplicar_tema(self)
+        self.backend = backend or LocalBackend()
+        self.es_remoto = not isinstance(self.backend, LocalBackend)
         self.title("Otter Dueño")
         self.geometry("1180x760")
 
@@ -35,6 +41,10 @@ class AppDueno(tk.Tk):
         # Filtros: lista ordenada de códigos elegidos a mano por el dueño.
         self.filtro_codigos = []
         self.filtro_nombres = {}  # codigo -> (nombre, precio_venta), cache para no reconsultar la DB
+
+        if self.es_remoto:
+            self.lbl_conexion = tk.Label(self, text="", font=("Segoe UI", 11, "bold"), pady=6)
+            self.lbl_conexion.pack(fill="x")
 
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=10, pady=10)
@@ -73,13 +83,36 @@ class AppDueno(tk.Tk):
 
         nb.bind("<<NotebookTabChanged>>", self._on_cambio_pestana)
 
-        # Módulo oculto de sincronización/conciliación (desarrollador)
-        self.bind_all("<Control-Shift-M>", self._abrir_panel_sync)
+        if not self.es_remoto:
+            # Módulo oculto de sincronización/conciliación (desarrollador):
+            # necesita el USB físico insertado en ESTA pc, no tiene sentido
+            # en modo remoto.
+            self.bind_all("<Control-Shift-M>", self._abrir_panel_sync)
 
-        # Bot de Telegram: revisa umbrales cada 5 minutos mientras el
-        # panel esté abierto (independiente del monitoreo 24/7 que corre
-        # en el servicio oculto de stock en el Maestro).
-        self._iniciar_monitor_alertas()
+            # Bot de Telegram: revisa umbrales cada 5 minutos mientras el
+            # panel esté abierto (independiente del monitoreo 24/7 que corre
+            # en el servicio oculto de stock en el Maestro). En modo remoto
+            # ya lo hace el Maestro por su cuenta; correrlo también acá
+            # sería redundante (y no tendría base de datos local que mirar).
+            self._iniciar_monitor_alertas()
+        else:
+            self._verificar_conexion_periodica()
+
+    def _verificar_conexion_periodica(self):
+        # Nunca asumas que lo que ves está actualizado: si se corta la
+        # conexión con el local (wifi, datos móviles, lo que sea), esto lo
+        # deja bien claro en vez de mostrar datos viejos como si fueran en
+        # vivo. Apenas vuelve la conexión, el cartel se pone verde solo —
+        # no hace falta "sincronizar" nada, es la misma base de datos.
+        conectado = self.backend.verificar_conexion()
+        if conectado:
+            self.lbl_conexion.config(text="🟢 Conectado con el local en vivo",
+                                      bg="#27ae60", fg="white")
+        else:
+            self.lbl_conexion.config(
+                text="🔴 Sin conexión con el local — lo que ves puede estar desactualizado",
+                bg="#c0392b", fg="white")
+        self.after(15000, self._verificar_conexion_periodica)
 
     def _iniciar_monitor_alertas(self):
         # El bot es "best effort": si falla al iniciar (falta una librería,
@@ -121,24 +154,17 @@ class AppDueno(tk.Tk):
         self._refrescar_dashboard()
 
     def _refrescar_dashboard(self):
-        conn = get_connection()
-        total_hoy = conn.execute(
-            "SELECT COALESCE(SUM(total),0) t, COUNT(*) c FROM Ventas "
-            "WHERE date(fecha_hora) = date('now','localtime') AND anulada = 0"
-        ).fetchone()
+        resumen = self.backend.reports.resumen_dashboard()
         self.lbl_resumen.config(
-            text=f"Ventas de hoy: {total_hoy['c']}   ·   Total: ${total_hoy['t']:.2f}")
+            text=f"Ventas de hoy: {resumen['ventas_hoy']}   ·   Total: ${resumen['total_hoy']:.2f}")
 
         for row in self.tree_metodos_pago.get_children():
             self.tree_metodos_pago.delete(row)
-        for i, m in enumerate(reports.totales_por_metodo_pago()):
+        for i, m in enumerate(self.backend.reports.totales_por_metodo_pago()):
             self.tree_metodos_pago.insert("", "end", values=(m["metodo_pago"], m["cantidad"],
                                                                f"${m['total']:.2f}"), tags=(tag_fila(i),))
 
-        top_productos = conn.execute(
-            """SELECT producto_nombre, SUM(cantidad) cant FROM Detalle_Ventas
-               GROUP BY producto_codigo ORDER BY cant DESC LIMIT 8"""
-        ).fetchall()
+        top_productos = resumen["top_productos"]
 
         for w in self.chart_frame.winfo_children():
             w.destroy()
@@ -252,24 +278,14 @@ class AppDueno(tk.Tk):
         for row in self.tree_stock_actual.get_children():
             self.tree_stock_actual.delete(row)
         termino = self.stock_actual_buscar.get().strip()
-        conn = get_connection()
-        if termino:
-            like = f"%{termino}%"
-            rows = conn.execute(
-                "SELECT codigo, nombre, stock FROM Productos WHERE activo=1 "
-                "AND (codigo LIKE ? OR nombre LIKE ?) ORDER BY nombre", (like, like)
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT codigo, nombre, stock FROM Productos WHERE activo=1 ORDER BY nombre"
-            ).fetchall()
+        rows = self.backend.products.listar_stock(termino or None)
         for i, r in enumerate(rows):
             self.tree_stock_actual.insert("", "end", values=(r["codigo"], r["nombre"], r["stock"]),
                                            tags=(tag_fila(i),))
 
     def _sumar_stock(self):
         try:
-            stock_service.sumar_stock_manual(
+            self.backend.stock_service.sumar_stock_manual(
                 self.stock_codigo.get().strip(), int(self.stock_cantidad.get()),
                 usuario=USUARIO, origen=ORIGEN)
             self._refrescar_stock_actual()
@@ -278,7 +294,7 @@ class AppDueno(tk.Tk):
 
     def _restar_stock(self):
         try:
-            stock_service.restar_stock_manual(
+            self.backend.stock_service.restar_stock_manual(
                 self.stock_codigo.get().strip(), int(self.stock_cantidad.get()),
                 usuario=USUARIO, origen=ORIGEN)
             self._refrescar_stock_actual()
@@ -291,7 +307,7 @@ class AppDueno(tk.Tk):
         if not codigo:
             return
         try:
-            stock_service.restar_stock_por_lector(codigo, usuario=USUARIO, origen=ORIGEN)
+            self.backend.stock_service.restar_stock_por_lector(codigo, usuario=USUARIO, origen=ORIGEN)
             self._refrescar_stock_actual()
         except Exception as e:
             messagebox.showerror("Error con el lector", f"{codigo}: {e}")
@@ -305,12 +321,12 @@ class AppDueno(tk.Tk):
             return
         codigo = self.alta_codigo.get().strip()
         try:
-            products.crear_producto(
+            self.backend.products.crear_producto(
                 codigo=codigo, nombre=self.alta_nombre.get(),
                 precio_venta=precio, stock_inicial=stock_inicial,
                 proveedor=self.alta_proveedor.get().strip(), marca=self.alta_marca.get().strip(),
                 categoria=self.alta_categoria.get().strip(), usuario=USUARIO, origen=ORIGEN)
-        except ValueError as e:
+        except Exception as e:
             messagebox.showerror("No se pudo crear el producto", str(e))
             return
         for entry in (self.alta_codigo, self.alta_nombre, self.alta_precio, self.alta_proveedor,
@@ -395,17 +411,7 @@ class AppDueno(tk.Tk):
         termino = self.picker_buscar.get().strip()
         for row in self.picker_todos.get_children():
             self.picker_todos.delete(row)
-        conn = get_connection()
-        if termino:
-            like = f"%{termino}%"
-            rows = conn.execute(
-                "SELECT codigo, nombre, precio_venta FROM Productos WHERE activo=1 "
-                "AND (codigo LIKE ? OR nombre LIKE ?) ORDER BY nombre LIMIT 200", (like, like)
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT codigo, nombre, precio_venta FROM Productos WHERE activo=1 ORDER BY nombre LIMIT 200"
-            ).fetchall()
+        rows = self.backend.products.listar_para_filtro(termino or None)
         for i, p in enumerate(rows):
             self.filtro_nombres[p["codigo"]] = (p["nombre"], p["precio_venta"])
             self.picker_todos.insert("", "end", values=(p["codigo"], p["nombre"]), tags=(tag_fila(i),))
@@ -441,7 +447,7 @@ class AppDueno(tk.Tk):
 
     def _refrescar_lista_filtros(self):
         self.lista_filtros.delete(0, "end")
-        for f in filters.listar_filtros_guardados():
+        for f in self.backend.filters.listar_filtros_guardados():
             self.lista_filtros.insert("end", f["nombre"])
 
     def _cargar_filtro_guardado(self):
@@ -449,12 +455,12 @@ class AppDueno(tk.Tk):
         if not sel:
             return
         nombre = self.lista_filtros.get(sel[0])
-        guardados = {f["nombre"]: f["definicion"] for f in filters.listar_filtros_guardados()}
+        guardados = {f["nombre"]: f["definicion"] for f in self.backend.filters.listar_filtros_guardados()}
         definicion = guardados.get(nombre)
         if definicion is None:
             return
         try:
-            productos = filters.aplicar_filtro(definicion)
+            productos = self.backend.filters.aplicar_filtro(definicion)
         except Exception as e:
             messagebox.showerror("Error cargando filtro", str(e))
             return
@@ -472,7 +478,7 @@ class AppDueno(tk.Tk):
         nombre = self.lista_filtros.get(sel[0])
         if not messagebox.askyesno("Confirmar", f"¿Eliminar el filtro '{nombre}'?"):
             return
-        filters.eliminar_filtro(nombre)
+        self.backend.filters.eliminar_filtro(nombre)
         self._refrescar_lista_filtros()
 
     def _guardar_filtro_actual(self):
@@ -483,7 +489,7 @@ class AppDueno(tk.Tk):
         if not self.filtro_codigos:
             messagebox.showwarning("Filtro vacío", "Agregá al menos un producto (doble clic en la lista de la izquierda).")
             return
-        filters.guardar_filtro_manual(nombre, self.filtro_codigos)
+        self.backend.filters.guardar_filtro_manual(nombre, self.filtro_codigos)
         self._refrescar_lista_filtros()
         messagebox.showinfo("Guardado", f"Filtro '{nombre}' guardado con {len(self.filtro_codigos)} productos.")
 
@@ -503,7 +509,7 @@ class AppDueno(tk.Tk):
         except ValueError:
             messagebox.showerror("Error", "Porcentaje inválido")
             return
-        resultados = bulk_edit.aplicar_ajuste_masivo(codigos, porcentaje=pct, usuario=USUARIO, origen=ORIGEN)
+        resultados = self.backend.bulk_edit.aplicar_ajuste_masivo(codigos, porcentaje=pct, usuario=USUARIO, origen=ORIGEN)
         self._mostrar_resultado_bulk(resultados)
 
     def _aplicar_bulk_fijo(self):
@@ -516,7 +522,7 @@ class AppDueno(tk.Tk):
         except ValueError:
             messagebox.showerror("Error", "Monto inválido")
             return
-        resultados = bulk_edit.aplicar_ajuste_masivo(codigos, monto_fijo=monto, usuario=USUARIO, origen=ORIGEN)
+        resultados = self.backend.bulk_edit.aplicar_ajuste_masivo(codigos, monto_fijo=monto, usuario=USUARIO, origen=ORIGEN)
         self._mostrar_resultado_bulk(resultados)
 
     def _mostrar_resultado_bulk(self, resultados):
@@ -545,12 +551,12 @@ class AppDueno(tk.Tk):
         if not ruta:
             return
         try:
-            resultado = pdf_import.parsear_factura_pdf(ruta)
+            resultado = self.backend.subir_y_llamar("pdf_import", "parsear_factura_pdf", ruta)
         except Exception as e:
             messagebox.showerror("Error leyendo el PDF", str(e))
             return
 
-        if resultado.es_pdf_escaneado:
+        if resultado["es_pdf_escaneado"]:
             messagebox.showwarning(
                 "PDF sin texto (posible imagen escaneada)",
                 "No se pudo extraer texto del PDF. Puede ser una imagen escaneada.\n"
@@ -558,19 +564,18 @@ class AppDueno(tk.Tk):
             return
 
         self.pdf_log.delete("1.0", "end")
-        items = [{"codigo": i.codigo, "cantidad": i.cantidad, "precio_compra": i.precio_compra}
-                 for i in resultado.items]
+        items = resultado["items"]
         self.pdf_log.insert("end", f"Ítems detectados: {len(items)}\n")
-        for i in resultado.items:
-            self.pdf_log.insert("end", f"  {i.codigo} | {i.nombre} | x{i.cantidad} | ${i.precio_compra}\n")
-        if resultado.lineas_no_reconocidas:
-            self.pdf_log.insert("end", f"\nLíneas NO reconocidas ({len(resultado.lineas_no_reconocidas)}), "
+        for i in items:
+            self.pdf_log.insert("end", f"  {i['codigo']} | {i['nombre']} | x{i['cantidad']} | ${i['precio_compra']}\n")
+        if resultado["lineas_no_reconocidas"]:
+            self.pdf_log.insert("end", f"\nLíneas NO reconocidas ({len(resultado['lineas_no_reconocidas'])}), "
                                         f"revisar/cargar manualmente:\n")
-            for l in resultado.lineas_no_reconocidas:
+            for l in resultado["lineas_no_reconocidas"]:
                 self.pdf_log.insert("end", f"  ? {l}\n")
 
         if items and messagebox.askyesno("Confirmar", f"¿Aplicar {len(items)} ítems al stock?"):
-            resultados = stock_service.sumar_stock_por_factura_pdf(
+            resultados = self.backend.stock_service.sumar_stock_por_factura_pdf(
                 items, usuario=USUARIO, factura_nombre=os.path.basename(ruta), origen=ORIGEN)
             fallidos = [r for r in resultados if not r["ok"]]
             self.pdf_log.insert("end", f"\nAplicado. Fallos: {len(fallidos)}\n")
@@ -598,7 +603,8 @@ class AppDueno(tk.Tk):
         if not ruta:
             return
         try:
-            resultado = excel_import.cargar_masivo(ruta, usuario=USUARIO, origen=ORIGEN)
+            resultado = self.backend.subir_y_llamar("excel_import", "cargar_masivo", ruta,
+                                                      usuario=USUARIO, origen=ORIGEN)
         except Exception as e:
             messagebox.showerror("Error cargando archivo", str(e))
             return
@@ -614,7 +620,7 @@ class AppDueno(tk.Tk):
         if not ruta:
             return
         try:
-            cantidad = excel_import.exportar_lista_precios(ruta)
+            cantidad = self.backend.llamar_y_descargar("excel_import", "exportar_lista_precios", ruta)
         except Exception as e:
             messagebox.showerror("Error exportando", str(e))
             return
@@ -630,47 +636,47 @@ class AppDueno(tk.Tk):
     # botones/atajos F12 "Cobrar y facturar" y F5 "Cobrar sin facturar").
     # ------------------------------------------------------------------ #
     def _armar_arca(self, frame):
-        cfg = config.cargar_config()
+        cfg = self.backend.config.obtener_config_dict().get("arca", {})
         form = ttk.LabelFrame(frame, text="Configuración de ARCA (ex AFIP)", padding=12)
         form.pack(fill="x", pady=(0, 10))
 
         ttk.Label(form, text="CUIT:").grid(row=0, column=0, sticky="w")
         self.arca_cuit = ttk.Entry(form, width=20)
-        self.arca_cuit.insert(0, cfg.get("arca", "cuit", fallback=""))
+        self.arca_cuit.insert(0, cfg.get("cuit", ""))
         self.arca_cuit.grid(row=0, column=1, sticky="w", padx=6)
 
         ttk.Label(form, text="Punto de venta:").grid(row=0, column=2, sticky="w")
         self.arca_pto_venta = ttk.Entry(form, width=10)
-        self.arca_pto_venta.insert(0, cfg.get("arca", "punto_venta", fallback=""))
+        self.arca_pto_venta.insert(0, cfg.get("punto_venta", ""))
         self.arca_pto_venta.grid(row=0, column=3, sticky="w", padx=6)
 
         ttk.Label(form, text="Tipo de comprobante:").grid(row=1, column=0, sticky="w")
         self.arca_tipo = ttk.Combobox(form, values=["B", "C"], state="readonly", width=6)
-        self.arca_tipo.set(cfg.get("arca", "tipo_comprobante", fallback="B") or "B")
+        self.arca_tipo.set(cfg.get("tipo_comprobante", "B") or "B")
         self.arca_tipo.grid(row=1, column=1, sticky="w", padx=6)
 
         ttk.Label(form, text="Ambiente:").grid(row=1, column=2, sticky="w")
         self.arca_ambiente = ttk.Combobox(form, values=["homologacion", "produccion"],
                                            state="readonly", width=14)
-        self.arca_ambiente.set(cfg.get("arca", "ambiente", fallback="homologacion") or "homologacion")
+        self.arca_ambiente.set(cfg.get("ambiente", "homologacion") or "homologacion")
         self.arca_ambiente.grid(row=1, column=3, sticky="w", padx=6)
 
         ttk.Label(form, text="Certificado (.crt/.pem):").grid(row=2, column=0, sticky="w")
         self.arca_cert = ttk.Entry(form, width=48)
-        self.arca_cert.insert(0, cfg.get("arca", "certificado_path", fallback=""))
+        self.arca_cert.insert(0, cfg.get("certificado_path", ""))
         self.arca_cert.grid(row=2, column=1, columnspan=2, sticky="w", padx=6)
         ttk.Button(form, text="Elegir...",
                    command=lambda: self._elegir_archivo_arca(self.arca_cert)).grid(row=2, column=3, sticky="w")
 
         ttk.Label(form, text="Clave privada (.key/.pem):").grid(row=3, column=0, sticky="w")
         self.arca_clave = ttk.Entry(form, width=48)
-        self.arca_clave.insert(0, cfg.get("arca", "clave_privada_path", fallback=""))
+        self.arca_clave.insert(0, cfg.get("clave_privada_path", ""))
         self.arca_clave.grid(row=3, column=1, columnspan=2, sticky="w", padx=6)
         ttk.Button(form, text="Elegir...",
                    command=lambda: self._elegir_archivo_arca(self.arca_clave)).grid(row=3, column=3, sticky="w")
 
         self.arca_habilitado = tk.BooleanVar(
-            value=cfg.get("arca", "habilitado", fallback="false").strip().lower() in ("true", "1", "si", "sí"))
+            value=cfg.get("habilitado", "false").strip().lower() in ("true", "1", "si", "sí"))
         ttk.Checkbutton(form, text="Habilitado (si está destildado, F12 en la Caja avisa y no intenta facturar)",
                          variable=self.arca_habilitado).grid(row=4, column=1, columnspan=3, sticky="w", pady=(6, 0))
 
@@ -713,21 +719,21 @@ class AppDueno(tk.Tk):
             entry.insert(0, ruta)
 
     def _guardar_config_arca(self):
-        cfg = config.cargar_config()
-        cfg.set("arca", "cuit", self.arca_cuit.get().strip())
-        cfg.set("arca", "punto_venta", self.arca_pto_venta.get().strip())
-        cfg.set("arca", "tipo_comprobante", self.arca_tipo.get())
-        cfg.set("arca", "ambiente", self.arca_ambiente.get())
-        cfg.set("arca", "certificado_path", self.arca_cert.get().strip())
-        cfg.set("arca", "clave_privada_path", self.arca_clave.get().strip())
-        cfg.set("arca", "habilitado", "true" if self.arca_habilitado.get() else "false")
-        config.guardar_config(cfg)
+        self.backend.config.actualizar_config_dict({"arca": {
+            "cuit": self.arca_cuit.get().strip(),
+            "punto_venta": self.arca_pto_venta.get().strip(),
+            "tipo_comprobante": self.arca_tipo.get(),
+            "ambiente": self.arca_ambiente.get(),
+            "certificado_path": self.arca_cert.get().strip(),
+            "clave_privada_path": self.arca_clave.get().strip(),
+            "habilitado": "true" if self.arca_habilitado.get() else "false",
+        }})
         messagebox.showinfo("Configuración guardada", "La configuración de ARCA quedó guardada.")
 
     def _refrescar_resumen_arca(self):
         for row in self.tree_arca.get_children():
             self.tree_arca.delete(row)
-        resumen = sales.resumen_facturacion()
+        resumen = self.backend.sales.resumen_facturacion()
         for v in resumen["ventas"]:
             hora = v["fecha_hora"][11:19] if len(v["fecha_hora"]) >= 19 else v["fecha_hora"]
             comprobante = f"{v['tipo_comprobante']} Nº {v['numero_comprobante']}" if v["facturada"] else ""
@@ -745,8 +751,8 @@ class AppDueno(tk.Tk):
             return
         venta_uuid = sel[0]
         try:
-            sales.facturar_venta_arca(venta_uuid)
-        except arca.ArcaError as e:
+            self.backend.sales.facturar_venta_arca(venta_uuid)
+        except Exception as e:
             messagebox.showwarning("No se pudo facturar", str(e))
             self._refrescar_resumen_arca()
             return
@@ -757,21 +763,21 @@ class AppDueno(tk.Tk):
     # Alertas: Telegram + umbral global + umbral personalizado por producto
     # ------------------------------------------------------------------ #
     def _armar_alertas(self, frame):
-        cfg = config.cargar_config()
+        cfg = self.backend.config.obtener_config_dict().get("telegram", {})
         form = ttk.LabelFrame(frame, text="Configuración del Bot de Telegram", padding=12)
         form.pack(fill="x", pady=(0, 10))
 
         ttk.Label(form, text="Bot Token:").grid(row=0, column=0, sticky="w")
         self.tg_token = ttk.Entry(form, width=50)
-        self.tg_token.insert(0, cfg.get("telegram", "bot_token", fallback=""))
+        self.tg_token.insert(0, cfg.get("bot_token", ""))
         self.tg_token.grid(row=0, column=1, padx=6)
 
         ttk.Label(form, text="Chat ID por defecto:").grid(row=1, column=0, sticky="w")
         self.tg_chat = ttk.Entry(form, width=30)
-        self.tg_chat.insert(0, cfg.get("telegram", "chat_id_default", fallback=""))
+        self.tg_chat.insert(0, cfg.get("chat_id_default", ""))
         self.tg_chat.grid(row=1, column=1, sticky="w", padx=6)
 
-        self.tg_habilitado = tk.BooleanVar(value=cfg.get("telegram", "habilitado", fallback="false") == "true")
+        self.tg_habilitado = tk.BooleanVar(value=cfg.get("habilitado", "false") == "true")
         ttk.Checkbutton(form, text="Habilitado", variable=self.tg_habilitado).grid(row=2, column=1, sticky="w")
 
         ttk.Button(form, text="Guardar", style="Accent.TButton", command=self._guardar_config_telegram
@@ -820,24 +826,16 @@ class AppDueno(tk.Tk):
         self._refrescar_umbrales_producto()
 
     def _guardar_config_telegram(self):
-        cfg = config.cargar_config()
-        cfg["telegram"]["bot_token"] = self.tg_token.get().strip()
-        cfg["telegram"]["chat_id_default"] = self.tg_chat.get().strip()
-        cfg["telegram"]["habilitado"] = "true" if self.tg_habilitado.get() else "false"
-        config.guardar_config(cfg)
+        self.backend.config.actualizar_config_dict({"telegram": {
+            "bot_token": self.tg_token.get().strip(),
+            "chat_id_default": self.tg_chat.get().strip(),
+            "habilitado": "true" if self.tg_habilitado.get() else "false",
+        }})
         messagebox.showinfo("Guardado", "Configuración de Telegram guardada.")
 
     def _guardar_umbrales(self):
         try:
-            from pos_core.db import transaction
-            with transaction() as conn:
-                conn.execute(
-                    """INSERT INTO Configuracion_Alertas (producto_codigo, stock_minimo, stock_maximo, activo)
-                       VALUES (NULL, ?, ?, 1)
-                       ON CONFLICT(producto_codigo) DO UPDATE SET
-                          stock_minimo = excluded.stock_minimo, stock_maximo = excluded.stock_maximo""",
-                    (int(self.um_min.get() or 0), int(self.um_max.get() or 0)),
-                )
+            self.backend.alerts.set_umbral_global(int(self.um_min.get() or 0), int(self.um_max.get() or 0))
             messagebox.showinfo("Guardado", "Umbrales globales guardados.")
         except Exception as e:
             messagebox.showerror("Error", str(e))
@@ -845,7 +843,7 @@ class AppDueno(tk.Tk):
     def _refrescar_umbrales_producto(self):
         for row in self.tree_umbrales.get_children():
             self.tree_umbrales.delete(row)
-        for i, u in enumerate(alerts.listar_umbrales_por_producto()):
+        for i, u in enumerate(self.backend.alerts.listar_umbrales_por_producto()):
             self.tree_umbrales.insert("", "end", values=(u["codigo"], u["nombre"], u["stock_minimo"], u["stock_maximo"]),
                                        tags=(tag_fila(i),))
 
@@ -861,7 +859,7 @@ class AppDueno(tk.Tk):
             messagebox.showerror("Error", "Mínimo/Máximo tienen que ser números enteros.")
             return
         try:
-            alerts.set_umbral_producto(codigo, minimo, maximo)
+            self.backend.alerts.set_umbral_producto(codigo, minimo, maximo)
         except Exception as e:
             messagebox.showerror("Error", str(e))
             return
@@ -872,7 +870,7 @@ class AppDueno(tk.Tk):
         codigo = self.um_prod_codigo.get().strip()
         if not codigo:
             return
-        alerts.quitar_umbral_producto(codigo)
+        self.backend.alerts.quitar_umbral_producto(codigo)
         self._refrescar_umbrales_producto()
 
     def _cargar_umbral_seleccionado(self, event=None):
@@ -955,11 +953,11 @@ class AppDueno(tk.Tk):
             messagebox.showerror("Error", "Valor y duración tienen que ser números.")
             return
         try:
-            vence = ofertas.crear_oferta(
+            vence = self.backend.ofertas.crear_oferta(
                 codigo=self.oferta_codigo.get().strip(), tipo_descuento=self._tipo_descuento_interno(),
                 valor=valor, descripcion=self.oferta_descripcion.get().strip(),
                 dias=dias, usuario=USUARIO)
-        except ValueError as e:
+        except Exception as e:
             messagebox.showerror("No se pudo crear la oferta", str(e))
             return
         self.oferta_codigo.delete(0, "end")
@@ -972,7 +970,7 @@ class AppDueno(tk.Tk):
         for row in self.tree_ofertas.get_children():
             self.tree_ofertas.delete(row)
         etiquetas_tipo = {"PORCENTAJE": "%", "MONTO_FIJO": "$ desc.", "PRECIO_FIJO": "precio $"}
-        for i, o in enumerate(ofertas.listar_ofertas()):
+        for i, o in enumerate(self.backend.ofertas.listar_ofertas()):
             descuento = f"{o['valor']} {etiquetas_tipo[o['tipo_descuento']]} (-> ${o['precio_con_descuento']:.2f})"
             self.tree_ofertas.insert(
                 "", "end", iid=str(o["id"]),
@@ -987,7 +985,7 @@ class AppDueno(tk.Tk):
             return
         if not messagebox.askyesno("Confirmar", "¿Cancelar esta oferta? El producto vuelve al precio normal ya mismo."):
             return
-        ofertas.cancelar_oferta(int(sel[0]))
+        self.backend.ofertas.cancelar_oferta(int(sel[0]))
         self._refrescar_ofertas()
 
     # ------------------------------------------------------------------ #
@@ -1018,7 +1016,7 @@ class AppDueno(tk.Tk):
     def _refrescar_auditoria(self):
         for row in self.tree_auditoria.get_children():
             self.tree_auditoria.delete(row)
-        registros = audit.listar_lineas_eliminadas()
+        registros = self.backend.audit.listar_lineas_eliminadas()
         self.lbl_contador_eliminadas.config(
             text=f"Líneas quitadas del carrito (total histórico): {len(registros)}")
         for i, r in enumerate(registros):

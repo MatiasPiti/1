@@ -90,6 +90,12 @@ def main():
     except Exception:
         log.exception("No se pudo iniciar el monitor de alertas de Telegram")
 
+    # API remota para el Dueño Remoto (otra PC, vía VPN tipo Tailscale):
+    # no hace nada si está deshabilitada en config.ini (default).
+    from services.remote_api import iniciar_si_esta_habilitado
+    if iniciar_si_esta_habilitado() is not None:
+        log.info("API remota iniciada")
+
     while True:
         try:
             ciclo_watchdog()

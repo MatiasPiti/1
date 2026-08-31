@@ -403,6 +403,53 @@ python apps/master_caja/main.py        # ya se puede cobrar
 
 ---
 
+## 13. Dueño Remoto (otra PC, vía Tailscale)
+
+**Qué es:** el mismo Panel del Dueño (todas las pestañas, sin recortar ninguna), pero corriendo
+en una PC física distinta a la del local — típicamente la casa del dueño — conectado en vivo por
+una VPN privada (Tailscale). No hay una segunda base de datos ni conciliación: el Dueño Remoto no
+tiene ningún archivo propio, solo le pide/manda datos a la PC del local en el momento.
+
+**Por qué no es "compartir la carpeta de la base por red":** SQLite no tolera bien que dos PCs
+escriban el mismo archivo sobre una carpeta de red (los bloqueos fallan seguido y puede terminar
+corrompiendo la base). En cambio, la PC del local expone una pequeña API HTTP
+(`services/remote_api.py`, corre como un hilo más del servicio oculto de stock) que llama a las
+MISMAS funciones de `pos_core` que ya usa el Dueño local — nunca SQL crudo por red, siempre la
+lógica de negocio ya probada. `apps/master_dueno/main.py` llama siempre a
+`self.backend.<módulo>.<función>` (ver `pos_core/dueno_backend.py`): en modo local eso ES la
+llamada directa de siempre; en modo remoto, es un POST a `/rpc`.
+
+**Seguridad:**
+- Un único token (autogenerado, 32 bytes al azar) protege `/rpc` — sin él, 401.
+- Solo se puede invocar lo que está explícitamente en el `ALLOWLIST` del servidor — nunca se
+  ejecuta un nombre de función arbitrario que venga del pedido.
+- Este servidor **no debe exponerse a internet ni con port forwarding**: la seguridad depende de
+  que solo dispositivos dentro de la red privada de Tailscale puedan alcanzar el puerto.
+
+**Resiliencia (qué pasa ante un corte):**
+- Si se corta el internet del local, la Caja y el Dueño local siguen andando 100% offline, como
+  siempre — internet solo hace falta para el "puente" con el Dueño Remoto.
+- Si se corta la luz de la PC del local, no hay nada que hacer hasta que vuelva (ninguna app
+  soluciona eso); para seguir cobrando en ese momento están los USB de emergencia, en otra PC.
+- Cuando la conexión vuelve, el Dueño Remoto se pone al día solo: no hay "sincronizar" porque
+  nunca hubo dos bases separadas, solo se dejó de poder *mirar* la única base que existe.
+- El Dueño Remoto muestra siempre un cartel 🟢/🔴 de estado de conexión (revisado cada 15s) para
+  no confundir datos en vivo con datos viejos si se corta el enlace.
+
+**Puesta en marcha:**
+1. En la PC del local, editar `config.ini` (junto al `.exe` del Maestro), sección `[remoto]`:
+   `habilitado = true`. El `token` se autogenera solo la primera vez que hace falta.
+2. Instalar [Tailscale](https://tailscale.com) en la PC del local y en la del dueño, con la misma
+   cuenta — gratis hasta 100 dispositivos, no hace falta abrir puertos ni tener IP fija.
+3. Reiniciar el servicio de stock de la PC del local (o reiniciar Windows) para que levante la
+   API remota.
+4. En la PC del dueño, ejecutar `DuenoRemoto.exe` (ver sección 11, se compila con
+   `build\build_all.bat`). Pide la dirección Tailscale de la PC del local (`http://100.x.x.x:8765`,
+   Tailscale la asigna sola) y el token (el mismo que quedó en el `config.ini` del local, sección
+   `[remoto] -> token`). Se guarda para la próxima vez.
+
+---
+
 ## Proceso de pensamiento — respuestas puntuales pedidas en el prompt
 
 **¿Cómo se evita que el historial del USB choque con el id autoincremental del Maestro?**

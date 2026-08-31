@@ -6,7 +6,7 @@ pena armar una planilla entera.
 import uuid
 from datetime import datetime
 
-from pos_core.db import transaction
+from pos_core.db import get_connection, transaction
 
 
 def crear_producto(*, codigo: str, nombre: str, precio_venta: float, stock_inicial: int = 0,
@@ -47,3 +47,37 @@ def crear_producto(*, codigo: str, nombre: str, precio_venta: float, stock_inici
                 (str(uuid.uuid4()), codigo, "ENTRADA_MANUAL", stock_inicial, stock_inicial,
                  "Alta de producto nuevo", usuario, origen, now, sincronizado),
             )
+
+
+def listar_stock(busqueda: str = None) -> list:
+    """Para la pestaña Stock del Panel del Dueño: código/nombre/stock de
+    los productos activos, opcionalmente filtrados por código o nombre."""
+    conn = get_connection()
+    if busqueda:
+        like = f"%{busqueda}%"
+        rows = conn.execute(
+            "SELECT codigo, nombre, stock FROM Productos WHERE activo=1 "
+            "AND (codigo LIKE ? OR nombre LIKE ?) ORDER BY nombre", (like, like)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT codigo, nombre, stock FROM Productos WHERE activo=1 ORDER BY nombre"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def listar_para_filtro(busqueda: str = None) -> list:
+    """Para la pestaña Filtros/Edición Masiva: código/nombre/precio de los
+    productos activos que se pueden elegir para armar un filtro."""
+    conn = get_connection()
+    if busqueda:
+        like = f"%{busqueda}%"
+        rows = conn.execute(
+            "SELECT codigo, nombre, precio_venta FROM Productos WHERE activo=1 "
+            "AND (codigo LIKE ? OR nombre LIKE ?) ORDER BY nombre LIMIT 200", (like, like)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT codigo, nombre, precio_venta FROM Productos WHERE activo=1 ORDER BY nombre LIMIT 200"
+        ).fetchall()
+    return [dict(r) for r in rows]
