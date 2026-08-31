@@ -107,6 +107,9 @@ def descontar_por_venta(codigo: str, cantidad: int, *, ticket_uuid: str, usuario
     """Descuenta stock dentro de LA MISMA transacción que registra el
     movimiento. Se llama desde el evento 'ticket cerrado' de la Caja,
     nunca deja stock a medio actualizar."""
+    if cantidad <= 0:
+        raise ValueError(f"Cantidad inválida para descontar: {cantidad} (tiene que ser mayor a 0)")
+
     def _mov(conn, producto, nuevo_stock):
         _registrar_movimiento(
             conn, producto_codigo=codigo, tipo="SALIDA_VENTA", cantidad=cantidad,
@@ -117,6 +120,9 @@ def descontar_por_venta(codigo: str, cantidad: int, *, ticket_uuid: str, usuario
 
 def sumar_stock_manual(codigo: str, cantidad: int, *, usuario: str, motivo: str = "Alta manual",
                         origen: str = "MAESTRO") -> int:
+    if cantidad <= 0:
+        raise ValueError(f"Cantidad inválida para sumar: {cantidad} (tiene que ser mayor a 0)")
+
     def _mov(conn, producto, nuevo_stock):
         _registrar_movimiento(
             conn, producto_codigo=codigo, tipo="ENTRADA_MANUAL", cantidad=cantidad,
@@ -127,6 +133,9 @@ def sumar_stock_manual(codigo: str, cantidad: int, *, usuario: str, motivo: str 
 
 def restar_stock_manual(codigo: str, cantidad: int, *, usuario: str, motivo: str = "Baja manual",
                          origen: str = "MAESTRO") -> int:
+    if cantidad <= 0:
+        raise ValueError(f"Cantidad inválida para restar: {cantidad} (tiene que ser mayor a 0)")
+
     def _mov(conn, producto, nuevo_stock):
         _registrar_movimiento(
             conn, producto_codigo=codigo, tipo="SALIDA_MANUAL", cantidad=cantidad,
@@ -168,6 +177,11 @@ def sumar_stock_por_factura_pdf(items: list, *, usuario: str, factura_nombre: st
                         (item["precio_compra"], _now(), item["codigo"]),
                     )
             resultados.append({"codigo": item["codigo"], "ok": True, "stock_nuevo": nuevo_stock})
-        except (ProductoNoEncontradoError, StockInsuficienteError) as e:
+        except Exception as e:
+            # Cualquier falla en esta línea (producto inexistente, sin
+            # stock suficiente, o incluso el RuntimeError de
+            # _con_reintento_optimista si se agotan los reintentos por
+            # concurrencia) se aísla acá: una línea con problemas no debe
+            # frenar el resto del remito, tal como dice el docstring.
             resultados.append({"codigo": item["codigo"], "ok": False, "error": str(e)})
     return resultados

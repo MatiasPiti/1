@@ -29,6 +29,7 @@ import dataclasses
 import json
 import logging
 import os
+import secrets
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -119,7 +120,10 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _autenticado(self) -> bool:
         auth = self.headers.get("Authorization", "")
-        return auth == f"Bearer {self.token}"
+        # Comparación a tiempo constante: con == un atacante en la misma
+        # red podría, en teoría, ir adivinando el token byte a byte
+        # midiendo cuánto tarda cada intento en devolver 401.
+        return secrets.compare_digest(auth, f"Bearer {self.token}")
 
     def do_GET(self):
         if self.path == "/health":

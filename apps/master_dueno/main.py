@@ -21,7 +21,8 @@ from tkinter import ttk, messagebox, filedialog
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from pos_core.db import init_db
-from pos_core.dueno_backend import LocalBackend
+from pos_core.dueno_backend import LocalBackend, RemoteError
+from pos_core import arca
 from apps.theme import aplicar_tema, estriar_treeview, tag_fila, habilitar_copiar_pegar_global
 
 USUARIO = os.environ.get("USERNAME", "dueño")
@@ -104,7 +105,23 @@ class AppDueno(tk.Tk):
         # deja bien claro en vez de mostrar datos viejos como si fueran en
         # vivo. Apenas vuelve la conexión, el cartel se pone verde solo —
         # no hace falta "sincronizar" nada, es la misma base de datos.
-        conectado = self.backend.verificar_conexion()
+        #
+        # El chequeo (HTTP con timeout de varios segundos) se hace en un
+        # hilo aparte: si se hiciera en el hilo de Tk, una conexión lenta
+        # o caída (wifi, datos móviles) congelaría toda la ventana varios
+        # segundos cada 15 segundos.
+        import threading
+
+        def _chequear():
+            conectado = self.backend.verificar_conexion()
+            self.after(0, lambda: self._actualizar_cartel_conexion(conectado))
+
+        threading.Thread(target=_chequear, daemon=True).start()
+        self.after(15000, self._verificar_conexion_periodica)
+
+    def _actualizar_cartel_conexion(self, conectado: bool):
+        if not self.winfo_exists():
+            return
         if conectado:
             self.lbl_conexion.config(text="🟢 Conectado con el local en vivo",
                                       bg="#27ae60", fg="white")
@@ -112,7 +129,6 @@ class AppDueno(tk.Tk):
             self.lbl_conexion.config(
                 text="🔴 Sin conexión con el local — lo que ves puede estar desactualizado",
                 bg="#c0392b", fg="white")
-        self.after(15000, self._verificar_conexion_periodica)
 
     def _iniciar_monitor_alertas(self):
         # El bot es "best effort": si falla al iniciar (falta una librería,
@@ -326,7 +342,7 @@ class AppDueno(tk.Tk):
                 precio_venta=precio, stock_inicial=stock_inicial,
                 proveedor=self.alta_proveedor.get().strip(), marca=self.alta_marca.get().strip(),
                 categoria=self.alta_categoria.get().strip(), usuario=USUARIO, origen=ORIGEN)
-        except Exception as e:
+        except (ValueError, RemoteError) as e:
             messagebox.showerror("No se pudo crear el producto", str(e))
             return
         for entry in (self.alta_codigo, self.alta_nombre, self.alta_precio, self.alta_proveedor,
@@ -636,7 +652,7 @@ class AppDueno(tk.Tk):
     # botones/atajos F12 "Cobrar y facturar" y F5 "Cobrar sin facturar").
     # ------------------------------------------------------------------ #
     def _armar_arca(self, frame):
-        cfg = self.backend.config.obtener_config_dict().get("arca", {})
+        cfg = self.backend.config.obtener_config_dict("arca").get("arca", {})
         form = ttk.LabelFrame(frame, text="Configuración de ARCA (ex AFIP)", padding=12)
         form.pack(fill="x", pady=(0, 10))
 
@@ -750,9 +766,10 @@ class AppDueno(tk.Tk):
             messagebox.showinfo("Elegí una venta", "Hacé clic sobre una venta sin facturar de la lista.")
             return
         venta_uuid = sel[0]
+        from pos_core import arca
         try:
             self.backend.sales.facturar_venta_arca(venta_uuid)
-        except Exception as e:
+        except (arca.ArcaError, RemoteError) as e:
             messagebox.showwarning("No se pudo facturar", str(e))
             self._refrescar_resumen_arca()
             return
@@ -763,7 +780,7 @@ class AppDueno(tk.Tk):
     # Alertas: Telegram + umbral global + umbral personalizado por producto
     # ------------------------------------------------------------------ #
     def _armar_alertas(self, frame):
-        cfg = self.backend.config.obtener_config_dict().get("telegram", {})
+        cfg = self.backend.config.obtener_config_dict("telegram").get("telegram", {})
         form = ttk.LabelFrame(frame, text="Configuración del Bot de Telegram", padding=12)
         form.pack(fill="x", pady=(0, 10))
 
@@ -957,7 +974,7 @@ class AppDueno(tk.Tk):
                 codigo=self.oferta_codigo.get().strip(), tipo_descuento=self._tipo_descuento_interno(),
                 valor=valor, descripcion=self.oferta_descripcion.get().strip(),
                 dias=dias, usuario=USUARIO)
-        except Exception as e:
+        except (ValueError, RemoteError) as e:
             messagebox.showerror("No se pudo crear la oferta", str(e))
             return
         self.oferta_codigo.delete(0, "end")

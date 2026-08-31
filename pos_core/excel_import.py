@@ -72,6 +72,10 @@ def cargar_masivo(ruta: str, *, usuario: str, origen: str = "MAESTRO") -> dict:
             proveedor = str(fila[mapeo["proveedor"]]).strip() if "proveedor" in mapeo else None
             if not codigo or not nombre:
                 raise ValueError("código o nombre vacío")
+            if precio < 0:
+                raise ValueError(f"precio de venta negativo ({precio})")
+            if stock < 0:
+                raise ValueError(f"stock inicial negativo ({stock})")
 
             with transaction() as conn:
                 existente = conn.execute(

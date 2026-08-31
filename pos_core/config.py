@@ -45,12 +45,18 @@ def guardar_config(cfg: configparser.ConfigParser) -> None:
         cfg.write(f)
 
 
-def obtener_config_dict() -> dict:
-    """Versión JSON-serializable de toda la config, para exponerla vía la
-    API remota (un configparser.ConfigParser no se puede mandar tal cual
-    por HTTP)."""
+def obtener_config_dict(seccion: str = None) -> dict:
+    """Versión JSON-serializable de la config, para exponerla vía la API
+    remota (un configparser.ConfigParser no se puede mandar tal cual por
+    HTTP). Si se pasa `seccion`, devuelve SOLO esa sección — así una
+    pantalla que solo necesita, por ejemplo, la config de ARCA no manda
+    de más por la red (el token remoto o el bot_token de Telegram no
+    tienen por qué viajar en esa respuesta). Sin `seccion`, se mantiene
+    el comportamiento de siempre (toda la config)."""
     cfg = cargar_config()
-    return {seccion: dict(cfg[seccion]) for seccion in cfg.sections()}
+    if seccion is not None:
+        return {seccion: dict(cfg[seccion]) if seccion in cfg else {}}
+    return {s: dict(cfg[s]) for s in cfg.sections()}
 
 
 def actualizar_config_dict(cambios: dict) -> None:

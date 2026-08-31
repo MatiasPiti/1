@@ -75,11 +75,23 @@ def revisar_umbrales_y_alertar():
 
         if enviar_mensaje(alerta, chat_id=row["chat_id"]):
             with transaction() as conn:
+                # Si este producto todavía no tiene fila propia en
+                # Configuracion_Alertas (está usando el umbral GLOBAL vía
+                # el COALESCE de _productos_fuera_de_umbral), el INSERT de
+                # acá abajo crea una. Hay que pasarle explícitamente el
+                # umbral efectivo (row['stock_minimo']/['stock_maximo'],
+                # ya resuelto con COALESCE) — si no, la fila nueva cae en
+                # los defaults de la columna (5 / 0) y ese producto queda
+                # "pegado" a un umbral distinto del global para siempre,
+                # como efecto secundario de solo registrar el cooldown.
                 conn.execute(
-                    """INSERT INTO Configuracion_Alertas (producto_codigo, ultima_alerta_enviada, activo)
-                       VALUES (?, ?, 1)
-                       ON CONFLICT(producto_codigo) DO UPDATE SET ultima_alerta_enviada = excluded.ultima_alerta_enviada""",
-                    (row["codigo"], ahora.isoformat(timespec="milliseconds")),
+                    """INSERT INTO Configuracion_Alertas
+                       (producto_codigo, stock_minimo, stock_maximo, ultima_alerta_enviada, activo)
+                       VALUES (?, ?, ?, ?, 1)
+                       ON CONFLICT(producto_codigo) DO UPDATE SET
+                           ultima_alerta_enviada = excluded.ultima_alerta_enviada""",
+                    (row["codigo"], row["stock_minimo"], row["stock_maximo"],
+                     ahora.isoformat(timespec="milliseconds")),
                 )
 
 

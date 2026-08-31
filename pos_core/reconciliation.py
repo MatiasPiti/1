@@ -121,15 +121,20 @@ def aplicar_export_caja(ruta_json: str, *, usuario_dev: str) -> ResumenConciliac
     # acá y son las que efectivamente descuentan el stock maestro)
     for mov in data.get("movimientos_stock", []):
         try:
-            with transaction() as conn:
-                if _movimiento_existe(conn, mov["uuid_unico"]):
-                    resumen.movimientos_omitidos_duplicados += 1
-                    continue
+            # Chequeo de duplicado con una lectura simple (no un
+            # `with transaction()` propio): _aplicar_movimiento_reproducido
+            # ya abre su propia transacción atómica (vía
+            # stock_service._con_reintento_optimista), y SQLite no admite
+            # anidar un BEGIN dentro de otro — envolver este SELECT en su
+            # propia transacción vacía además daba la falsa impresión de
+            # que "chequear + aplicar" era una sola operación atómica,
+            # cuando en realidad siempre fueron dos pasos separados.
+            if _movimiento_existe(get_connection(), mov["uuid_unico"]):
+                resumen.movimientos_omitidos_duplicados += 1
+                continue
             delta = -mov["cantidad"] if mov["tipo"].startswith("SALIDA") else mov["cantidad"]
             _aplicar_movimiento_reproducido(mov, delta, usuario_dev)
             resumen.movimientos_aplicados += 1
-        except stock_service.ProductoNoEncontradoError as e:
-            resumen.errores.append(f"Movimiento {mov.get('uuid_unico')}: {e}")
         except Exception as e:
             resumen.errores.append(f"Movimiento {mov.get('uuid_unico')}: {e}")
 
@@ -224,10 +229,9 @@ def aplicar_export_dueno(ruta_json: str, *, usuario_dev: str) -> ResumenConcilia
 
     for mov in data.get("movimientos_stock", []):
         try:
-            with transaction() as conn:
-                if _movimiento_existe(conn, mov["uuid_unico"]):
-                    resumen.movimientos_omitidos_duplicados += 1
-                    continue
+            if _movimiento_existe(get_connection(), mov["uuid_unico"]):
+                resumen.movimientos_omitidos_duplicados += 1
+                continue
             delta = -mov["cantidad"] if mov["tipo"].startswith("SALIDA") else mov["cantidad"]
             _aplicar_movimiento_reproducido(mov, delta, usuario_dev)
             resumen.movimientos_aplicados += 1
