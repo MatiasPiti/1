@@ -108,7 +108,7 @@ class RemoteBackend:
 
     def verificar_conexion(self) -> bool:
         try:
-            resp = self._requests.get(f"{self.base_url}/health", timeout=5)
+            resp = self._requests.get(f"{self.base_url}/health", headers=self._headers(), timeout=5)
             return resp.status_code == 200 and resp.json().get("ok") is True
         except self._requests.RequestException:
             return False

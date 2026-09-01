@@ -126,10 +126,18 @@ class _Handler(BaseHTTPRequestHandler):
         return secrets.compare_digest(auth, f"Bearer {self.token}")
 
     def do_GET(self):
-        if self.path == "/health":
-            self._responder(200, {"ok": True})
-        else:
+        if self.path != "/health":
             self._responder(404, {"ok": False, "error": "not found"})
+            return
+        # /health exige el mismo token que /rpc: si no, el cartel de
+        # conexión del Dueño Remoto podría quedar en verde con un token
+        # viejo/incorrecto mientras cada acción real falla con 401 —
+        # "verificar conexión" tiene que verificar que ESE token sirve,
+        # no solo que el servidor está prendido.
+        if not self._autenticado():
+            self._responder(401, {"ok": False, "error": "token inválido"})
+            return
+        self._responder(200, {"ok": True})
 
     def do_POST(self):
         if self.path != "/rpc":
