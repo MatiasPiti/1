@@ -105,10 +105,17 @@ def facturar_venta_arca(venta_uuid: str) -> dict:
 
     try:
         resultado = arca.facturar_venta(dict(venta))
-    except arca.ArcaError as e:
+    except Exception as e:
+        # No solo arca.ArcaError: un certificado corrupto o una respuesta
+        # inesperada de ARCA (XML mal formado en medio de una caída del
+        # servicio) pueden salir como otro tipo de excepción. Cualquiera
+        # sea, la venta ya está cobrada y no se deshace — solo se registra
+        # el motivo para que el Panel del Dueño lo muestre y se reintente.
         with transaction() as conn:
             conn.execute("UPDATE Ventas SET arca_error = ? WHERE uuid_unico = ?", (str(e), venta_uuid))
-        raise
+        if isinstance(e, arca.ArcaError):
+            raise
+        raise arca.ArcaError(f"Error inesperado facturando con ARCA: {e}") from e
 
     with transaction() as conn:
         conn.execute(

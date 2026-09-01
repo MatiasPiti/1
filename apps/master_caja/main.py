@@ -25,7 +25,7 @@ from tkinter import ttk, messagebox, simpledialog
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from pos_core.db import init_db
-from pos_core import sales, audit, ticket_printer, arca
+from pos_core import sales, audit, ticket_printer
 from apps.theme import (COLORS, aplicar_tema, estriar_treeview, tag_fila,
                          celda_texto, habilitar_copiar_pegar_global, abrir_dialogo_impresora)
 
@@ -292,7 +292,12 @@ class AppCaja(tk.Tk):
             mensaje = (f"Ticket {resultado['venta_uuid'][:8]}... por ${resultado['total']:.2f}\n"
                        f"Factura {factura['tipo_comprobante']} Nº {factura['numero_comprobante']}\n"
                        f"CAE: {factura['cae']}")
-        except arca.ArcaError as e:
+        except Exception as e:
+            # Cualquier falla facturando (ArcaError o algo inesperado): la
+            # venta YA se cobró arriba y no se deshace acá. Atajamos
+            # cualquier tipo de excepción, no solo ArcaError, para nunca
+            # dejar al cajero con el carrito colgado y sin ningún aviso
+            # después de haber cobrado de verdad.
             mensaje = (f"Ticket {resultado['venta_uuid'][:8]}... por ${resultado['total']:.2f}\n\n"
                        f"La venta se cobró OK, pero NO se pudo facturar con ARCA:\n{e}\n\n"
                        f"Se puede reintentar después desde el Panel del Dueño "
