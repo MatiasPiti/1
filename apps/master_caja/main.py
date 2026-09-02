@@ -27,7 +27,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from pos_core.db import init_db
 from pos_core import sales, audit, ticket_printer
 from apps.theme import (COLORS, aplicar_tema, estriar_treeview, tag_fila,
-                         celda_texto, habilitar_copiar_pegar_global, abrir_dialogo_impresora)
+                         habilitar_copiar_pegar_global, abrir_dialogo_impresora)
+from apps.caja_carrito import CarritoTecladoMixin
 
 ORIGEN = "MAESTRO"
 USUARIO = os.environ.get("USERNAME", "cajero")
@@ -36,18 +37,18 @@ USUARIO = os.environ.get("USERNAME", "cajero")
 from pos_core.sales import CODIGO_SIN_BARRA, NOMBRE_SIN_BARRA
 
 
-class AppCaja(tk.Tk):
+class AppCaja(CarritoTecladoMixin, tk.Tk):
     def __init__(self):
         super().__init__()
         aplicar_tema(self)
         self.title("Otter Caja")
         self.geometry("980x760")
-        self.carrito = []  # list[{codigo,nombre,cantidad,precio_unitario}]
-        self.carrito_seleccionado = None  # código de la línea elegida para "Quitar línea"
+        self._init_carrito()
 
         self._construir_ui()
+        self._configurar_teclado()
         habilitar_copiar_pegar_global(self)
-        self.buscador.focus_set()
+        self._ir_a_buscador()
 
     def _construir_ui(self):
         top = ttk.Frame(self, padding=(16, 14))
@@ -65,7 +66,6 @@ class AppCaja(tk.Tk):
         fila_buscar.pack(fill="x", pady=(8, 0))
         self.buscador = ttk.Entry(fila_buscar, width=46, font=("Segoe UI", 12))
         self.buscador.pack(side="left", ipady=3)
-        self.buscador.bind("<Return>", self._on_buscar)
         ttk.Button(fila_buscar, text="Buscar", command=self._on_buscar).pack(side="left", padx=8)
 
         cuerpo = ttk.Frame(self, padding=(16, 0))
@@ -77,7 +77,6 @@ class AppCaja(tk.Tk):
             self.resultados.column(col, width=w)
         estriar_treeview(self.resultados)
         self.resultados.pack(fill="x", pady=(4, 12))
-        self.resultados.bind("<Double-1>", self._agregar_al_carrito)
 
         ttk.Label(cuerpo, text="Carrito", style="Header.TLabel").pack(anchor="w", pady=(0, 6))
         self._armar_grilla_carrito(cuerpo)
@@ -99,70 +98,35 @@ class AppCaja(tk.Tk):
         self.metodo_pago.set("EFECTIVO")
         self.metodo_pago.pack(side="left")
 
-        ttk.Button(bottom, text="Quitar línea", command=self._quitar_linea).pack(side="right", padx=4)
+        ttk.Button(bottom, text="Quitar línea (Supr)", command=self._quitar_linea).pack(side="right", padx=4)
         ttk.Button(bottom, text="COBRAR Y FACTURAR (F12)", style="Accent.TButton",
                    command=self._cobrar_y_facturar).pack(side="right", padx=4)
         ttk.Button(bottom, text="COBRAR SIN FACTURAR (F5)", command=self._cobrar_sin_facturar
                    ).pack(side="right", padx=4)
+
+        self.lbl_ayuda = ttk.Label(
+            self, style="Muted.TLabel",
+            text=self.TEXTO_AYUDA_TECLADO + "   ·   F5 cobrar   ·   F12 cobrar y facturar")
+        self.lbl_ayuda.pack(fill="x", padx=16, pady=(0, 8))
+
+    # ------------------------------------------------------------------ #
+    # Manejo por teclado: la caja se usa entera sin mouse.
+    #
+    # Hay tres "zonas" (el buscador, la lista de resultados y el carrito) y
+    # las flechas se mueven dentro de la zona activa, pasando de una a otra
+    # al llegar al borde. Enter siempre confirma la acción de la zona donde
+    # se está parado. Se centraliza acá, a nivel ventana, en vez de repartir
+    # binds por widget: así ninguna tecla queda "muerta" según dónde haya
+    # quedado el foco.
+    # ------------------------------------------------------------------ #
+    def _configurar_teclado(self):
+        # Cobro: acá F12 SÍ factura con ARCA (a diferencia de la caja del
+        # USB de emergencia, que nunca factura en el momento).
         self.bind("<F12>", lambda e: self._cobrar_y_facturar())
         self.bind("<F5>", lambda e: self._cobrar_sin_facturar())
-
-    # ------------------------------------------------------------------ #
-    # Grilla del carrito armada a mano (Treeview no permite negrita en
-    # una sola columna manteniendo el resto normal dentro de la misma fila)
-    # ------------------------------------------------------------------ #
-    def _armar_grilla_carrito(self, parent):
-        contenedor = ttk.Frame(parent)
-        contenedor.pack(fill="both", expand=True, pady=(0, 4))
-
-        canvas = tk.Canvas(contenedor, bg=COLORS["surface"], highlightthickness=1,
-                            highlightbackground=COLORS["border"])
-        vsb = ttk.Scrollbar(contenedor, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=vsb.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        vsb.pack(side="right", fill="y")
-
-        self.carrito_grid = tk.Frame(canvas, bg=COLORS["surface"])
-        canvas.create_window((0, 0), window=self.carrito_grid, anchor="nw")
-        self.carrito_grid.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        self.carrito_grid.grid_columnconfigure(1, weight=1)
-
-        encabezados = [("CÓDIGO", "w"), ("PRODUCTO", "w"), ("CANT.", "center"), ("P. UNIT.", "e"), ("SUBTOTAL", "e")]
-        for col, (texto, anchor) in enumerate(encabezados):
-            tk.Label(self.carrito_grid, text=texto, bg=COLORS["accent"], fg="white",
-                     font=("Segoe UI", 10, "bold"), padx=10, pady=8, anchor=anchor
-                     ).grid(row=0, column=col, sticky="nsew")
-
-    def _refrescar_grilla_carrito(self):
-        for w in list(self.carrito_grid.grid_slaves()):
-            if int(w.grid_info()["row"]) > 0:
-                w.destroy()
-
-        total = 0.0
-        for i, item in enumerate(self.carrito, start=1):
-            subtotal = item["cantidad"] * item["precio_unitario"]
-            total += subtotal
-            seleccionada = item["codigo"] == self.carrito_seleccionado
-            bg = COLORS["accent_light"] if seleccionada else (COLORS["stripe"] if i % 2 == 0 else COLORS["surface"])
-
-            celdas = [
-                (item["codigo"], ("Segoe UI", 10), COLORS["muted"], "w"),
-                (item["nombre"].upper(), ("Segoe UI", 12, "bold"), COLORS["text"], "w"),
-                (str(item["cantidad"]), ("Segoe UI", 11), COLORS["text"], "center"),
-                (f"${item['precio_unitario']:.2f}", ("Segoe UI", 10), COLORS["muted"], "e"),
-                (f"${subtotal:.2f}", ("Segoe UI", 15, "bold"), COLORS["accent"], "e"),
-            ]
-            for col, (texto, font, color, anchor) in enumerate(celdas):
-                celda = celda_texto(self.carrito_grid, texto, font=font, color=color, bg=bg, anchor=anchor)
-                celda.grid(row=i, column=col, sticky="nsew", ipady=7, padx=(10 if col == 0 else 0, 10))
-                celda.bind("<Button-1>", lambda e, c=item["codigo"]: self._seleccionar_linea(c), add="+")
-
-        self.lbl_total.config(text=f"${total:.2f}")
-        return total
-
-    def _seleccionar_linea(self, codigo):
-        self.carrito_seleccionado = codigo
-        self._refrescar_grilla_carrito()
+        # El resto (flechas, Enter, Supr, Esc, F2/F3/F4) es común a las dos
+        # cajas y vive en apps/caja_carrito.py.
+        self._configurar_teclado_carrito()
 
     # ------------------------------------------------------------------ #
     def _refrescar_resultados(self, productos):
@@ -205,30 +169,12 @@ class AppCaja(tk.Tk):
         # siempre lo devolvemos acá al buscador.
         self.buscador.focus_set()
 
+    def _usuario_origen(self):
+        return USUARIO, ORIGEN
+
     def _configurar_impresora(self):
         top = abrir_dialogo_impresora(self)
         top.bind("<Destroy>", lambda e: self.buscador.focus_set() if e.widget is top else None)
-
-    def _agregar_al_carrito(self, event=None):
-        sel = self.resultados.selection()
-        if not sel:
-            return
-        codigo, nombre, precio = self.resultados.item(sel[0], "values")
-        nombre = nombre.replace("  🔥 OFERTA", "")
-        self._agregar_producto(codigo, nombre, float(precio))
-
-    def _agregar_producto(self, codigo: str, nombre: str, precio: float):
-        for item in self.carrito:
-            if item["codigo"] == codigo:
-                item["cantidad"] += 1
-                break
-        else:
-            self.carrito.append({"codigo": codigo, "nombre": nombre, "cantidad": 1, "precio_unitario": precio})
-        self._refrescar_grilla_carrito()
-        # Un clic (doble clic en resultados, clic en una celda del carrito)
-        # le saca el foco del teclado al buscador; si no se lo devolvemos,
-        # el próximo código escaneado no llega a ningún lado.
-        self.buscador.focus_set()
 
     def _agregar_articulo_sin_codigo(self):
         importe = simpledialog.askfloat(
@@ -241,24 +187,6 @@ class AppCaja(tk.Tk):
         self.carrito.append({"codigo": CODIGO_SIN_BARRA, "nombre": NOMBRE_SIN_BARRA,
                               "cantidad": 1, "precio_unitario": importe})
         self._refrescar_grilla_carrito()
-
-    def _quitar_linea(self):
-        if not self.carrito_seleccionado:
-            messagebox.showinfo("Elegí un producto",
-                                 "Hacé clic sobre una línea del carrito y después presioná 'Quitar línea'.")
-            return
-        item = next((i for i in self.carrito if i["codigo"] == self.carrito_seleccionado), None)
-        self.carrito = [i for i in self.carrito if i["codigo"] != self.carrito_seleccionado]
-        self.carrito_seleccionado = None
-        self._refrescar_grilla_carrito()
-        if item:
-            try:
-                audit.registrar_linea_eliminada(
-                    codigo=item["codigo"], nombre=item["nombre"], cantidad=item["cantidad"],
-                    precio_unitario=item["precio_unitario"], usuario=USUARIO, origen=ORIGEN)
-            except Exception:
-                pass  # la auditoría nunca debe bloquear el trabajo del cajero
-        self.buscador.focus_set()
 
     def _cobrar_sin_facturar(self):
         if not self.carrito:
@@ -321,7 +249,7 @@ class AppCaja(tk.Tk):
         self.carrito_seleccionado = None
         self._refrescar_grilla_carrito()
         self.buscador.delete(0, "end")
-        self.buscador.focus_set()
+        self._ir_a_buscador()
 
     def _imprimir_venta(self, venta_uuid: str, *, silencioso: bool = False):
         try:
@@ -374,14 +302,29 @@ class AppCaja(tk.Tk):
 
         def _reimprimir(event=None):
             sel = tree.selection()
-            if not sel:
-                messagebox.showinfo("Elegí una venta", "Hacé clic sobre una venta de la lista.")
+            fila = sel[0] if sel else tree.focus()
+            if not fila:
+                messagebox.showinfo("Elegí una venta",
+                                     "Elegí una venta de la lista con las flechas ↑↓ (o con un clic) "
+                                     "y presioná Enter.")
                 return
-            self._imprimir_venta(sel[0])
+            self._imprimir_venta(fila)
 
         tree.bind("<Double-1>", _reimprimir)
-        ttk.Button(top, text="Imprimir", style="Accent.TButton", command=_reimprimir
+        tree.bind("<Return>", _reimprimir)
+        tree.bind("<KP_Enter>", _reimprimir)
+        top.bind("<Escape>", lambda e: top.destroy())
+        ttk.Button(top, text="Imprimir (Enter)", style="Accent.TButton", command=_reimprimir
                    ).pack(pady=12)
+        ttk.Label(top, text="↑↓ elegir   ·   Enter imprimir   ·   Esc cerrar",
+                  style="Muted.TLabel").pack(pady=(0, 8))
+
+        # Se abre con la lista ya enfocada y la primera venta marcada: así
+        # se navega con las flechas sin tocar el mouse.
+        if ventas:
+            tree.focus_set()
+            tree.selection_set(ventas[0]["uuid_unico"])
+            tree.focus(ventas[0]["uuid_unico"])
         habilitar_copiar_pegar_global(top)
 
 

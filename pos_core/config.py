@@ -7,7 +7,8 @@ from pos_core.paths import config_path
 
 _DEFAULTS = {
     "telegram": {"bot_token": "", "chat_id_default": "", "habilitado": "false"},
-    "general": {"nombre_local": "Mi Negocio", "modo": "MAESTRO"},
+    # nombre_local es lo que se imprime como encabezado de cada ticket.
+    "general": {"nombre_local": "El Galpón Del Nono", "modo": "MAESTRO"},
     "impresora": {"nombre": ""},  # vacío = usar la impresora predeterminada de Windows
     "arca": {
         "habilitado": "false",

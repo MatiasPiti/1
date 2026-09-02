@@ -30,14 +30,25 @@ def _separador() -> str:
     return "-" * ANCHO
 
 
+def _nombre_local() -> str:
+    """Nombre del negocio que encabeza el ticket, leído de config.ini
+    ([general] -> nombre_local). Se puede cambiar sin tocar código."""
+    try:
+        nombre = cargar_config().get("general", "nombre_local", fallback="").strip()
+    except Exception:
+        nombre = ""
+    return nombre or "El Galpón Del Nono"
+
+
 def formatear_ticket(venta: dict, detalle: list) -> str:
     lineas = []
-    lineas.append(_centrar("OTTER"))
+    # Encabezado: el nombre del negocio. Antes salía el nombre de usuario
+    # de Windows ("Cajero: user"), que al cliente no le dice nada.
+    lineas.append(_centrar(_nombre_local()))
     lineas.append(_separador())
     fecha_legible = venta["fecha_hora"][:19].replace("T", " ")
     lineas.append(f"Fecha: {fecha_legible}")
     lineas.append(f"Ticket: {venta['uuid_unico'][:8]}")
-    lineas.append(f"Cajero: {venta['usuario']}")
     lineas.append(_separador())
 
     for item in detalle:
