@@ -69,6 +69,7 @@ def _construir_allowlist() -> dict:
         "filters.guardar_filtro_manual": filters.guardar_filtro_manual,
         "bulk_edit.aplicar_ajuste_masivo": bulk_edit.aplicar_ajuste_masivo,
         "pdf_import.parsear_factura_pdf": pdf_import.parsear_factura_pdf,
+        "pdf_import.resolver_por_nombre": pdf_import.resolver_por_nombre,
         "excel_import.cargar_masivo": excel_import.cargar_masivo,
         "excel_import.exportar_lista_precios": excel_import.exportar_lista_precios,
         "config.obtener_config_dict": config.obtener_config_dict,

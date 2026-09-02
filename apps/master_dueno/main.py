@@ -616,6 +616,33 @@ class AppDueno(tk.Tk):
             for l in resultado["lineas_no_reconocidas"]:
                 self.pdf_log.insert("end", f"  ? {l}\n")
 
+        if not items:
+            return
+
+        # Ítems que la factura no identifica con un código conocido: se
+        # resuelven por nombre, pero SIEMPRE confirmados por una persona.
+        try:
+            pendientes = self.backend.pdf_import.resolver_por_nombre(items)
+        except Exception as e:
+            self.pdf_log.insert("end", f"\n(No se pudo buscar por nombre: {e})\n")
+            pendientes = []
+
+        if pendientes:
+            resueltos = self._resolver_items_por_nombre(pendientes)
+            if resueltos is None:
+                self.pdf_log.insert("end", "\nCarga cancelada.\n")
+                return
+            for indice, codigo in resueltos.items():
+                items[indice]["codigo"] = codigo
+            # Lo que quedó sin emparejar no se aplica: se avisa para
+            # cargarlo a mano, nunca se descarta en silencio.
+            indices_sin_resolver = [p["indice"] for p in pendientes
+                                     if p["indice"] not in resueltos]
+            for indice in sorted(indices_sin_resolver, reverse=True):
+                self.pdf_log.insert(
+                    "end", f"  SIN CARGAR (sin producto elegido): {items[indice]['nombre']}\n")
+            items = [it for n, it in enumerate(items) if n not in indices_sin_resolver]
+
         if items and messagebox.askyesno("Confirmar", f"¿Aplicar {len(items)} ítems al stock?"):
             resultados = self.backend.stock_service.sumar_stock_por_factura_pdf(
                 items, usuario=USUARIO, factura_nombre=os.path.basename(ruta), origen=ORIGEN)
@@ -623,6 +650,91 @@ class AppDueno(tk.Tk):
             self.pdf_log.insert("end", f"\nAplicado. Fallos: {len(fallidos)}\n")
             for r in fallidos:
                 self.pdf_log.insert("end", f"  ERROR {r['codigo']}: {r['error']}\n")
+
+    def _resolver_items_por_nombre(self, pendientes: list):
+        """Pantalla de confirmación: por cada ítem de la factura que no se
+        pudo identificar por código, muestra a qué producto del catálogo se
+        parece y deja elegir.
+
+        Devuelve {indice_del_item: codigo_elegido}, o None si se cancela.
+        Un ítem sin producto elegido simplemente no se carga.
+        """
+        top = tk.Toplevel(self)
+        aplicar_tema(top)
+        top.title("Emparejar productos de la factura")
+        top.geometry("980x620")
+        top.transient(self)
+        top.grab_set()
+
+        ttk.Label(top, text="Estos ítems de la factura no traen un código conocido",
+                  style="Header.TLabel").pack(anchor="w", padx=16, pady=(16, 4))
+        ttk.Label(top, wraplength=940, justify="left", style="Muted.TLabel",
+                  text="Se buscó el producto por su nombre. Revisá cada fila: las marcadas como "
+                       "SEGURA ya vienen con el producto elegido; las demás hay que elegirlas a "
+                       "mano. Lo que dejes en «(no cargar)» no se suma al stock."
+                  ).pack(anchor="w", padx=16, pady=(0, 10))
+
+        cont = ttk.Frame(top)
+        cont.pack(fill="both", expand=True, padx=16)
+        canvas = tk.Canvas(cont, highlightthickness=0)
+        vsb = ttk.Scrollbar(cont, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+        filas = ttk.Frame(canvas)
+        canvas.create_window((0, 0), window=filas, anchor="nw")
+        filas.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        SIN_CARGAR = "(no cargar)"
+        seleccion = {}
+
+        encabezados = ["Nombre en la factura", "Cant.", "Certeza", "Producto del catálogo"]
+        for col, txt in enumerate(encabezados):
+            ttk.Label(filas, text=txt, style="Header.TLabel").grid(
+                row=0, column=col, sticky="w", padx=6, pady=(0, 6))
+
+        for fila, p in enumerate(pendientes, start=1):
+            ttk.Label(filas, text=p["nombre_factura"][:42]).grid(row=fila, column=0, sticky="w", padx=6, pady=3)
+            ttk.Label(filas, text=str(p["cantidad"])).grid(row=fila, column=1, sticky="w", padx=6)
+            color = {"SEGURA": "#27ae60", "POSIBLE": "#d68910"}.get(p["confianza"], "#c0392b")
+            tk.Label(filas, text=p["confianza"], fg=color, font=("Segoe UI", 9, "bold")).grid(
+                row=fila, column=2, sticky="w", padx=6)
+
+            opciones = [SIN_CARGAR] + [f"{c['nombre']}  ·  {c['codigo']}" for c in p["candidatos"]]
+            var = tk.StringVar()
+            # Solo lo marcado como SEGURA viene pre-elegido; el resto queda
+            # en "(no cargar)" para que nada entre sin que alguien lo mire.
+            if p["confianza"] == "SEGURA" and p["elegido"]:
+                var.set(f"{p['elegido']['nombre']}  ·  {p['elegido']['codigo']}")
+            else:
+                var.set(SIN_CARGAR)
+            combo = ttk.Combobox(filas, textvariable=var, values=opciones, state="readonly", width=52)
+            combo.grid(row=fila, column=3, sticky="w", padx=6)
+            seleccion[p["indice"]] = var
+
+        resultado = {}
+        cancelado = {"si": False}
+
+        def _aceptar():
+            for indice, var in seleccion.items():
+                texto = var.get()
+                if texto and texto != SIN_CARGAR and "  ·  " in texto:
+                    resultado[indice] = texto.rsplit("  ·  ", 1)[1].strip()
+            top.destroy()
+
+        def _cancelar():
+            cancelado["si"] = True
+            top.destroy()
+
+        botones = ttk.Frame(top)
+        botones.pack(fill="x", padx=16, pady=12)
+        ttk.Button(botones, text="Confirmar y cargar", style="Accent.TButton",
+                   command=_aceptar).pack(side="right")
+        ttk.Button(botones, text="Cancelar", command=_cancelar).pack(side="right", padx=8)
+        habilitar_copiar_pegar_global(top)
+
+        self.wait_window(top)
+        return None if cancelado["si"] else resultado
 
     # ------------------------------------------------------------------ #
     # Excel

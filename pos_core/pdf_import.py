@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class ItemFactura:
-    codigo: str
+    codigo: str          # "" cuando la factura no trae código de barras
     nombre: str
     cantidad: int
     precio_compra: float
@@ -48,6 +48,29 @@ _PATRONES = [
     ),
 ]
 
+# Patrones SIN código de barras: muchos remitos listan solo descripción,
+# cantidad y precio. Se prueban después de los de arriba (un código, si
+# está, siempre es más confiable que el nombre) y dejan `codigo` vacío para
+# que quien llame resuelva por nombre — ver pos_core/matching.py.
+# Ejemplos que cubren:
+#   "COCA COLA 2.25 LTS          x6      $1250,00"
+#   "Mayonesa Natura 500 gr    6    980,50"
+_PATRONES_SIN_CODIGO = [
+    re.compile(
+        r"^(?P<nombre>[A-Za-zÁÉÍÓÚÜÑáéíóúüñ][^|]*?)\s+x\s*(?P<cantidad>\d+)\s+\$?\s*"
+        r"(?P<precio>[\d.,]+)\s*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?P<nombre>[A-Za-zÁÉÍÓÚÜÑáéíóúüñ][^|]*?)\s+(?P<cantidad>\d{1,4})\s+\$?\s*"
+        r"(?P<precio>\d[\d.,]*)\s*$"
+    ),
+    re.compile(
+        r"^(?P<nombre>[A-Za-zÁÉÍÓÚÜÑáéíóúüñ][^|]*?)\s*\|\s*(?P<cantidad>\d+)\s*\|\s*\$?\s*"
+        r"(?P<precio>[\d.,]+)\s*$"
+    ),
+]
+
 _LINEAS_A_IGNORAR = re.compile(
     r"^(total|subtotal|iva|cuit|fecha|remito|factura|p[aá]gina|cliente|dom\w*|raz[oó]n)\b",
     re.IGNORECASE,
@@ -67,22 +90,43 @@ def _normalizar_numero(texto: str) -> float:
     return float(texto)
 
 
+def _construir_item(m, *, con_codigo: bool):
+    try:
+        nombre = re.sub(r"\s{2,}", " ", m.group("nombre")).strip(" .-|")
+        if not nombre:
+            return None
+        return ItemFactura(
+            codigo=m.group("codigo").strip() if con_codigo else "",
+            nombre=nombre,
+            cantidad=int(m.group("cantidad")),
+            precio_compra=_normalizar_numero(m.group("precio")),
+        )
+    except (ValueError, IndexError):
+        return None
+
+
 def _parsear_linea(linea: str):
     linea = linea.strip()
     if not linea or _LINEAS_A_IGNORAR.match(linea):
         return None
+
+    # Primero los patrones CON código: si la factura lo trae, es la forma
+    # confiable de identificar el producto y no hace falta adivinar nada.
     for patron in _PATRONES:
         m = patron.match(linea)
         if m:
-            try:
-                return ItemFactura(
-                    codigo=m.group("codigo").strip(),
-                    nombre=re.sub(r"\s{2,}", " ", m.group("nombre")).strip(),
-                    cantidad=int(m.group("cantidad")),
-                    precio_compra=_normalizar_numero(m.group("precio")),
-                )
-            except (ValueError, IndexError):
-                return None
+            return _construir_item(m, con_codigo=True)
+
+    # Recién si no hay código se intenta leer la línea por descripción.
+    for patron in _PATRONES_SIN_CODIGO:
+        m = patron.match(linea)
+        if m:
+            item = _construir_item(m, con_codigo=False)
+            # Una descripción de una sola letra o puro número no es un
+            # producto; mejor que quede como "no reconocida" y la mire una
+            # persona, antes que inventar un ítem.
+            if item and len(item.nombre) >= 3 and not item.nombre.isdigit():
+                return item
     return None
 
 
@@ -122,9 +166,60 @@ def parsear_factura_pdf(ruta_pdf: str) -> ResultadoParsingPDF:
         resultado.es_pdf_escaneado = True
 
     # de-duplicar líneas no reconocidas que en realidad ya matchearon vía tabla
-    codigos_reconocidos = {i.codigo for i in resultado.items}
+    codigos_reconocidos = {i.codigo for i in resultado.items if i.codigo}
+    nombres_reconocidos = {i.nombre for i in resultado.items}
     resultado.lineas_no_reconocidas = [
         l for l in resultado.lineas_no_reconocidas
         if not any(c in l for c in codigos_reconocidos)
+        and not any(n and n in l for n in nombres_reconocidos)
     ]
     return resultado
+
+
+def resolver_por_nombre(items: list) -> list:
+    """Para los ítems que quedaron SIN código (la factura no lo traía) o
+    cuyo código no existe en el catálogo, busca el producto por nombre.
+
+    Devuelve una lista paralela de dicts con lo necesario para que el
+    Panel del Dueño arme la pantalla de confirmación:
+
+        {indice, nombre_factura, cantidad, precio_compra, codigo_original,
+         motivo, confianza, candidatos, elegido}
+
+    `motivo` dice por qué hubo que buscar por nombre ("sin_codigo" o
+    "codigo_desconocido"). NUNCA aplica nada por su cuenta: siempre lo
+    confirma una persona, porque emparejar mal le suma el stock a otro
+    producto y eso no se nota hasta que la góndola no cierra.
+    """
+    from pos_core import matching
+    from pos_core.db import get_connection
+
+    conn = get_connection()
+    catalogo = [dict(r) for r in conn.execute(
+        "SELECT codigo, nombre FROM Productos WHERE activo = 1").fetchall()]
+    codigos_existentes = {p["codigo"] for p in catalogo}
+
+    pendientes = []
+    for indice, item in enumerate(items):
+        codigo = (item.get("codigo") if isinstance(item, dict) else item.codigo) or ""
+        nombre = item.get("nombre") if isinstance(item, dict) else item.nombre
+        cantidad = item.get("cantidad") if isinstance(item, dict) else item.cantidad
+        precio = item.get("precio_compra") if isinstance(item, dict) else item.precio_compra
+
+        if codigo and codigo in codigos_existentes:
+            continue   # se resuelve por código, no hace falta adivinar
+        motivo = "sin_codigo" if not codigo else "codigo_desconocido"
+
+        sugerencia = matching.sugerir(nombre, catalogo)
+        pendientes.append({
+            "indice": indice,
+            "nombre_factura": nombre,
+            "cantidad": cantidad,
+            "precio_compra": precio,
+            "codigo_original": codigo,
+            "motivo": motivo,
+            "confianza": sugerencia["confianza"],
+            "candidatos": sugerencia["candidatos"],
+            "elegido": sugerencia["elegido"],
+        })
+    return pendientes
