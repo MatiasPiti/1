@@ -23,8 +23,9 @@ from apps.theme import (COLORS, aplicar_tema, estriar_treeview, tag_fila,
 ORIGEN = "USB_CAJA"
 USUARIO = os.environ.get("USERNAME", "cajero_emergencia")
 
-CODIGO_SIN_BARRA = "1"  # caramelos sueltos, fiambre, o cualquier artículo sin código propio
-NOMBRE_SIN_BARRA = "ARTÍCULO SIN CÓDIGO"
+# Definidos en pos_core.sales para que la Caja y el núcleo que descuenta
+# el stock compartan exactamente el mismo código reservado.
+from pos_core.sales import CODIGO_SIN_BARRA, NOMBRE_SIN_BARRA
 
 
 class AppUsbCaja(tk.Tk):

@@ -97,7 +97,14 @@ class RemoteBackend:
     def __init__(self, base_url: str, token: str, *, timeout: int = 20):
         import requests
         self._requests = requests
-        self.base_url = base_url.rstrip("/")
+        base_url = (base_url or "").strip().rstrip("/")
+        if base_url and "://" not in base_url:
+            # Es muy fácil cargar solo "100.x.x.x:8765" (que es lo que
+            # muestra Tailscale). Sin esquema, requests tira MissingSchema y
+            # el usuario solo ve "no se pudo conectar", sin pista de que le
+            # faltaba el http://.
+            base_url = f"http://{base_url}"
+        self.base_url = base_url
         self.token = token
         self.timeout = timeout
         for nombre in _NOMBRES_MODULOS:

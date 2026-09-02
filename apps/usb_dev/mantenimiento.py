@@ -105,17 +105,43 @@ def detectar_instalaciones() -> list:
 # ---------------------------------------------------------------------- #
 # Base de datos: integridad, estructura, datos
 # ---------------------------------------------------------------------- #
+def _descartar_sidecars_wal(db_path: str, log: list) -> None:
+    """Borra los archivos -wal/-shm que acompañan a la base.
+
+    Es OBLIGATORIO hacerlo cada vez que se reemplaza stock.db por otro
+    archivo (reparación por .dump o restauración de un backup): esos
+    sidecars pertenecen a la base ANTERIOR, y si quedan ahí SQLite intenta
+    reproducirlos sobre la base nueva en la próxima apertura, que es
+    justamente la forma de arruinar la base que se acaba de arreglar.
+    """
+    for sufijo in ("-wal", "-shm"):
+        sidecar = db_path + sufijo
+        if os.path.exists(sidecar):
+            try:
+                os.remove(sidecar)
+                log.append(f"[DB] Se descartó {os.path.basename(sidecar)} (pertenecía a la base anterior).")
+            except OSError as e:
+                log.append(f"[DB] ATENCIÓN: no se pudo borrar {sidecar} ({e}). "
+                            f"Borrarlo a mano antes de volver a abrir el programa.")
+
+
 def verificar_y_reparar_db(carpeta_instalacion: str, log: list) -> None:
     db_path = os.path.join(carpeta_instalacion, "database", "stock.db")
     if not os.path.isfile(db_path):
         log.append(f"[DB] No se encontró {db_path}, se omite este paso.")
         return
 
-    conn = sqlite3.connect(db_path)
     try:
-        resultado = conn.execute("PRAGMA integrity_check").fetchone()[0]
-    finally:
-        conn.close()
+        conn = sqlite3.connect(db_path)
+        try:
+            resultado = conn.execute("PRAGMA integrity_check").fetchone()[0]
+        finally:
+            conn.close()
+    except Exception as e:
+        # Base tan dañada que ni se puede abrir para revisarla: se trata
+        # igual que una corrupción detectada, no se aborta todo el
+        # mantenimiento por esto.
+        resultado = f"no se pudo abrir la base ({e})"
 
     if resultado == "ok":
         log.append(f"[DB] Integridad OK ({db_path}).")
@@ -139,27 +165,66 @@ def verificar_y_reparar_db(carpeta_instalacion: str, log: list) -> None:
         conn_nueva.close()
 
         os.replace(db_reparada, db_path)
-        log.append("[DB] Reparación por .dump/.restore aplicada con éxito.")
+        _descartar_sidecars_wal(db_path, log)
+        if _base_abre_ok(db_path):
+            log.append("[DB] Reparación por .dump/.restore aplicada con éxito.")
+        else:
+            # El .dump puede "funcionar" y aun así dejar una base que no
+            # pasa integrity_check. Nunca declarar éxito sin comprobarlo.
+            log.append("[DB] La base reconstruida por .dump/.restore sigue sin pasar la "
+                        "verificación; se pasa a restaurar un backup.")
+            _restaurar_backup_mas_reciente(db_path, carpeta_instalacion, log,
+                                            excluir=backup_path)
     except Exception as e:
         log.append(f"[DB] ERROR reparando la base con .dump/.restore: {e}")
-        _restaurar_backup_mas_reciente(db_path, carpeta_instalacion, log)
+        _restaurar_backup_mas_reciente(db_path, carpeta_instalacion, log, excluir=backup_path)
 
 
-def _restaurar_backup_mas_reciente(db_path: str, carpeta_instalacion: str, log: list) -> None:
+def _base_abre_ok(db_path: str) -> bool:
+    """¿Esta base abre y pasa integrity_check?"""
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            return conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
+def _restaurar_backup_mas_reciente(db_path: str, carpeta_instalacion: str, log: list,
+                                    excluir: str = None) -> None:
     """Último recurso si ni siquiera .dump/.restore pudo reparar la base:
-    buscar el backup .backup_* más reciente (de esta corrida o de una
-    anterior) y restaurarlo, para no dejar la caja sin base usable."""
-    carpeta_db = os.path.dirname(db_path)
+    restaurar el backup sano más reciente.
+
+    Dos cuidados que no son opcionales:
+    - Se EXCLUYE el backup que esta misma corrida acaba de sacar de la base
+      dañada: es el más reciente de todos, así que restaurarlo significaba
+      copiar la base rota sobre sí misma y avisar "restaurado con éxito",
+      dejando la caja sin base usable y con un mensaje que decía lo
+      contrario.
+    - Cada candidato se VERIFICA antes de darlo por bueno; si está dañado
+      también, se prueba el siguiente más nuevo.
+    """
     candidatos = sorted(glob.glob(db_path + ".backup_*"), reverse=True)
-    if not candidatos:
-        log.append("[DB] No hay ningún backup previo para restaurar automáticamente. "
-                    "Se conserva la base dañada para diagnóstico manual — no se pierde nada, "
-                    "pero hace falta intervención manual.")
+    if excluir:
+        candidatos = [c for c in candidatos if os.path.abspath(c) != os.path.abspath(excluir)]
+
+    for candidato in candidatos:
+        if not _base_abre_ok(candidato):
+            log.append(f"[DB] El backup {os.path.basename(candidato)} también está dañado, "
+                        f"se prueba con uno anterior.")
+            continue
+        shutil.copy2(candidato, db_path)
+        _descartar_sidecars_wal(db_path, log)
+        log.append(f"[DB] Se restauró el backup sano más reciente: {candidato}. "
+                   f"Puede faltar lo que se vendió entre ese backup y ahora — revisar con el cliente.")
         return
-    mas_reciente = candidatos[0]
-    shutil.copy2(mas_reciente, db_path)
-    log.append(f"[DB] Se restauró el backup más reciente disponible: {mas_reciente}. "
-               f"Puede faltar lo que se vendió entre ese backup y ahora — revisar con el cliente.")
+
+    log.append("[DB] NO hay ningún backup sano para restaurar automáticamente. "
+                "Se conserva la base dañada (y su copia) para diagnóstico manual: "
+                "no se pierde nada, pero ESTA INSTALACIÓN NO VA A ARRANCAR hasta "
+                "resolverlo a mano.")
 
 
 def aplicar_migraciones_esquema(db_path: str, log: list) -> None:

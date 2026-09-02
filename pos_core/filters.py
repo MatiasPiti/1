@@ -28,14 +28,25 @@ _OPERADORES_VALIDOS = {"=", "!=", ">", ">=", "<", "<=", "LIKE"}
 
 
 def _construir_sql(nodo: dict) -> tuple:
+    if not isinstance(nodo, dict):
+        raise ValueError(f"Nodo de filtro inválido: {nodo!r}")
+
     if "op" in nodo and nodo["op"] in ("AND", "OR"):
         partes, params = [], []
-        for hijo in nodo["conditions"]:
+        for hijo in nodo.get("conditions") or []:
             sql_hijo, params_hijo = _construir_sql(hijo)
             partes.append(f"({sql_hijo})")
             params.extend(params_hijo)
+        if not partes:
+            # Un grupo AND/OR sin condiciones adentro generaba un WHERE
+            # vacío -> "AND ()" -> error de sintaxis SQL en pantalla. Se
+            # rechaza con un mensaje entendible antes de llegar a la base.
+            raise ValueError("El filtro tiene un grupo de condiciones vacío")
         return f" {nodo['op']} ".join(partes), params
 
+    faltantes = {"campo", "operador", "valor"} - nodo.keys()
+    if faltantes:
+        raise ValueError(f"Condición de filtro incompleta, falta: {sorted(faltantes)}")
     campo, operador, valor = nodo["campo"], nodo["operador"], nodo["valor"]
     if campo not in _CAMPOS_VALIDOS:
         raise ValueError(f"Campo de filtro no permitido: {campo}")
@@ -59,12 +70,20 @@ def aplicar_filtro(definicion: dict) -> list:
         if not codigos:
             return []
         conn = get_connection()
-        placeholders = ",".join("?" for _ in codigos)
-        rows = conn.execute(
-            f"SELECT * FROM Productos WHERE activo = 1 AND codigo IN ({placeholders})", codigos
-        ).fetchall()
+        # La consulta se parte en tandas: SQLite tiene un tope de variables
+        # por sentencia (999 en varias compilaciones todavía en uso), y un
+        # filtro manual sobre un catálogo grande lo pasa sin esfuerzo — con
+        # un IN (...) de golpe reventaba con "too many SQL variables".
+        por_codigo = {}
+        TANDA = 500
+        for i in range(0, len(codigos), TANDA):
+            tanda = codigos[i:i + TANDA]
+            placeholders = ",".join("?" for _ in tanda)
+            rows = conn.execute(
+                f"SELECT * FROM Productos WHERE activo = 1 AND codigo IN ({placeholders})", tanda
+            ).fetchall()
+            por_codigo.update({r["codigo"]: dict(r) for r in rows})
         # se preserva el orden en que el dueño los eligió, no el de la DB
-        por_codigo = {r["codigo"]: dict(r) for r in rows}
         return [por_codigo[c] for c in codigos if c in por_codigo]
 
     where_sql, params = _construir_sql(definicion)
@@ -99,4 +118,13 @@ def guardar_filtro(nombre: str, definicion: dict) -> None:
 def listar_filtros_guardados() -> list:
     conn = get_connection()
     rows = conn.execute("SELECT nombre, definicion_json FROM Filtros_Guardados ORDER BY nombre").fetchall()
-    return [{"nombre": r["nombre"], "definicion": json.loads(r["definicion_json"])} for r in rows]
+    filtros = []
+    for r in rows:
+        try:
+            definicion = json.loads(r["definicion_json"])
+        except (TypeError, ValueError):
+            # Un filtro con el JSON dañado no puede tumbar la lista entera
+            # de filtros: se muestra vacío y el dueño puede borrarlo.
+            definicion = {"tipo": "manual", "codigos": []}
+        filtros.append({"nombre": r["nombre"], "definicion": definicion})
+    return filtros

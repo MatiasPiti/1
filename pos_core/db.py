@@ -21,13 +21,38 @@ _PALABRAS_RESERVADAS_SQL = {"PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "CONSTRAINT
 
 
 def _schema_sql() -> str:
+    """DDL completo del esquema, leído de sql/schema.sql.
+
+    Se prueban varias ubicaciones porque el archivo vive en un lugar
+    distinto según cómo esté corriendo el programa: empaquetado con
+    PyInstaller va adonde apunta get_resource_path() (que resuelve
+    sys._MEIPASS), mientras que en desarrollo está al lado del paquete
+    pos_core. Si esto no encuentra el archivo, NADA arranca (ni la Caja ni
+    el Dueño pueden crear su base), así que el error tiene que decir
+    exactamente dónde se buscó en vez de un FileNotFoundError pelado.
+    """
     global _SCHEMA_CACHE
-    if _SCHEMA_CACHE is None:
-        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        schema_file = os.path.join(here, "sql", "schema.sql")
-        with open(schema_file, "r", encoding="utf-8") as f:
-            _SCHEMA_CACHE = f.read()
-    return _SCHEMA_CACHE
+    if _SCHEMA_CACHE is not None:
+        return _SCHEMA_CACHE
+
+    from pos_core.paths import get_resource_path
+
+    raiz_proyecto = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidatos = [
+        get_resource_path(os.path.join("sql", "schema.sql")),
+        os.path.join(raiz_proyecto, "sql", "schema.sql"),
+    ]
+    for schema_file in candidatos:
+        try:
+            with open(schema_file, "r", encoding="utf-8") as f:
+                _SCHEMA_CACHE = f.read()
+                return _SCHEMA_CACHE
+        except OSError:
+            continue
+
+    raise FileNotFoundError(
+        "No se encontró sql/schema.sql (necesario para crear/actualizar la base). "
+        f"Se buscó en: {candidatos}")
 
 
 def get_connection(path: str = None) -> sqlite3.Connection:
@@ -65,11 +90,28 @@ def transaction(path: str = None):
         # commit automático al salir sin excepciones; ROLLBACK si hubo error.
     """
     conn = get_connection(path)
+    if conn.in_transaction:
+        # SQLite no admite BEGIN anidado. Si esto pasa es un error de
+        # programación (una función transaccional llamando a otra), y hay
+        # que verlo con ese nombre y no como un "cannot start a transaction
+        # within a transaction" suelto en medio de un cobro.
+        raise RuntimeError(
+            "transaction() anidada: ya hay una transacción abierta en este hilo. "
+            "Las funciones que abren transacción no pueden llamarse entre sí.")
+
     conn.execute("BEGIN IMMEDIATE")
     try:
         yield conn
     except Exception:
-        conn.execute("ROLLBACK")
+        try:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            # Ante un error de disco/IO, SQLite puede haber abortado la
+            # transacción por su cuenta; el ROLLBACK entonces falla. Ese
+            # fallo secundario no debe tapar la excepción original, que es
+            # la que explica qué pasó de verdad.
+            pass
         raise
     else:
         conn.execute("COMMIT")

@@ -265,10 +265,12 @@ def abrir_dialogo_impresora(parent: tk.Misc) -> tk.Toplevel:
     def _guardar():
         from tkinter import messagebox
         elegida = seleccion.get()
-        if "impresora" not in cfg:
-            cfg["impresora"] = {}
-        cfg.set("impresora", "nombre", "" if elegida == PREDETERMINADA else elegida)
-        config.guardar_config(cfg)
+        # Se escribe SOLO la clave de impresora, sobre la config recién
+        # releída: guardar el `cfg` cargado al abrir el diálogo pisaría
+        # cualquier otro cambio hecho mientras esta ventana estuvo abierta
+        # (por ejemplo el token de ARCA o el del bot de Telegram).
+        config.actualizar_config_dict(
+            {"impresora": {"nombre": "" if elegida == PREDETERMINADA else elegida}})
         messagebox.showinfo("Impresora configurada",
                              f"A partir de ahora los tickets se imprimen en:\n{elegida}\n\n"
                              f"Esto queda guardado — no hace falta elegirla de nuevo.")

@@ -14,6 +14,15 @@ from datetime import datetime
 from pos_core.db import transaction
 from pos_core import stock_service
 
+# Código reservado para artículos sin código de barra propio (caramelos
+# sueltos, fiambre, etc.): no existe como fila en Productos, así que no
+# tiene stock que descontar. Definido acá, del lado del núcleo, para que
+# la Caja Maestra y la Caja del USB usen exactamente el mismo valor que
+# cerrar_ticket() saltea — si cada una tuviera el suyo y alguno cambiara,
+# el descuento de stock empezaría a fallar en silencio.
+CODIGO_SIN_BARRA = "1"
+NOMBRE_SIN_BARRA = "ARTÍCULO SIN CÓDIGO"
+
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="milliseconds")
@@ -30,9 +39,22 @@ def cerrar_ticket(carrito: list, *, metodo_pago: str, usuario: str,
     if not carrito:
         raise ValueError("El carrito está vacío")
 
+    for item in carrito:
+        if item["cantidad"] <= 0:
+            raise ValueError(f"Cantidad inválida en '{item.get('nombre', item.get('codigo'))}': "
+                             f"{item['cantidad']}")
+        if item["precio_unitario"] < 0:
+            raise ValueError(f"Precio negativo en '{item.get('nombre', item.get('codigo'))}': "
+                             f"{item['precio_unitario']}")
+
     venta_uuid = str(uuid.uuid4())
     fecha_hora = _now()
-    total = sum(item["cantidad"] * item["precio_unitario"] for item in carrito)
+    # Plata SIEMPRE redondeada a 2 decimales al calcularse: sumar floats sin
+    # redondear deja totales como 14800.000000000002, que después se imprimen
+    # raros en el ticket y, peor, viajan así a ARCA (que compara el total
+    # contra la suma de los ítems y rechaza el comprobante por diferencia).
+    subtotales = [round(item["cantidad"] * item["precio_unitario"], 2) for item in carrito]
+    total = round(sum(subtotales), 2)
 
     # En el Maestro no hace falta "sincronizar" (ya es la fuente de verdad);
     # en un USB, la venta queda pendiente de exportar hasta el botón
@@ -45,8 +67,7 @@ def cerrar_ticket(carrito: list, *, metodo_pago: str, usuario: str,
                VALUES (?,?,?,?,?,?,?)""",
             (venta_uuid, fecha_hora, total, metodo_pago, usuario, origen, sincronizado),
         )
-        for item in carrito:
-            subtotal = item["cantidad"] * item["precio_unitario"]
+        for item, subtotal in zip(carrito, subtotales):
             conn.execute(
                 """INSERT INTO Detalle_Ventas
                    (venta_uuid, producto_codigo, producto_nombre, cantidad, precio_unitario, subtotal)
@@ -62,10 +83,7 @@ def cerrar_ticket(carrito: list, *, metodo_pago: str, usuario: str,
     # stock se resuelve manualmente sin perder el ticket.
     fallas_stock = []
     for item in carrito:
-        if item["codigo"] == "1":
-            # Artículo sin código de barra (precio libre, caramelos
-            # sueltos, fiambre, etc.): no existe como producto en
-            # Productos, así que no tiene stock que descontar.
+        if item["codigo"] == CODIGO_SIN_BARRA:
             continue
         try:
             stock_service.descontar_por_venta(
@@ -140,10 +158,14 @@ def buscar_productos(termino: str, *, limite: int = 30) -> list:
     from pos_core import ofertas
 
     conn = get_connection()
-    like = f"%{termino}%"
+    # Los comodines de LIKE ('%' y '_') se escapan: si no, un producto cuyo
+    # nombre o código los contenga (o un lector que meta un guión bajo)
+    # convierte la búsqueda en un comodín y trae cualquier cosa.
+    termino_escapado = termino.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    like = f"%{termino_escapado}%"
     rows = conn.execute(
         """SELECT codigo, nombre, precio_venta FROM Productos
-           WHERE activo = 1 AND (codigo LIKE ? OR nombre LIKE ?)
+           WHERE activo = 1 AND (codigo LIKE ? ESCAPE '\\' OR nombre LIKE ? ESCAPE '\\')
            ORDER BY nombre LIMIT ?""",
         (like, like, limite),
     ).fetchall()

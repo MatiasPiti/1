@@ -53,8 +53,61 @@ def _movimiento_existe(conn, mov_uuid: str) -> bool:
 
 
 def _leer_json(ruta: str) -> dict:
-    with open(ruta, "r", encoding="utf-8") as f:
-        return json.load(f)
+    """Lee el JSON de exportación de un USB.
+
+    Un archivo cortado a la mitad (el USB se sacó mientras se exportaba) es
+    un caso realista: se traduce a un mensaje claro en vez de dejar salir un
+    JSONDecodeError crudo a la pantalla de conciliación.
+    """
+    try:
+        with open(ruta, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"El archivo de sincronización está dañado o incompleto ({os.path.basename(ruta)}): {e}. "
+            f"Volvé a generar la exportación desde el USB ('Preparar sincronización').") from e
+    except OSError as e:
+        raise ValueError(f"No se pudo leer el archivo de sincronización {ruta}: {e}") from e
+
+    if not isinstance(data, dict):
+        raise ValueError(f"El archivo {os.path.basename(ruta)} no tiene el formato esperado.")
+    return data
+
+
+def _es_mas_reciente(fecha_usb, fecha_maestro) -> bool:
+    """¿El dato del USB es igual o más nuevo que el del maestro?
+
+    `actualizado_en` puede venir NULL en bases viejas migradas (ver
+    pos_core.db.aplicar_migraciones: SQLite no deja agregar una columna con
+    DEFAULT calculado, así que las filas existentes quedan en NULL).
+    Comparar str >= None revienta con TypeError, así que se resuelve acá:
+    si el maestro no tiene fecha, cualquier dato con fecha se considera más
+    nuevo; si ninguno la tiene, no se pisa nada.
+    """
+    if fecha_maestro is None:
+        return fecha_usb is not None
+    if fecha_usb is None:
+        return False
+    return str(fecha_usb) >= str(fecha_maestro)
+
+
+def detectar_tipo_export(ruta_json: str) -> str:
+    """Devuelve 'export_caja' o 'export_dueno' leyendo el campo 'tipo' que
+    el propio archivo trae adentro (ver pos_core/sync_export.py).
+
+    Antes esto se decidía mirando si el NOMBRE del archivo contenía "caja",
+    lo cual se equivoca apenas alguien renombra el archivo o lo elige a
+    mano: un export del Dueño tomado como export de Caja no importa nada y
+    encima informa "0 cambios", que parece un USB vacío en vez de un error.
+    Si el archivo no declara el tipo (formato viejo), se cae al nombre.
+    """
+    try:
+        tipo = (_leer_json(ruta_json).get("tipo") or "").strip().lower()
+    except ValueError:
+        tipo = ""
+    if tipo in ("export_caja", "export_dueno"):
+        return tipo
+    return "export_caja" if "caja" in os.path.basename(ruta_json).lower() else "export_dueno"
 
 
 def analizar_export_caja(ruta_json: str) -> ResumenConciliacion:
@@ -172,7 +225,7 @@ def analizar_export_dueno(ruta_json: str) -> ResumenConciliacion:
         if existente is None:
             resumen.productos_nuevos += 1
         elif existente["precio_venta"] != prod["precio_venta"]:
-            gana_usb = prod["actualizado_en"] >= existente["actualizado_en"]
+            gana_usb = _es_mas_reciente(prod.get("actualizado_en"), existente["actualizado_en"])
             resumen.precios_actualizados += 1
             resumen.conflictos_precio.append({
                 "codigo": prod["codigo"],
@@ -216,12 +269,14 @@ def aplicar_export_dueno(ruta_json: str, *, usuario_dev: str) -> ResumenConcilia
                          "USB_DUENO"),
                     )
                     resumen.productos_nuevos += 1
-                elif prod["actualizado_en"] >= existente["actualizado_en"] and \
-                        prod["precio_venta"] != existente["precio_venta"]:
+                elif prod["precio_venta"] != existente["precio_venta"] and \
+                        _es_mas_reciente(prod.get("actualizado_en"), existente["actualizado_en"]):
                     conn.execute(
                         "UPDATE Productos SET precio_venta = ?, actualizado_en = ?, "
                         "version = version + 1 WHERE id = ?",
-                        (prod["precio_venta"], prod["actualizado_en"], existente["id"]),
+                        (prod["precio_venta"],
+                         prod.get("actualizado_en") or datetime.now().isoformat(timespec="milliseconds"),
+                         existente["id"]),
                     )
                     resumen.precios_actualizados += 1
         except Exception as e:

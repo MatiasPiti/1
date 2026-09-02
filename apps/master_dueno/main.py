@@ -71,15 +71,31 @@ class AppDueno(tk.Tk):
         nb.add(self.tab_alertas, text="Alertas")
         nb.add(self.tab_auditoria, text="Auditoría")
 
-        self._armar_dashboard(self.tab_dashboard)
-        self._armar_stock(self.tab_stock)
-        self._armar_bulk(self.tab_bulk)
-        self._armar_ofertas(self.tab_ofertas)
-        self._armar_pdf(self.tab_pdf)
-        self._armar_excel(self.tab_excel)
-        self._armar_arca(self.tab_arca)
-        self._armar_alertas(self.tab_alertas)
-        self._armar_auditoria(self.tab_auditoria)
+        # Cada pestaña se arma de forma aislada: varias consultan datos al
+        # armarse, y en modo remoto esa consulta puede fallar (el local
+        # apagado, sin VPN, etc.). Si eso tirara la excepción hacia arriba,
+        # la ventana entera no llegaría a abrir NUNCA — justo cuando más
+        # falta hace el cartel rojo de "sin conexión". Con esto, una
+        # pestaña que no pudo cargar avisa dentro de sí misma y el resto
+        # del panel abre igual; el botón "Actualizar" de cada pestaña
+        # vuelve a intentarlo cuando la conexión vuelve.
+        for armar, tab, nombre in (
+            (self._armar_dashboard, self.tab_dashboard, "Dashboard"),
+            (self._armar_stock, self.tab_stock, "Stock"),
+            (self._armar_bulk, self.tab_bulk, "Filtros / Edición Masiva"),
+            (self._armar_ofertas, self.tab_ofertas, "Ofertas"),
+            (self._armar_pdf, self.tab_pdf, "Facturas PDF"),
+            (self._armar_excel, self.tab_excel, "Carga Excel"),
+            (self._armar_arca, self.tab_arca, "Facturación ARCA"),
+            (self._armar_alertas, self.tab_alertas, "Alertas"),
+            (self._armar_auditoria, self.tab_auditoria, "Auditoría"),
+        ):
+            try:
+                armar(tab)
+            except Exception as e:
+                ttk.Label(tab, text=f"No se pudo cargar «{nombre}»:\n{e}\n\n"
+                                     f"Cerrá y volvé a abrir el panel cuando haya conexión.",
+                          justify="left", wraplength=700).pack(padx=20, pady=20, anchor="w")
         habilitar_copiar_pegar_global(self)
 
         nb.bind("<<NotebookTabChanged>>", self._on_cambio_pestana)
@@ -113,8 +129,18 @@ class AppDueno(tk.Tk):
         import threading
 
         def _chequear():
-            conectado = self.backend.verificar_conexion()
-            self.after(0, lambda: self._actualizar_cartel_conexion(conectado))
+            try:
+                conectado = self.backend.verificar_conexion()
+            except Exception:
+                # Ante cualquier problema inesperado se muestra "sin
+                # conexión", que es lo honesto: nunca dejar el cartel
+                # clavado en verde mostrando datos viejos como si fueran
+                # de ahora.
+                conectado = False
+            try:
+                self.after(0, lambda: self._actualizar_cartel_conexion(conectado))
+            except Exception:
+                pass  # la ventana se cerró mientras este hilo estaba en vuelo
 
         threading.Thread(target=_chequear, daemon=True).start()
         self.after(15000, self._verificar_conexion_periodica)

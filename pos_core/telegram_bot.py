@@ -41,17 +41,31 @@ def enviar_mensaje(texto: str, *, chat_id: str = None, timeout: int = 10) -> boo
 
 
 def _productos_fuera_de_umbral():
+    """Un renglón por producto activo, con su umbral efectivo ya resuelto
+    (el propio si tiene, si no el global).
+
+    El global se toma con un subselect de UNA sola fila a propósito: si por
+    lo que sea quedaran varias filas globales en la tabla (producto_codigo
+    IS NULL no lo impide el UNIQUE, porque en SQLite cada NULL es distinto),
+    un LEFT JOIN común multiplicaría cada producto por esa cantidad y
+    mandaría la misma alerta repetida N veces.
+    """
     conn = get_connection()
     return conn.execute(
         """
+        WITH global AS (
+            SELECT stock_minimo, stock_maximo, telegram_chat_id
+            FROM Configuracion_Alertas
+            WHERE producto_codigo IS NULL AND activo = 1
+            ORDER BY id LIMIT 1
+        )
         SELECT p.codigo, p.nombre, p.stock,
-               COALESCE(a.stock_minimo, ga.stock_minimo, 0) AS stock_minimo,
-               COALESCE(a.stock_maximo, ga.stock_maximo, 0) AS stock_maximo,
-               COALESCE(a.telegram_chat_id, ga.telegram_chat_id) AS chat_id,
+               COALESCE(a.stock_minimo, (SELECT stock_minimo FROM global), 0) AS stock_minimo,
+               COALESCE(a.stock_maximo, (SELECT stock_maximo FROM global), 0) AS stock_maximo,
+               COALESCE(a.telegram_chat_id, (SELECT telegram_chat_id FROM global)) AS chat_id,
                a.ultima_alerta_enviada
         FROM Productos p
         LEFT JOIN Configuracion_Alertas a ON a.producto_codigo = p.codigo AND a.activo = 1
-        LEFT JOIN Configuracion_Alertas ga ON ga.producto_codigo IS NULL AND ga.activo = 1
         WHERE p.activo = 1
         """
     ).fetchall()
@@ -70,8 +84,16 @@ def revisar_umbrales_y_alertar():
             continue
 
         ultima = row["ultima_alerta_enviada"]
-        if ultima and (ahora - datetime.fromisoformat(ultima)) < _COOLDOWN:
-            continue
+        if ultima:
+            try:
+                if (ahora - datetime.fromisoformat(ultima)) < _COOLDOWN:
+                    continue
+            except (TypeError, ValueError):
+                # Fecha guardada con un formato que no se puede leer (base
+                # vieja, edición manual): se trata como "sin cooldown" y se
+                # reescribe más abajo con un valor válido. Nunca debe cortar
+                # la revisión del RESTO de los productos.
+                pass
 
         if enviar_mensaje(alerta, chat_id=row["chat_id"]):
             with transaction() as conn:

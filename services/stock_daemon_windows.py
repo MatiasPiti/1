@@ -33,6 +33,7 @@ set_base_override_to_parent_dir()
 
 from pos_core.db import get_connection, init_db
 from pos_core import stock_service
+from pos_core.sales import CODIGO_SIN_BARRA
 
 logging.basicConfig(
     filename=os.path.join(logs_dir(), "stock_daemon.log"),
@@ -44,10 +45,25 @@ log = logging.getLogger("stock_daemon")
 INTERVALO_SEGUNDOS = 5
 
 
+DIAS_VENTANA_WATCHDOG = 2   # solo se reintentan ventas recientes, ver abajo
+
+
 def _ventas_con_stock_pendiente():
-    """Detecta ventas cuyo total de líneas en Detalle_Ventas no tiene un
-    movimiento SALIDA_VENTA equivalente todavía (caída justo entre el
-    INSERT de la venta y el descuento de stock)."""
+    """Detecta líneas de venta que todavía no tienen su movimiento
+    SALIDA_VENTA (caída justo entre el INSERT de la venta y el descuento
+    de stock).
+
+    Dos filtros importantes, los dos para no quedar reintentando para
+    siempre algo que nunca va a poder aplicarse:
+
+    - Se excluye el código reservado de "artículo sin código de barra":
+      esas líneas NO tienen producto en Productos y cerrar_ticket() las
+      saltea a propósito, así que su movimiento no va a existir nunca.
+    - Se mira solo la ventana de días reciente: una línea vieja que falla
+      siempre (producto borrado, por ejemplo) se reintentaría en cada
+      ciclo, cada 5 segundos, llenando el log para siempre. Un descuento
+      que quedó pendiente de verdad se resuelve en segundos, no en días.
+    """
     conn = get_connection()
     return conn.execute(
         """
@@ -55,26 +71,39 @@ def _ventas_con_stock_pendiente():
         FROM Detalle_Ventas dv
         JOIN Ventas v ON v.uuid_unico = dv.venta_uuid
         WHERE v.anulada = 0
+          AND dv.producto_codigo <> ?
+          AND v.fecha_hora >= datetime('now', 'localtime', ?)
           AND NOT EXISTS (
               SELECT 1 FROM Movimientos_Stock ms
               WHERE ms.ticket_uuid = dv.venta_uuid AND ms.producto_codigo = dv.producto_codigo
           )
-        """
+        """,
+        (CODIGO_SIN_BARRA, f"-{DIAS_VENTANA_WATCHDOG} days"),
     ).fetchall()
+
+
+# Líneas que ya fallaron y cuyo error se registró: se siguen reintentando
+# (el problema puede resolverse solo, p.ej. reactivando el producto), pero
+# el error se escribe UNA vez y no en cada ciclo, para no inflar el log.
+_fallas_ya_registradas = set()
 
 
 def ciclo_watchdog():
     pendientes = _ventas_con_stock_pendiente()
     for p in pendientes:
+        clave = (p["venta_uuid"], p["producto_codigo"])
         try:
             stock_service.descontar_por_venta(
                 p["producto_codigo"], p["cantidad"], ticket_uuid=p["venta_uuid"],
                 usuario=p["usuario"], origen="MAESTRO")
+            _fallas_ya_registradas.discard(clave)
             log.info("Descuento diferido aplicado: venta=%s producto=%s",
                       p["venta_uuid"], p["producto_codigo"])
         except Exception:
-            log.exception("Fallo aplicando descuento diferido: venta=%s producto=%s",
-                           p["venta_uuid"], p["producto_codigo"])
+            if clave not in _fallas_ya_registradas:
+                _fallas_ya_registradas.add(clave)
+                log.exception("Fallo aplicando descuento diferido: venta=%s producto=%s",
+                               p["venta_uuid"], p["producto_codigo"])
 
 
 def main():

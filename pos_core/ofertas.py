@@ -27,6 +27,10 @@ def crear_oferta(*, codigo: str, tipo_descuento: str, valor: float, descripcion:
         raise ValueError("La duración tiene que ser mayor a 0 días")
     if valor <= 0:
         raise ValueError("El valor del descuento/precio tiene que ser mayor a 0")
+    if tipo_descuento == "PORCENTAJE" and valor >= 100:
+        # Un 100% (o más) dejaba el precio efectivo en $0 y la Caja cobraba
+        # $0 por ese producto sin ningún aviso.
+        raise ValueError("Un descuento por porcentaje tiene que ser menor a 100%")
 
     conn = get_connection()
     producto = conn.execute(

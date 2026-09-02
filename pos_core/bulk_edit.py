@@ -43,26 +43,42 @@ def aplicar_ajuste_masivo(codigos: list, *, porcentaje: float = None, monto_fijo
     un filtro guardado o de una selección manual en la grilla). Cada
     producto se actualiza en su propia transacción para no bloquear toda
     la tabla mientras se procesan cientos de artículos."""
+    # El ajuste se valida ANTES de tocar el primer producto: si los
+    # parámetros están mal, la excepción tiene que salir con cero precios
+    # modificados. Validándolo recién adentro del bucle (como estaba), el
+    # error saltaba en el primer producto y abortaba la función entera, pero
+    # en una segunda pasada podía dejar parte del lote ya actualizado y
+    # parte no, sin devolverle a la UI ningún resumen de lo aplicado.
+    calcular_nuevo_precio(1.0, porcentaje=porcentaje, monto_fijo=monto_fijo, redondear=redondear)
+
     resultados = []
     now = datetime.now().isoformat(timespec="milliseconds")
     for codigo in codigos:
-        with transaction() as conn:
-            row = conn.execute(
-                "SELECT precio_venta FROM Productos WHERE codigo = ? AND activo = 1", (codigo,)
-            ).fetchone()
-            if row is None:
-                resultados.append({"codigo": codigo, "ok": False, "error": "no encontrado"})
-                continue
-            precio_anterior = row["precio_venta"]
-            precio_nuevo = calcular_nuevo_precio(
-                precio_anterior, porcentaje=porcentaje, monto_fijo=monto_fijo, redondear=redondear)
-            conn.execute(
-                "UPDATE Productos SET precio_venta = ?, actualizado_en = ?, version = version + 1 "
-                "WHERE codigo = ?",
-                (precio_nuevo, now, codigo),
-            )
+        # Cada producto en su propia transacción Y con su propio manejo de
+        # error: uno que falle (fue borrado en el medio, quedó bloqueado)
+        # no debe abortar el resto del lote ni dejar a la UI sin saber qué
+        # se llegó a aplicar.
+        try:
+            with transaction() as conn:
+                row = conn.execute(
+                    "SELECT precio_venta FROM Productos WHERE codigo = ? AND activo = 1", (codigo,)
+                ).fetchone()
+                if row is None:
+                    resultados.append({"codigo": codigo, "ok": False, "error": "no encontrado"})
+                    continue
+                precio_anterior = row["precio_venta"]
+                precio_nuevo = calcular_nuevo_precio(
+                    precio_anterior, porcentaje=porcentaje, monto_fijo=monto_fijo,
+                    redondear=redondear)
+                conn.execute(
+                    "UPDATE Productos SET precio_venta = ?, actualizado_en = ?, version = version + 1 "
+                    "WHERE codigo = ?",
+                    (precio_nuevo, now, codigo),
+                )
             resultados.append({
                 "codigo": codigo, "ok": True,
                 "precio_anterior": precio_anterior, "precio_nuevo": precio_nuevo,
             })
+        except Exception as e:
+            resultados.append({"codigo": codigo, "ok": False, "error": str(e)})
     return resultados

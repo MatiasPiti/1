@@ -92,7 +92,9 @@ class PanelSincronizacion(tk.Toplevel):
         self._mostrar_dry_run(self.archivo_actual)
 
     def _es_export_caja(self, ruta):
-        return "caja" in os.path.basename(ruta).lower()
+        # Se pregunta por el contenido del archivo, no por su nombre: ver
+        # reconciliation.detectar_tipo_export().
+        return reconciliation.detectar_tipo_export(ruta) == "export_caja"
 
     def _mostrar_dry_run(self, ruta):
         self.texto.delete("1.0", "end")
@@ -143,5 +145,20 @@ class PanelSincronizacion(tk.Toplevel):
                f"Precios actualizados: {resumen.precios_actualizados}\n"
                f"Productos nuevos: {resumen.productos_nuevos}\n"
                f"Errores: {len(resumen.errores)}")
-        messagebox.showinfo("Sincronización aplicada", msg)
+        # El dry-run se refresca PRIMERO porque limpia el cuadro de texto;
+        # recién después se escribe abajo el detalle de errores, para que no
+        # lo borre.
         self._mostrar_dry_run(self.archivo_actual)
+
+        if resumen.errores:
+            # Un contador de errores solo no sirve para nada: hay que poder
+            # ver QUÉ no se pudo importar para arreglarlo a mano.
+            self.texto.insert("end", "\n\nERRORES DE LA ÚLTIMA APLICACIÓN:\n")
+            for e in resumen.errores:
+                self.texto.insert("end", f"  - {e}\n")
+            detalle = "\n".join(f"  - {e}" for e in resumen.errores[:15])
+            if len(resumen.errores) > 15:
+                detalle += f"\n  ... y {len(resumen.errores) - 15} más (ver el detalle en pantalla)."
+            messagebox.showwarning("Sincronización aplicada con errores", f"{msg}\n\nErrores:\n{detalle}")
+        else:
+            messagebox.showinfo("Sincronización aplicada", msg)
