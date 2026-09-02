@@ -10,6 +10,8 @@ Requiere `pip install pywin32` y compilar con PyInstaller apuntando a
 este archivo para el ejecutable del servicio (ver build/build_all.bat).
 """
 
+import sys
+
 import servicemanager
 import win32event
 import win32service
@@ -37,8 +39,35 @@ class StockService(win32serviceutil.ServiceFramework):
     def SvcDoRun(self):
         servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE, servicemanager.PYS_SERVICE_STARTED,
                                (self._svc_name_, ""))
-        init_db()
-        log.info("Servicio de Windows iniciado")
+        try:
+            init_db()
+            log.info("Servicio de Windows iniciado")
+        except Exception:
+            # Si esto falla, el servicio muere sin dejar rastro y en el
+            # Administrador de servicios solo se ve "Detenido". Se deja
+            # constancia en el log Y en el Visor de eventos de Windows,
+            # que es donde se mira cuando el servicio ni siquiera arranca.
+            log.exception("No se pudo iniciar el servicio")
+            servicemanager.LogErrorMsg(f"Otter StockService no pudo iniciar: {sys.exc_info()[1]}")
+            raise
+
+        # La API remota del Dueño Remoto vive dentro de este servicio.
+        try:
+            from services.remote_api import iniciar_si_esta_habilitado
+            if iniciar_si_esta_habilitado() is not None:
+                log.info("API remota iniciada")
+        except Exception:
+            log.exception("No se pudo iniciar la API remota")
+
+        # Bot de Telegram: alertas de stock 24/7, aunque nadie tenga el
+        # Panel del Dueño abierto.
+        try:
+            from pos_core.telegram_bot import MonitorAlertas
+            MonitorAlertas(intervalo_segundos=300).start()
+            log.info("Monitor de alertas de Telegram iniciado")
+        except Exception:
+            log.exception("No se pudo iniciar el monitor de alertas de Telegram")
+
         while not self._detener:
             try:
                 ciclo_watchdog()
@@ -49,4 +78,19 @@ class StockService(win32serviceutil.ServiceFramework):
 
 
 if __name__ == "__main__":
-    win32serviceutil.HandleCommandLine(StockService)
+    if len(sys.argv) == 1:
+        # Sin argumentos = lo está arrancando el Administrador de
+        # servicios de Windows, que ejecuta el .exe pelado. Hay que
+        # entregarle el control al despachador de servicios.
+        #
+        # Sin esto, HandleCommandLine imprime su ayuda y termina: el
+        # servicio queda instalado pero SIEMPRE en "Detenido", sin ningún
+        # error visible (y menos aún compilado con --noconsole, donde esa
+        # ayuda no se ve en ningún lado).
+        servicemanager.Initialize()
+        servicemanager.PrepareToHostSingle(StockService)
+        servicemanager.StartServiceCtrlDispatcher()
+    else:
+        # Con argumentos = lo está llamando una persona desde la consola:
+        # install / start / stop / remove.
+        win32serviceutil.HandleCommandLine(StockService)

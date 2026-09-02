@@ -49,9 +49,16 @@ echo === 6/6 Otter Dueno Remoto (otra PC, vía Tailscale) ===
 echo.
 echo === Servicio oculto de stock (Windows Service, consola oculta) ===
 REM --noconsole = pythonw.exe embebido, sin ventana visible.
+REM Los modulos de pywin32 del servicio se declaran explicitamente: cuando
+REM el Administrador de servicios arranca el .exe, si falta alguno el
+REM servicio muere sin dejar rastro visible (queda en "Detenido" y nada mas).
 python -m PyInstaller --noconfirm --clean --onedir --noconsole %DATA% %ICON% ^
     --name StockService --paths . ^
     --hidden-import win32timezone ^
+    --hidden-import servicemanager ^
+    --hidden-import win32serviceutil ^
+    --hidden-import win32service ^
+    --hidden-import win32event ^
     services\stock_windows_service.py
 
 echo.
