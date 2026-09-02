@@ -42,13 +42,14 @@ def _nombre_local() -> str:
 
 def formatear_ticket(venta: dict, detalle: list) -> str:
     lineas = []
-    # Encabezado: el nombre del negocio. Antes salía el nombre de usuario
-    # de Windows ("Cajero: user"), que al cliente no le dice nada.
-    lineas.append(_centrar(_nombre_local()))
+    lineas.append(_centrar("OTTER"))
     lineas.append(_separador())
     fecha_legible = venta["fecha_hora"][:19].replace("T", " ")
     lineas.append(f"Fecha: {fecha_legible}")
     lineas.append(f"Ticket: {venta['uuid_unico'][:8]}")
+    # En este renglón iba el nombre de usuario de Windows ("Cajero: user"),
+    # que al cliente no le dice nada; ahora va el nombre del negocio.
+    lineas.append(f"Cajero: {_nombre_local()}")
     lineas.append(_separador())
 
     for item in detalle:
