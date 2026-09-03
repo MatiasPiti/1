@@ -15,26 +15,32 @@ REM sin depender de esa configuracion.
 set PYI=python -m PyInstaller --noconfirm --clean --onedir --windowed
 set DATA=--add-data "sql\schema.sql;sql" --add-data "apps\assets;apps\assets"
 set ICON=--icon apps\assets\logo_otter.ico
+REM pos_core.instancia_unica se importa adentro de una funcion (el candado
+REM que evita abrir la misma app dos veces). Se declara a mano para que no
+REM quede afuera del .exe por un descuido del analisis automatico.
+set UNICA=--hidden-import pos_core.instancia_unica
 
 echo.
 echo === 1/7 Otter Caja ===
-%PYI% %DATA% %ICON% --name MaestroCaja --paths . apps\master_caja\main.py
+%PYI% %DATA% %ICON% --name MaestroCaja --paths . ^
+    %UNICA% apps\master_caja\main.py
 
 echo.
 echo === 2/7 Otter Dueno ===
 %PYI% %DATA% %ICON% --name MaestroDueno --paths . ^
     --hidden-import matplotlib.backends.backend_tkagg ^
-    apps\master_dueno\main.py
+    %UNICA% apps\master_dueno\main.py
 
 echo.
 echo === 3/7 USB Caja (emergencia) ===
-%PYI% %DATA% %ICON% --name USB_Caja --paths . apps\usb_caja\main.py
+%PYI% %DATA% %ICON% --name USB_Caja --paths . ^
+    %UNICA% apps\usb_caja\main.py
 
 echo.
 echo === 4/7 USB Dueno (emergencia) ===
 %PYI% %DATA% %ICON% --name USB_Dueno --paths . ^
     --hidden-import matplotlib.backends.backend_tkagg ^
-    apps\usb_dueno\main.py
+    %UNICA% apps\usb_dueno\main.py
 
 echo.
 echo === 5/7 USB Mantenimiento (Desarrollador) ===

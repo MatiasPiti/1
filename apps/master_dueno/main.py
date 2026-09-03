@@ -1217,9 +1217,39 @@ class AppDueno(tk.Tk):
         PanelSincronizacion(self)
 
 
+def _unica_instancia(nombre_app: str, titulo: str) -> bool:
+    """Avisa y devuelve False si la app ya está abierta sobre esta base.
+
+    Dos ventanas iguales no rompen nada (la base aguanta varios procesos),
+    pero el cajero escanea en una, mira la otra y cree que el sistema
+    perdió los productos. Ante cualquier duda deja abrir: ver
+    pos_core/instancia_unica.py.
+    """
+    try:
+        from pos_core import instancia_unica
+        libre = instancia_unica.tomar(nombre_app)
+    except Exception:
+        return True   # ni siquiera esto puede impedir que la app abra
+    if libre:
+        return True
+    from tkinter import messagebox
+    import tkinter as tk
+    aviso = tk.Tk()
+    aviso.withdraw()
+    messagebox.showwarning(
+        "Ya está abierto",
+        f"{titulo} ya está abierto en esta computadora.\n\n"
+        "Buscalo en la barra de tareas (abajo). Si no aparece, cerrá esta "
+        "ventana, esperá unos segundos y volvé a abrirlo.")
+    aviso.destroy()
+    return False
+
+
 if __name__ == "__main__":
     from pos_core.paths import set_base_override_to_parent_dir
     # Caja y Dueño Maestro comparten UNA sola DB (carpeta padre de instalación).
     set_base_override_to_parent_dir()
     init_db()
+    if not _unica_instancia("dueno", "el Panel del Dueño"):
+        raise SystemExit(0)
     AppDueno().mainloop()
