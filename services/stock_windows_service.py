@@ -10,6 +10,7 @@ Requiere `pip install pywin32` y compilar con PyInstaller apuntando a
 este archivo para el ejecutable del servicio (ver build/build_all.bat).
 """
 
+import os
 import sys
 
 import servicemanager
@@ -77,7 +78,28 @@ class StockService(win32serviceutil.ServiceFramework):
             win32event.WaitForSingleObject(self.hWaitStop, 5000)
 
 
+def _asegurar_salida_estandar():
+    """Garantiza que sys.stdout / sys.stderr existan.
+
+    Un .exe compilado con --noconsole se queda sin salida estándar, y
+    win32serviceutil.HandleCommandLine imprime ("Installing service...")
+    antes de hacer nada: sin stdout, eso falla y la instalación del
+    servicio se aborta sin mostrar ni un error, dejando la sensación de
+    que el comando "no hizo nada". Se redirige al log para no perder el
+    mensaje y para que install/start/stop funcionen igual.
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    from pos_core.paths import logs_dir
+    destino = open(os.path.join(logs_dir(), "servicio_consola.log"), "a", encoding="utf-8")
+    if sys.stdout is None:
+        sys.stdout = destino
+    if sys.stderr is None:
+        sys.stderr = destino
+
+
 if __name__ == "__main__":
+    _asegurar_salida_estandar()
     if len(sys.argv) == 1:
         # Sin argumentos = lo está arrancando el Administrador de
         # servicios de Windows, que ejecuta el .exe pelado. Hay que

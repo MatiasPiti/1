@@ -47,12 +47,22 @@ echo === 6/6 Otter Dueno Remoto (otra PC, vía Tailscale) ===
     apps\dueno_remoto\main.py
 
 echo.
-echo === Servicio oculto de stock (Windows Service, consola oculta) ===
-REM --noconsole = pythonw.exe embebido, sin ventana visible.
-REM Los modulos de pywin32 del servicio se declaran explicitamente: cuando
-REM el Administrador de servicios arranca el .exe, si falta alguno el
+echo === Servicio oculto de stock (Windows Service) ===
+REM OJO: este es el UNICO ejecutable que NO lleva --noconsole, y es a
+REM proposito. Con --noconsole el .exe se queda sin stdout, y lo primero
+REM que hace "StockService.exe install" es imprimir "Installing service...":
+REM al no existir la salida, falla y la instalacion se aborta sin mostrar
+REM ningun error (el servicio simplemente nunca aparece).
+REM
+REM No hace falta ocultar nada igual: un Servicio de Windows lo arranca el
+REM sistema en una sesion aislada, asi que NUNCA muestra ventana, este
+REM compilado como este. La consola solo se ve al correr install/start/stop
+REM a mano desde una terminal, que es justo cuando conviene verla.
+REM
+REM Los modulos de pywin32 se declaran explicitamente: cuando el
+REM Administrador de servicios arranca el .exe, si falta alguno el
 REM servicio muere sin dejar rastro visible (queda en "Detenido" y nada mas).
-python -m PyInstaller --noconfirm --clean --onedir --noconsole %DATA% %ICON% ^
+python -m PyInstaller --noconfirm --clean --onedir %DATA% %ICON% ^
     --name StockService --paths . ^
     --hidden-import win32timezone ^
     --hidden-import servicemanager ^
