@@ -252,8 +252,7 @@ class AppCaja(CarritoTecladoMixin, tk.Tk):
         else:
             messagebox.showinfo("Venta cobrada", mensaje)
 
-        self.carrito = []
-        self.carrito_seleccionado = None
+        self._init_carrito()
         self._refrescar_grilla_carrito()
         self.buscador.delete(0, "end")
         self._ir_a_buscador()

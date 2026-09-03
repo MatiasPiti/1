@@ -448,6 +448,14 @@ llamada directa de siempre; en modo remoto, es un POST a `/rpc`.
    Tailscale la asigna sola) y el token (el mismo que quedó en el `config.ini` del local, sección
    `[remoto] -> token`). Se guarda para la próxima vez.
 
+**Un candado más, opcional:** por defecto la API escucha en todas las interfaces de red
+(`0.0.0.0`), que es lo que siempre funciona — la IP de Tailscale puede tardar en levantar o
+cambiar, y atarse a ella haría que el servicio no arranque si la VPN todavía no está. Si se
+quiere cerrar más, se agrega en `[remoto]` la línea `escuchar_en = 100.x.y.z` con la IP de
+Tailscale de la PC del local: a partir de ahí el puerto deja de existir para el resto de la red
+del negocio. **En ningún caso hay que abrir este puerto en el router ni hacerle port
+forwarding**: toda la seguridad se apoya en que solo se llegue a él por la VPN.
+
 ---
 
 ## Proceso de pensamiento — respuestas puntuales pedidas en el prompt

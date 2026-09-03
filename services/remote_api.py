@@ -36,6 +36,28 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 log = logging.getLogger("remote_api")
 
+# Tope del cuerpo de un pedido. Tiene que entrar el catálogo entero en
+# base64 (unos 4.600 productos ~ 1 MB de Excel, ~1,4 MB en base64), así
+# que 64 MB da aire de sobra sin dejar la puerta abierta a que un pedido
+# se coma toda la memoria de la PC del local.
+MAX_CUERPO = 64 * 1024 * 1024
+
+
+def _extension_segura(nombre: str) -> str:
+    """Devuelve una extensión inofensiva a partir del nombre que mandó el
+    cliente (".xlsx", ".pdf"...). Descarta cualquier cosa rara: lo único
+    que se usa es para que el archivo temporal tenga la extensión que
+    espera openpyxl/pdfplumber, no para conservar el nombre original."""
+    import re
+    # Primero el último tramo de la ruta (por si viniera "../../algo"), y
+    # después la extensión. El cliente hoy manda ya sólo ".xlsx", que
+    # splitext ve como nombre sin extensión: por eso el segundo caso.
+    limpio = os.path.basename(str(nombre or "").replace("\\", "/").strip())
+    extension = os.path.splitext(limpio)[1] or (limpio if limpio.startswith(".") else "")
+    if re.fullmatch(r"\.[A-Za-z0-9]{1,10}", extension):
+        return extension.lower()
+    return ""
+
 
 def _json_default(valor):
     """Los resultados de pos_core a veces son dataclasses (p.ej.
@@ -150,9 +172,25 @@ class _Handler(BaseHTTPRequestHandler):
 
         try:
             largo = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            self._responder(400, {"ok": False, "error": "Content-Length inválido"})
+            return
+        # Un Content-Length negativo hace que rfile.read(-1) lea hasta que
+        # se corte la conexión: un pedido así deja un hilo del servidor
+        # colgado para siempre. Y sin tope, un número enorme intenta
+        # reservar esa memoria de una. El tope es generoso a propósito:
+        # el Excel del catálogo viaja entero en base64 y son varios MB.
+        if largo < 0 or largo > MAX_CUERPO:
+            self._responder(413, {"ok": False,
+                                   "error": f"pedido demasiado grande (máximo {MAX_CUERPO} bytes)"})
+            return
+        try:
             cuerpo = json.loads(self.rfile.read(largo) or b"{}")
         except (ValueError, json.JSONDecodeError) as e:
             self._responder(400, {"ok": False, "error": f"pedido mal formado: {e}"})
+            return
+        if not isinstance(cuerpo, dict):
+            self._responder(400, {"ok": False, "error": "el pedido tiene que ser un objeto JSON"})
             return
 
         clave = f"{cuerpo.get('modulo')}.{cuerpo.get('funcion')}"
@@ -169,7 +207,12 @@ class _Handler(BaseHTTPRequestHandler):
                 archivo_b64 = cuerpo.get("archivo_b64")
                 if not archivo_b64:
                     raise ValueError("Falta el archivo a subir")
-                fd, archivo_temporal = tempfile.mkstemp(suffix=cuerpo.get("nombre_archivo", ""))
+                # Del nombre que manda el cliente se usa SOLO la extensión, y
+                # limpia: mkstemp pega el suffix tal cual al final de la ruta,
+                # así que un "nombre" tipo "../../algo.xlsx" escribía el
+                # archivo fuera de la carpeta temporal.
+                fd, archivo_temporal = tempfile.mkstemp(
+                    suffix=_extension_segura(cuerpo.get("nombre_archivo", "")))
                 with os.fdopen(fd, "wb") as f:
                     f.write(base64.b64decode(archivo_b64))
                 args[_FUNCIONES_CON_SUBIDA[clave]] = archivo_temporal
@@ -200,14 +243,23 @@ class _Handler(BaseHTTPRequestHandler):
                     pass
 
 
-def iniciar_servidor(*, puerto: int, token: str) -> ThreadingHTTPServer:
+def iniciar_servidor(*, puerto: int, token: str, escuchar_en: str = "0.0.0.0") -> ThreadingHTTPServer:
     """Arranca el servidor en un hilo demonio y lo devuelve (para poder
-    pedirle shutdown() si hace falta, p.ej. en tests)."""
+    pedirle shutdown() si hace falta, p.ej. en tests).
+
+    `escuchar_en` es en qué interfaz de red se escucha. Por defecto
+    "0.0.0.0" (todas), que es lo que anda siempre: la IP de Tailscale
+    puede tardar en levantar o cambiar, y atarse a ella haría que el
+    servicio no arranque si la VPN todavía no está. Si se quiere cerrar
+    más, se pone la IP de Tailscale (100.x.y.z) en config.ini —
+    [remoto] escuchar_en — y entonces el puerto deja de existir para el
+    resto de la red del local.
+    """
     handler = type("_HandlerConfigurado", (_Handler,), {
         "allowlist": _construir_allowlist(),
         "token": token,
     })
-    servidor = ThreadingHTTPServer(("0.0.0.0", puerto), handler)
+    servidor = ThreadingHTTPServer((escuchar_en, puerto), handler)
     hilo = threading.Thread(target=servidor.serve_forever, daemon=True, name="RemoteAPI")
     hilo.start()
     log.info("API remota escuchando en el puerto %s", puerto)
@@ -226,7 +278,8 @@ def iniciar_si_esta_habilitado():
     try:
         puerto = int(cfg.get("remoto", "puerto", fallback="8765"))
         token = config.token_remoto()
-        return iniciar_servidor(puerto=puerto, token=token)
+        escuchar_en = cfg.get("remoto", "escuchar_en", fallback="0.0.0.0").strip() or "0.0.0.0"
+        return iniciar_servidor(puerto=puerto, token=token, escuchar_en=escuchar_en)
     except Exception:
         log.exception("No se pudo iniciar la API remota")
         return None

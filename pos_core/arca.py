@@ -35,6 +35,7 @@ Homologación con el certificado de prueba.
 
 import base64
 import os
+import threading
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -61,6 +62,21 @@ _TIPO_CBTE = {"B": 6, "C": 11}  # códigos de comprobante que espera WSFEv1
 _DOC_TIPO_CONSUMIDOR_FINAL = 99
 
 _cache_ticket = {}  # ambiente -> {"token", "sign", "expiration": datetime}
+
+# Se pide un ticket nuevo un rato ANTES de que venza el que hay. Si se
+# usara hasta el último segundo, un ticket que vence entre que se lo saca
+# del cache y que llega el pedido a ARCA hace rebotar la factura justo
+# con el cliente esperando el ticket.
+MARGEN_VENCIMIENTO = timedelta(minutes=5)
+
+# Facturar es, por naturaleza, de a uno: el número de comprobante sale de
+# preguntarle a ARCA cuál fue el último y sumarle uno. Si dos facturas
+# salen a la vez (la caja del local y el dueño desde su casa por la API
+# remota) las dos leen el MISMO último número, piden el mismo siguiente y
+# ARCA rechaza la segunda por número fuera de secuencia. Este candado
+# serializa todo el flujo — sacar el ticket de acceso, pedir el número y
+# pedir el CAE — que además es como ARCA espera que se lo use.
+_candado_facturacion = threading.Lock()
 
 
 class ArcaError(Exception):
@@ -145,10 +161,28 @@ def _buscar(elemento: ET.Element, nombre: str):
     return None
 
 
+def _ticket_vigente(ticket) -> bool:
+    """¿El ticket de acceso cacheado sirve todavía (con margen)?
+
+    Ante cualquier duda devuelve False: pedir uno nuevo de más es
+    barato; usar uno vencido hace rebotar la factura con el cliente
+    esperando.
+    """
+    if not ticket:
+        return False
+    try:
+        vence = ticket["expiration"]
+        if vence.tzinfo is None:
+            vence = vence.astimezone()   # se asume la hora local del comercio
+        return vence - MARGEN_VENCIMIENTO > datetime.now(timezone.utc)
+    except (KeyError, TypeError, AttributeError, ValueError, OverflowError):
+        return False
+
+
 def obtener_ticket_acceso(cfg: dict, *, forzar_nuevo: bool = False) -> dict:
     ambiente = cfg.get("ambiente", "homologacion")
     cacheado = _cache_ticket.get(ambiente)
-    if not forzar_nuevo and cacheado and cacheado["expiration"] > datetime.now(timezone.utc):
+    if not forzar_nuevo and _ticket_vigente(cacheado):
         return cacheado
 
     tra_xml = _generar_tra()
@@ -186,6 +220,12 @@ def obtener_ticket_acceso(cfg: dict, *, forzar_nuevo: bool = False) -> dict:
         expiration = datetime.fromisoformat(expiration_txt.text) if expiration_txt is not None else None
     except ValueError:
         expiration = None
+    if expiration is not None and expiration.tzinfo is None:
+        # ARCA manda la fecha con huso horario, pero si algún día llegara
+        # sin él, compararla contra un "ahora" con huso tira TypeError y
+        # se cae la facturación entera. Se asume la hora local de la PC,
+        # que es la del comercio.
+        expiration = expiration.astimezone()
     if expiration is None:
         expiration = datetime.now(timezone.utc) + timedelta(hours=11)
 
@@ -289,13 +329,15 @@ def facturar_venta(venta: dict) -> dict:
         raise ArcaError(f"Tipo de comprobante configurado inválido: {tipo!r} (debe ser B o C).")
     cbte_tipo = _TIPO_CBTE[tipo]
 
-    ticket = obtener_ticket_acceso(cfg)
-    ultimo = consultar_ultimo_comprobante(cfg, ticket, cbte_tipo)
-    numero = ultimo + 1
-
     fecha_cbte = venta["fecha_hora"][:10].replace("-", "")  # 'YYYY-MM-DD' -> 'YYYYMMDD'
 
-    resultado = solicitar_cae(cfg, ticket, cbte_tipo=cbte_tipo, numero=numero,
-                               fecha=fecha_cbte, importe_total=venta["total"])
+    # Todo el flujo bajo un solo candado: pedir el número y usarlo tienen
+    # que ser una sola operación indivisible (ver _candado_facturacion).
+    with _candado_facturacion:
+        ticket = obtener_ticket_acceso(cfg)
+        ultimo = consultar_ultimo_comprobante(cfg, ticket, cbte_tipo)
+        numero = ultimo + 1
+        resultado = solicitar_cae(cfg, ticket, cbte_tipo=cbte_tipo, numero=numero,
+                                   fecha=fecha_cbte, importe_total=venta["total"])
     resultado["tipo_comprobante"] = tipo
     return resultado
