@@ -141,7 +141,7 @@ class AppUsbCaja(CarritoTecladoMixin, tk.Tk):
 
     def _configurar_impresora(self):
         top = abrir_dialogo_impresora(self)
-        top.bind("<Destroy>", lambda e: self.buscador.focus_set() if e.widget is top else None)
+        top.bind("<Destroy>", lambda e: self._volver_del_dialogo() if e.widget is top else None)
 
     def _cargar_productos(self):
         # El USB Caja tiene su propia base de datos, independiente de la
@@ -264,7 +264,7 @@ class AppUsbCaja(CarritoTecladoMixin, tk.Tk):
             tree.selection_set(ventas[0]["uuid_unico"])
             tree.focus(ventas[0]["uuid_unico"])
         habilitar_copiar_pegar_global(top)
-        top.bind("<Destroy>", lambda e: self.buscador.focus_set() if e.widget is top else None)
+        top.bind("<Destroy>", lambda e: self._volver_del_dialogo() if e.widget is top else None)
 
     def _preparar_sync(self):
         try:

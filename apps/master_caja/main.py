@@ -174,7 +174,7 @@ class AppCaja(CarritoTecladoMixin, tk.Tk):
 
     def _configurar_impresora(self):
         top = abrir_dialogo_impresora(self)
-        top.bind("<Destroy>", lambda e: self.buscador.focus_set() if e.widget is top else None)
+        top.bind("<Destroy>", lambda e: self._volver_del_dialogo() if e.widget is top else None)
 
     def _agregar_articulo_sin_codigo(self):
         importe = simpledialog.askfloat(
@@ -287,7 +287,7 @@ class AppCaja(CarritoTecladoMixin, tk.Tk):
         top.title("Otter - Historial de hoy")
         top.geometry("380x520")
         top.transient(self)
-        top.bind("<Destroy>", lambda e: self.buscador.focus_set() if e.widget is top else None)
+        top.bind("<Destroy>", lambda e: self._volver_del_dialogo() if e.widget is top else None)
 
         ttk.Label(top, text="Ventas de hoy", style="Header.TLabel").pack(anchor="w", padx=16, pady=(16, 8))
 

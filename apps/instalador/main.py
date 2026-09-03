@@ -22,6 +22,7 @@ negocio. Por eso la laptop recibe DuenoRemoto y nunca MaestroDueno.
 """
 
 import os
+import queue
 import shutil
 import subprocess
 import sys
@@ -87,8 +88,13 @@ class Instalador(tk.Tk):
         self.geometry("760x640")
         self.origen = buscar_origen()
         self.modo = tk.StringVar(value="local")
+        # La instalación corre en un hilo aparte y Tk NO es seguro entre
+        # hilos: todo lo que ese hilo quiera mostrar o hacer en pantalla
+        # pasa por esta cola y lo ejecuta el hilo de Tk (ver _bombear_log).
+        self._cola_log = queue.Queue()
 
         self._armar_ui()
+        self._bombear_log()
         habilitar_copiar_pegar_global(self)
         self._log(f"Archivos de instalación encontrados en:\n   {self.origen}\n")
         if not es_administrador():
@@ -196,31 +202,78 @@ class Instalador(tk.Tk):
             self.ruta_excel.delete(0, "end")
             self.ruta_excel.insert(0, ruta)
 
-    def _log(self, texto: str):
-        self.texto.insert("end", texto + "\n")
-        self.texto.see("end")
-        self.update_idletasks()
+    def _log(self, texto):
+        """Escribe una línea en el registro. Se puede llamar desde cualquier hilo.
+
+        No toca el widget: solo encola. Antes escribía directo (y hacía
+        update_idletasks) desde el hilo de la instalación, que es
+        justamente lo que Tk no soporta — podía colgar la ventana o
+        cortar la instalación por la mitad si el cliente la movía o la
+        cerraba mientras copiaba.
+        """
+        self._cola_log.put(texto)
+
+    def _bombear_log(self):
+        """Corre siempre en el hilo de Tk: vacía la cola a la pantalla."""
+        if not self.winfo_exists():
+            return
+        try:
+            while True:
+                pendiente = self._cola_log.get_nowait()
+                if callable(pendiente):
+                    # Acción diferida (un messagebox, reactivar el botón):
+                    # se ejecuta acá, ya en el hilo correcto.
+                    try:
+                        pendiente()
+                    except Exception:
+                        pass
+                else:
+                    self.texto.insert("end", str(pendiente) + "\n")
+                    self.texto.see("end")
+        except queue.Empty:
+            pass
+        self.after(100, self._bombear_log)
 
     # ------------------------------------------------------------------ #
     def _instalar(self):
         self.boton.config(state="disabled")
         self.texto.delete("1.0", "end")
+        # Se leen TODOS los campos acá, en el hilo de Tk, y se le pasa al
+        # hilo de instalación una copia común y corriente. Leer un widget
+        # desde el otro hilo es tan inseguro como escribirlo, y además el
+        # cliente podría tocar un campo con la instalación ya empezada:
+        # así lo que se instala es exactamente lo que apretó "Instalar".
+        datos = {
+            "modo": self.modo.get(),
+            "destino_local": self.destino_local.get().strip(),
+            "nombre_local": self.nombre_local.get().strip(),
+            "remoto": bool(self.var_remoto.get()),
+            "ruta_excel": self.ruta_excel.get().strip(),
+            "servicio": bool(self.var_servicio.get()),
+            "accesos": bool(self.var_accesos.get()),
+            "destino_remoto": self.destino_remoto.get().strip(),
+            "url_remota": self.url_remota.get().strip(),
+            "token_remoto": self.token_remoto.get().strip(),
+            "accesos_remoto": bool(self.var_accesos_remoto.get()),
+        }
         # En un hilo aparte para que la ventana no se congele durante la
         # copia (son varios cientos de MB) ni durante el install del
         # servicio.
-        threading.Thread(target=self._instalar_en_hilo, daemon=True).start()
+        threading.Thread(target=self._instalar_en_hilo, args=(datos,), daemon=True).start()
 
-    def _instalar_en_hilo(self):
+    def _instalar_en_hilo(self, datos):
         try:
-            if self.modo.get() == "local":
-                self._instalar_local()
+            if datos["modo"] == "local":
+                self._instalar_local(datos)
             else:
-                self._instalar_remoto()
+                self._instalar_remoto(datos)
         except Exception as e:
             self._log(f"\n*** LA INSTALACIÓN SE DETUVO ***\n{type(e).__name__}: {e}")
-            self.after(0, lambda: messagebox.showerror("Error en la instalación", str(e)))
+            mensaje = f"{type(e).__name__}: {e}"
+            self._cola_log.put(
+                lambda: messagebox.showerror("Error en la instalación", mensaje))
         finally:
-            self.after(0, lambda: self.boton.config(state="normal"))
+            self._cola_log.put(lambda: self.boton.config(state="normal"))
 
     # ------------------------------------------------------------------ #
     def _copiar_apps(self, destino: str, apps: list):
@@ -265,8 +318,8 @@ class Instalador(tk.Tk):
         config.actualizar_config_dict(cambios)
 
     # ------------------------------------------------------------------ #
-    def _instalar_local(self):
-        destino = self.destino_local.get().strip() or DESTINO_LOCAL_POR_DEFECTO
+    def _instalar_local(self, datos):
+        destino = datos["destino_local"] or DESTINO_LOCAL_POR_DEFECTO
         self._log(f"=== INSTALACIÓN EN LA PC DEL LOCAL ===\nDestino: {destino}\n")
 
         self._copiar_apps(destino, APPS_LOCAL)
@@ -279,16 +332,16 @@ class Instalador(tk.Tk):
         self._log(f"Base de datos creada en {os.path.join(destino, 'database', 'stock.db')}\n")
 
         # --- configuración ---
-        cambios = {"general": {"nombre_local": self.nombre_local.get().strip() or "Mi Negocio"}}
+        cambios = {"general": {"nombre_local": datos["nombre_local"] or "Mi Negocio"}}
         token = None
-        if self.var_remoto.get():
+        if datos["remoto"]:
             token = generar_token()
             cambios["remoto"] = {"habilitado": "true", "puerto": "8765", "token": token}
         self._configurar(destino, cambios)
         self._log("config.ini escrito.\n")
 
         # --- catálogo de productos ---
-        ruta_excel = self.ruta_excel.get().strip()
+        ruta_excel = datos["ruta_excel"]
         if ruta_excel:
             self._log("Cargando el Excel de productos (puede tardar un minuto)...")
             from pos_core import excel_import
@@ -300,11 +353,11 @@ class Instalador(tk.Tk):
             self._log("")
 
         # --- servicio de Windows ---
-        if self.var_servicio.get():
+        if datos["servicio"]:
             self._instalar_servicio(destino)
 
         # --- accesos directos ---
-        if self.var_accesos.get():
+        if datos["accesos"]:
             self._crear_acceso_directo("Otter Caja", os.path.join(destino, "MaestroCaja", "MaestroCaja.exe"))
             self._crear_acceso_directo("Otter Dueno", os.path.join(destino, "MaestroDueno", "MaestroDueno.exe"))
             self._log("")
@@ -365,10 +418,10 @@ class Instalador(tk.Tk):
                        "Cuando lo esté, sacala con:  tailscale ip -4\n")
 
     # ------------------------------------------------------------------ #
-    def _instalar_remoto(self):
-        destino = self.destino_remoto.get().strip() or DESTINO_REMOTO_POR_DEFECTO
-        url = self.url_remota.get().strip()
-        token = self.token_remoto.get().strip()
+    def _instalar_remoto(self, datos):
+        destino = datos["destino_remoto"] or DESTINO_REMOTO_POR_DEFECTO
+        url = datos["url_remota"]
+        token = datos["token_remoto"]
         if not url or not token:
             raise ValueError("Hacen falta la dirección de la PC del local y el token.")
 
@@ -391,7 +444,7 @@ class Instalador(tk.Tk):
                        "     - que Tailscale esté conectado en las DOS computadoras\n"
                        "     - que la dirección y el token sean los correctos\n")
 
-        if self.var_accesos_remoto.get():
+        if datos["accesos_remoto"]:
             self._crear_acceso_directo("Otter Dueno Remoto",
                                         os.path.join(destino, "DuenoRemoto", "DuenoRemoto.exe"))
             self._log("")

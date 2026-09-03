@@ -73,7 +73,22 @@ class CarritoTecladoMixin:
         return linea
 
     def _linea(self, linea_id):
-        return next((i for i in self.carrito if i["_id"] == linea_id), None)
+        return next((i for i in self.carrito if i.get("_id") == linea_id), None)
+
+    def _asegurar_ids(self):
+        """Le pone "_id" a cualquier línea del carrito que no lo tenga.
+
+        Toda línea creada acá nace con su id (ver _nueva_linea), pero el
+        carrito es una lista pública: la arma también quien restaura un
+        ticket pendiente o quien escriba código nuevo mañana. Si una línea
+        llegara sin id, la grilla se caía con KeyError en pleno cobro y la
+        caja quedaba trabada con el cliente adelante. Antes que eso,
+        completamos el id que falta y seguimos vendiendo.
+        """
+        for linea in self.carrito:
+            if not linea.get("_id"):
+                linea["_id"] = self._proximo_id_linea
+                self._proximo_id_linea += 1
 
     # ------------------------------------------------------------------ #
     # Grilla del carrito
@@ -102,6 +117,7 @@ class CarritoTecladoMixin:
                      ).grid(row=0, column=col, sticky="nsew")
 
     def _refrescar_grilla_carrito(self):
+        self._asegurar_ids()
         if self._editor_cantidad is not None:
             # Se está editando una cantidad: redibujar ahora destruiría el
             # campo con lo que el cajero está tecleando.
@@ -115,7 +131,7 @@ class CarritoTecladoMixin:
         for i, item in enumerate(self.carrito, start=1):
             subtotal = item["cantidad"] * item["precio_unitario"]
             total += subtotal
-            seleccionada = item["_id"] == self.carrito_seleccionado
+            seleccionada = item.get("_id") == self.carrito_seleccionado
             bg = COLORS["accent_light"] if seleccionada else (
                 COLORS["stripe"] if i % 2 == 0 else COLORS["surface"])
 
@@ -157,7 +173,7 @@ class CarritoTecladoMixin:
         Enter confirma y Escape cancela."""
         if self._editor_cantidad is not None:
             return
-        idx = next((n for n, i in enumerate(self.carrito) if i["_id"] == linea_id), None)
+        idx = next((n for n, i in enumerate(self.carrito) if i.get("_id") == linea_id), None)
         if idx is None:
             return
 
@@ -263,6 +279,26 @@ class CarritoTecladoMixin:
         self.buscador.focus_set()
         return "break"
 
+    def _volver_del_dialogo(self):
+        """Devuelve el teclado al buscador después de cerrar una ventanita.
+
+        Se difiere con after(0) porque en el momento del <Destroy> la
+        ventana todavía existe y el foco puede volver a irse a ella. Y
+        además de mover el foco resetea `self.zona`: si no, las flechas
+        seguían navegando la zona en la que estaba antes de abrir el
+        diálogo, y el cajero terminaba moviéndose "a ciegas" — justo lo
+        que rompe el uso sin mouse.
+        """
+        def _hacerlo():
+            if not self.winfo_exists():
+                return
+            try:
+                self.focus_force()   # traer la ventana principal al frente
+            except Exception:
+                pass
+            self._ir_a_buscador()
+        self.after(0, _hacerlo)
+
     def _enfocar_metodo_pago(self):
         self.metodo_pago.focus_set()
         return "break"
@@ -282,7 +318,7 @@ class CarritoTecladoMixin:
         if not self.carrito:
             return False
         self.zona = "carrito"
-        if self.carrito_seleccionado not in [i["_id"] for i in self.carrito]:
+        if self.carrito_seleccionado not in [i.get("_id") for i in self.carrito]:
             self.carrito_seleccionado = self.carrito[0]["_id"]
         self.carrito_grid.focus_set()
         self._refrescar_grilla_carrito()
@@ -290,7 +326,7 @@ class CarritoTecladoMixin:
 
     def _indice_seleccionado(self):
         for idx, item in enumerate(self.carrito):
-            if item["_id"] == self.carrito_seleccionado:
+            if item.get("_id") == self.carrito_seleccionado:
                 return idx
         return None
 
@@ -369,7 +405,7 @@ class CarritoTecladoMixin:
         item = self._linea(self.carrito_seleccionado)
         # Se saca SOLO esa línea, por su id. Filtrar por código borraría de
         # paso todas las demás líneas que compartan el código.
-        self.carrito = [i for i in self.carrito if i["_id"] != self.carrito_seleccionado]
+        self.carrito = [i for i in self.carrito if i.get("_id") != self.carrito_seleccionado]
         # Queda seleccionada la línea que ocupó su lugar, para poder seguir
         # borrando con Supr sin volver a elegir con el mouse.
         if self.carrito:

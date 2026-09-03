@@ -44,7 +44,13 @@ class AppDueno(tk.Tk):
         self.filtro_nombres = {}  # codigo -> (nombre, precio_venta), cache para no reconsultar la DB
 
         if self.es_remoto:
-            self.lbl_conexion = tk.Label(self, text="", font=("Segoe UI", 11, "bold"), pady=6)
+            # Arranca en "conectando" y no en blanco: el primer chequeo
+            # viaja por red y tarda su tiempo, y una franja vacía arriba de
+            # todo no dice nada. Peor: el dueño podría leer los datos que ya
+            # se ven como si fueran de ahora sin saber si hay conexión.
+            self.lbl_conexion = tk.Label(self, text="⏳ Conectando con el local…",
+                                          font=("Segoe UI", 11, "bold"), pady=6,
+                                          bg="#7f8c8d", fg="white")
             self.lbl_conexion.pack(fill="x")
 
         nb = ttk.Notebook(self)
@@ -128,6 +134,17 @@ class AppDueno(tk.Tk):
         # segundos cada 15 segundos.
         import threading
 
+        # El hilo NO toca Tk. Deja el resultado en un atributo y lo recoge
+        # el hilo de Tk. Antes hacía self.after(0, ...) desde el hilo, y
+        # eso tira "main thread is not in main loop" si el chequeo termina
+        # antes de que arranque el mainloop — justo lo que pasa con el
+        # PRIMER chequeo al abrir la ventana. La excepción se tragaba en
+        # silencio y el cartel quedaba en blanco los primeros 15 segundos,
+        # que es exactamente cuando el dueño mira si hay conexión.
+        self._generacion_conexion = getattr(self, "_generacion_conexion", 0) + 1
+        generacion = self._generacion_conexion
+        self._resultado_conexion = None
+
         def _chequear():
             try:
                 conectado = self.backend.verificar_conexion()
@@ -137,13 +154,23 @@ class AppDueno(tk.Tk):
                 # clavado en verde mostrando datos viejos como si fueran
                 # de ahora.
                 conectado = False
-            try:
-                self.after(0, lambda: self._actualizar_cartel_conexion(conectado))
-            except Exception:
-                pass  # la ventana se cerró mientras este hilo estaba en vuelo
+            self._resultado_conexion = (generacion, conectado)
 
         threading.Thread(target=_chequear, daemon=True).start()
+        self.after(200, lambda: self._recoger_resultado_conexion(generacion))
         self.after(15000, self._verificar_conexion_periodica)
+
+    def _recoger_resultado_conexion(self, generacion):
+        """Corre en el hilo de Tk: espera el resultado del chequeo y pinta."""
+        if not self.winfo_exists():
+            return
+        if generacion != getattr(self, "_generacion_conexion", generacion):
+            return   # ya arrancó un chequeo más nuevo; este sobra
+        pendiente = self._resultado_conexion
+        if pendiente is None:
+            self.after(200, lambda: self._recoger_resultado_conexion(generacion))
+            return
+        self._actualizar_cartel_conexion(pendiente[1])
 
     def _actualizar_cartel_conexion(self, conectado: bool):
         if not self.winfo_exists():
