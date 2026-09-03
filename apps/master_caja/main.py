@@ -184,11 +184,15 @@ class AppCaja(CarritoTecladoMixin, tk.Tk):
             return
         # Nunca se fusiona con otra línea "código 1": cada una puede tener
         # un importe distinto (dos caramelos de precio distinto, etc.).
-        self.carrito.append({"codigo": CODIGO_SIN_BARRA, "nombre": NOMBRE_SIN_BARRA,
-                              "cantidad": 1, "precio_unitario": importe})
+        # Cada artículo suelto es su propia línea, con su propio id: nunca
+        # se fusiona con otro, porque cada uno tiene su importe.
+        self.carrito.append(self._nueva_linea(CODIGO_SIN_BARRA, NOMBRE_SIN_BARRA, importe))
         self._refrescar_grilla_carrito()
 
     def _cobrar_sin_facturar(self):
+        # Si el cajero dejó abierto el campo de cantidad y fue directo a
+        # cobrar, se aplica lo que escribió antes de calcular el total.
+        self._confirmar_edicion_pendiente()
         if not self.carrito:
             messagebox.showwarning("Carrito vacío", "Agregá al menos un producto antes de cobrar.")
             return
@@ -203,6 +207,9 @@ class AppCaja(CarritoTecladoMixin, tk.Tk):
         self._finalizar_cobro(resultado, mensaje)
 
     def _cobrar_y_facturar(self):
+        # Si el cajero dejó abierto el campo de cantidad y fue directo a
+        # cobrar, se aplica lo que escribió antes de calcular el total.
+        self._confirmar_edicion_pendiente()
         if not self.carrito:
             messagebox.showwarning("Carrito vacío", "Agregá al menos un producto antes de cobrar.")
             return

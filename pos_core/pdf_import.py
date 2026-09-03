@@ -71,8 +71,20 @@ _PATRONES_SIN_CODIGO = [
     ),
 ]
 
+# Encabezados, pies y renglones de totales de una factura. Importa cubrirlos
+# bien: desde que se leen líneas SIN código de barras, cualquier renglón con
+# forma "texto  numero  numero" puede pasar por producto — un "Descuento
+# aplicado 10  500,00" se convertía en un artículo llamado "Descuento
+# aplicado". No llegaba a cargarse (lo frena la pantalla de confirmación),
+# pero ensucia la lista y hace perder tiempo al revisarla.
 _LINEAS_A_IGNORAR = re.compile(
-    r"^(total|subtotal|iva|cuit|fecha|remito|factura|p[aá]gina|cliente|dom\w*|raz[oó]n)\b",
+    r"^(total|subtotal|sub-total|iva|i\.v\.a|cuit|c\.u\.i\.t|fecha|remito|factura|"
+    r"comprobante|p[aá]gina|pag\b|cliente|dom\w*|raz[oó]n|se[nñ]or|"
+    r"descuento|bonificaci[oó]n|recargo|percepci[oó]n|retenci[oó]n|"
+    r"neto|gravado|no gravado|exento|importe|son pesos|saldo|"
+    r"transporte|flete|vencimiento|vto\b|condici[oó]n|forma de pago|"
+    r"cae\b|c\.a\.e|ingresos brutos|iibb|firma|aclaraci[oó]n|"
+    r"observaciones|nota|art[ií]culo\s*$|descripci[oó]n|cantidad\s+precio)\b",
     re.IGNORECASE,
 )
 

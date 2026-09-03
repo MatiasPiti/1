@@ -39,10 +39,41 @@ class CarritoTecladoMixin:
     # Estado inicial (llamar desde el __init__ de la ventana)
     # ------------------------------------------------------------------ #
     def _init_carrito(self):
-        self.carrito = []          # list[{codigo,nombre,cantidad,precio_unitario}]
-        self.carrito_seleccionado = None
+        # Cada línea lleva un id propio ("_id") y TODO se referencia por ese
+        # id, nunca por el código del producto. El motivo: el código NO es
+        # único dentro del carrito — todos los "artículo sin código" usan el
+        # mismo código reservado, y son líneas distintas a propósito (dos
+        # caramelos de precio distinto). Cuando esto se manejaba por código,
+        # quitar uno de esos artículos borraba TODOS los sueltos del ticket
+        # y se cobraba de menos sin que nadie lo notara.
+        self.carrito = []          # list[{_id,codigo,nombre,cantidad,precio_unitario}]
+        self.carrito_seleccionado = None   # el _id de la línea elegida
         self.zona = "buscador"     # "buscador" | "resultados" | "carrito"
         self._editor_cantidad = None
+        self._editor_linea_id = None
+        self._proximo_id_linea = 1
+
+    def _confirmar_edicion_pendiente(self):
+        """Si quedó un campo de cantidad abierto, lo confirma AHORA.
+
+        Se llama antes de cobrar. El caso real: el cajero escribe la
+        cantidad nueva y va directo al botón COBRAR sin apretar Enter. Que
+        el valor tecleado se aplique dependería del orden en que Tk entrega
+        el FocusOut del campo y el clic del botón; en vez de confiar en ese
+        orden, se cierra la edición explícitamente y se cobra siempre con
+        lo que el cajero dejó escrito.
+        """
+        if self._editor_cantidad is not None:
+            self._confirmar_cantidad(self._editor_linea_id, self._editor_cantidad.get())
+
+    def _nueva_linea(self, codigo: str, nombre: str, precio: float, cantidad: int = 1) -> dict:
+        linea = {"_id": self._proximo_id_linea, "codigo": codigo, "nombre": nombre,
+                 "cantidad": cantidad, "precio_unitario": precio}
+        self._proximo_id_linea += 1
+        return linea
+
+    def _linea(self, linea_id):
+        return next((i for i in self.carrito if i["_id"] == linea_id), None)
 
     # ------------------------------------------------------------------ #
     # Grilla del carrito
@@ -84,7 +115,7 @@ class CarritoTecladoMixin:
         for i, item in enumerate(self.carrito, start=1):
             subtotal = item["cantidad"] * item["precio_unitario"]
             total += subtotal
-            seleccionada = item["codigo"] == self.carrito_seleccionado
+            seleccionada = item["_id"] == self.carrito_seleccionado
             bg = COLORS["accent_light"] if seleccionada else (
                 COLORS["stripe"] if i % 2 == 0 else COLORS["surface"])
 
@@ -98,19 +129,19 @@ class CarritoTecladoMixin:
             for col, (texto, font, color, anchor) in enumerate(celdas):
                 celda = celda_texto(self.carrito_grid, texto, font=font, color=color, bg=bg, anchor=anchor)
                 celda.grid(row=i, column=col, sticky="nsew", ipady=7, padx=(10 if col == 0 else 0, 10))
-                celda.bind("<Button-1>", lambda e, c=item["codigo"]: self._seleccionar_linea(c), add="+")
+                celda.bind("<Button-1>", lambda e, i=item["_id"]: self._seleccionar_linea(i), add="+")
                 if col == 2:
                     # La columna CANT. se edita tocándola.
                     celda.config(cursor="xterm")
                     celda.bind("<Button-1>",
-                               lambda e, c=item["codigo"]: self._editar_cantidad(c), add="+")
+                               lambda e, i=item["_id"]: self._editar_cantidad(i), add="+")
 
         self.lbl_total.config(text=f"${total:.2f}")
         return total
 
-    def _seleccionar_linea(self, codigo):
+    def _seleccionar_linea(self, linea_id):
         self.zona = "carrito"
-        self.carrito_seleccionado = codigo
+        self.carrito_seleccionado = linea_id
         self._refrescar_grilla_carrito()
 
     # ------------------------------------------------------------------ #
@@ -120,18 +151,18 @@ class CarritoTecladoMixin:
         if self.carrito_seleccionado:
             self._editar_cantidad(self.carrito_seleccionado)
 
-    def _editar_cantidad(self, codigo):
+    def _editar_cantidad(self, linea_id):
         """Cambia la celda de CANT. por un campo con la cantidad actual ya
         seleccionada: se escribe la nueva encima (o se borra y se escribe),
         Enter confirma y Escape cancela."""
         if self._editor_cantidad is not None:
             return
-        idx = next((n for n, i in enumerate(self.carrito) if i["codigo"] == codigo), None)
+        idx = next((n for n, i in enumerate(self.carrito) if i["_id"] == linea_id), None)
         if idx is None:
             return
 
         self.zona = "carrito"
-        self.carrito_seleccionado = codigo
+        self.carrito_seleccionado = linea_id
         self._refrescar_grilla_carrito()
 
         item = self.carrito[idx]
@@ -143,26 +174,28 @@ class CarritoTecladoMixin:
         entry.grid(row=idx + 1, column=2, sticky="nsew", padx=2, pady=2)
         entry.focus_set()
         self._editor_cantidad = entry
+        self._editor_linea_id = linea_id
 
-        entry.bind("<Return>", lambda e: self._confirmar_cantidad(codigo, entry.get()))
-        entry.bind("<KP_Enter>", lambda e: self._confirmar_cantidad(codigo, entry.get()))
+        entry.bind("<Return>", lambda e: self._confirmar_cantidad(linea_id, entry.get()))
+        entry.bind("<KP_Enter>", lambda e: self._confirmar_cantidad(linea_id, entry.get()))
         entry.bind("<Escape>", lambda e: self._cerrar_editor_cantidad())
-        entry.bind("<FocusOut>", lambda e: self._confirmar_cantidad(codigo, entry.get()))
+        entry.bind("<FocusOut>", lambda e: self._confirmar_cantidad(linea_id, entry.get()))
 
     def _cerrar_editor_cantidad(self):
         editor, self._editor_cantidad = self._editor_cantidad, None
+        self._editor_linea_id = None
         if editor is not None:
             editor.destroy()
         self._refrescar_grilla_carrito()
         self.carrito_grid.focus_set()
         return "break"
 
-    def _confirmar_cantidad(self, codigo, texto):
+    def _confirmar_cantidad(self, linea_id, texto):
         if self._editor_cantidad is None:
             return "break"
         self._cerrar_editor_cantidad()
 
-        item = next((i for i in self.carrito if i["codigo"] == codigo), None)
+        item = self._linea(linea_id)
         if item is None:
             return "break"
 
@@ -249,15 +282,15 @@ class CarritoTecladoMixin:
         if not self.carrito:
             return False
         self.zona = "carrito"
-        if self.carrito_seleccionado not in [i["codigo"] for i in self.carrito]:
-            self.carrito_seleccionado = self.carrito[0]["codigo"]
+        if self.carrito_seleccionado not in [i["_id"] for i in self.carrito]:
+            self.carrito_seleccionado = self.carrito[0]["_id"]
         self.carrito_grid.focus_set()
         self._refrescar_grilla_carrito()
         return True
 
     def _indice_seleccionado(self):
         for idx, item in enumerate(self.carrito):
-            if item["codigo"] == self.carrito_seleccionado:
+            if item["_id"] == self.carrito_seleccionado:
                 return idx
         return None
 
@@ -272,7 +305,7 @@ class CarritoTecladoMixin:
                 self._ir_a_buscador()
             return
         nuevo = min(nuevo, len(self.carrito) - 1)
-        self.carrito_seleccionado = self.carrito[nuevo]["codigo"]
+        self.carrito_seleccionado = self.carrito[nuevo]["_id"]
         self._refrescar_grilla_carrito()
 
     def _tecla_abajo(self, event=None):
@@ -333,12 +366,14 @@ class CarritoTecladoMixin:
                                  "y después presioná 'Quitar línea' o la tecla Supr.")
             return
         idx = self._indice_seleccionado()
-        item = next((i for i in self.carrito if i["codigo"] == self.carrito_seleccionado), None)
-        self.carrito = [i for i in self.carrito if i["codigo"] != self.carrito_seleccionado]
+        item = self._linea(self.carrito_seleccionado)
+        # Se saca SOLO esa línea, por su id. Filtrar por código borraría de
+        # paso todas las demás líneas que compartan el código.
+        self.carrito = [i for i in self.carrito if i["_id"] != self.carrito_seleccionado]
         # Queda seleccionada la línea que ocupó su lugar, para poder seguir
         # borrando con Supr sin volver a elegir con el mouse.
         if self.carrito:
-            self.carrito_seleccionado = self.carrito[min(idx or 0, len(self.carrito) - 1)]["codigo"]
+            self.carrito_seleccionado = self.carrito[min(idx or 0, len(self.carrito) - 1)]["_id"]
         else:
             self.carrito_seleccionado = None
         self._refrescar_grilla_carrito()
@@ -361,13 +396,20 @@ class CarritoTecladoMixin:
             self._ir_a_buscador()
 
     def _agregar_producto(self, codigo: str, nombre: str, precio: float):
-        for item in self.carrito:
-            if item["codigo"] == codigo:
-                item["cantidad"] += 1
-                break
+        from pos_core.sales import CODIGO_SIN_BARRA
+        # Escanear dos veces el mismo producto suma cantidad en la misma
+        # línea. Los "artículo sin código" son la excepción: comparten el
+        # código reservado pero cada uno tiene su propio importe, así que
+        # nunca se fusionan (ver _agregar_linea_libre).
+        if codigo != CODIGO_SIN_BARRA:
+            for item in self.carrito:
+                if item["codigo"] == codigo:
+                    item["cantidad"] += 1
+                    break
+            else:
+                self.carrito.append(self._nueva_linea(codigo, nombre, precio))
         else:
-            self.carrito.append({"codigo": codigo, "nombre": nombre,
-                                  "cantidad": 1, "precio_unitario": precio})
+            self.carrito.append(self._nueva_linea(codigo, nombre, precio))
         self._refrescar_grilla_carrito()
         # Un clic (doble clic en resultados, clic en una celda del carrito)
         # le saca el foco del teclado al buscador; si no se lo devolvemos,
