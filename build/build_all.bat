@@ -17,34 +17,45 @@ set DATA=--add-data "sql\schema.sql;sql" --add-data "apps\assets;apps\assets"
 set ICON=--icon apps\assets\logo_otter.ico
 
 echo.
-echo === 1/5 Otter Caja ===
+echo === 1/7 Otter Caja ===
 %PYI% %DATA% %ICON% --name MaestroCaja --paths . apps\master_caja\main.py
 
 echo.
-echo === 2/5 Otter Dueno ===
+echo === 2/7 Otter Dueno ===
 %PYI% %DATA% %ICON% --name MaestroDueno --paths . ^
     --hidden-import matplotlib.backends.backend_tkagg ^
     apps\master_dueno\main.py
 
 echo.
-echo === 3/5 USB Caja (emergencia) ===
+echo === 3/7 USB Caja (emergencia) ===
 %PYI% %DATA% %ICON% --name USB_Caja --paths . apps\usb_caja\main.py
 
 echo.
-echo === 4/5 USB Dueno (emergencia) ===
+echo === 4/7 USB Dueno (emergencia) ===
 %PYI% %DATA% %ICON% --name USB_Dueno --paths . ^
     --hidden-import matplotlib.backends.backend_tkagg ^
     apps\usb_dueno\main.py
 
 echo.
-echo === 5/6 USB Mantenimiento (Desarrollador) ===
+echo === 5/7 USB Mantenimiento (Desarrollador) ===
 %PYI% %DATA% %ICON% --name USB_Mantenimiento --paths . apps\usb_dev\mantenimiento.py
 
 echo.
-echo === 6/6 Otter Dueno Remoto (otra PC, vía Tailscale) ===
+echo === 6/7 Otter Dueno Remoto (otra PC, vía Tailscale) ===
 %PYI% %DATA% %ICON% --name DuenoRemoto --paths . ^
     --hidden-import matplotlib.backends.backend_tkagg ^
     apps\dueno_remoto\main.py
+
+echo.
+echo === 7/7 Instalador ===
+REM El instalador busca las carpetas ya compiladas (MaestroCaja,
+REM DuenoRemoto, StockService...) AL LADO SUYO cuando se ejecuta, no al
+REM compilarse: por eso alcanza con que dist\ viaje entero al pendrive.
+REM win32com.client se importa adentro de una funcion (para crear los
+REM accesos directos), asi que hay que declararlo a mano.
+%PYI% %DATA% %ICON% --name OtterInstalador --paths . ^
+    --hidden-import win32com.client ^
+    apps\instalador\main.py
 
 echo.
 echo === Servicio oculto de stock (Windows Service) ===
