@@ -25,7 +25,7 @@ from pos_core.dueno_backend import LocalBackend, RemoteError
 from pos_core import arca
 from apps.theme import (aplicar_tema, estriar_treeview, tag_fila,
                          habilitar_copiar_pegar_global, ajustar_ventana, MarcoDesplazable,
-                         buscar_con_pausa)
+                         buscar_con_pausa, agregar_scroll_vertical)
 
 USUARIO = os.environ.get("USERNAME", "dueño")
 ORIGEN = "MAESTRO"
@@ -355,6 +355,7 @@ class AppDueno(tk.Tk):
         self.tree_stock_actual.column("stock", width=110, anchor="center")
         estriar_treeview(self.tree_stock_actual)
         self.tree_stock_actual.pack(fill="both", expand=True)
+        agregar_scroll_vertical(self.tree_stock_actual)
 
         self._refrescar_stock_actual()
 
@@ -407,6 +408,7 @@ class AppDueno(tk.Tk):
                                          anchor="e" if col == "precio" else "w")
         estriar_treeview(self.tree_candidatos)
         self.tree_candidatos.pack(fill="x")
+        agregar_scroll_vertical(self.tree_candidatos)
         self.tree_candidatos.bind("<Double-1>", self._elegir_candidato)
         self.tree_candidatos.bind("<Return>", self._elegir_candidato)
 
@@ -782,23 +784,30 @@ class AppDueno(tk.Tk):
         self.picker_buscar.pack(side="left", fill="x", expand=True)
         self._pausa_picker = buscar_con_pausa(self, self.picker_buscar,
                                                self._refrescar_picker_todos)
-        self.picker_todos = ttk.Treeview(izq, columns=("codigo", "nombre"), show="headings", height=12)
+        # height es el MÍNIMO, no el tamaño fijo: con fill/expand estas dos
+        # listas crecen solas cuando hay lugar. Se dejan bajas a propósito
+        # para que en la pantalla del cliente (1366x768) la fila de
+        # "Aplicar %" — que es el punto de esta pestaña — entre sin tener
+        # que scrollear.
+        self.picker_todos = ttk.Treeview(izq, columns=("codigo", "nombre"), show="headings", height=8)
         self.picker_todos.heading("codigo", text="Código")
         self.picker_todos.heading("nombre", text="Nombre")
         self.picker_todos.column("codigo", width=110)
         self.picker_todos.column("nombre", width=260)
         estriar_treeview(self.picker_todos)
         self.picker_todos.pack(fill="both", expand=True)
+        agregar_scroll_vertical(self.picker_todos)
         self.picker_todos.bind("<Double-1>", self._agregar_a_filtro)
 
         der = ttk.LabelFrame(picker, text="En este filtro  (doble clic = quitar)", padding=8)
         der.pack(side="left", fill="both", expand=True, padx=(6, 0))
-        self.bulk_tree = ttk.Treeview(der, columns=("codigo", "nombre", "precio"), show="headings", height=13)
+        self.bulk_tree = ttk.Treeview(der, columns=("codigo", "nombre", "precio"), show="headings", height=8)
         for col, txt, w in [("codigo", "Código", 100), ("nombre", "Nombre", 220), ("precio", "Precio", 90)]:
             self.bulk_tree.heading(col, text=txt)
             self.bulk_tree.column(col, width=w)
         estriar_treeview(self.bulk_tree)
         self.bulk_tree.pack(fill="both", expand=True)
+        agregar_scroll_vertical(self.bulk_tree)
         self.bulk_tree.bind("<Double-1>", self._quitar_de_filtro)
 
         guardar_fila = ttk.Frame(frame)
@@ -1238,6 +1247,7 @@ class AppDueno(tk.Tk):
             self.tree_arca.column(col, width=w, anchor="e" if col == "total" else "w")
         estriar_treeview(self.tree_arca)
         self.tree_arca.pack(fill="both", expand=True)
+        agregar_scroll_vertical(self.tree_arca)
 
         self._refrescar_resumen_arca()
 
@@ -1353,6 +1363,7 @@ class AppDueno(tk.Tk):
             self.tree_umbrales.column(col, width=w)
         estriar_treeview(self.tree_umbrales)
         self.tree_umbrales.pack(fill="both", expand=True)
+        agregar_scroll_vertical(self.tree_umbrales)
         self.tree_umbrales.bind("<Double-1>", self._cargar_umbral_seleccionado)
 
         self._refrescar_umbrales_producto()
@@ -1470,6 +1481,7 @@ class AppDueno(tk.Tk):
             self.tree_ofertas.column(col, width=w)
         estriar_treeview(self.tree_ofertas)
         self.tree_ofertas.pack(fill="both", expand=True, pady=(0, 8))
+        agregar_scroll_vertical(self.tree_ofertas)
 
         ttk.Button(listado, text="Cancelar oferta seleccionada", style="Danger.TButton",
                    command=self._cancelar_oferta_seleccionada).pack(anchor="w")
@@ -1545,6 +1557,7 @@ class AppDueno(tk.Tk):
             self.tree_auditoria.column(col, width=w)
         estriar_treeview(self.tree_auditoria)
         self.tree_auditoria.pack(fill="both", expand=True)
+        agregar_scroll_vertical(self.tree_auditoria)
 
         self._refrescar_auditoria()
 

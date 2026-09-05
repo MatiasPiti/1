@@ -522,3 +522,35 @@ def buscar_con_pausa(widget: tk.Misc, entrada: tk.Misc, accion, espera_ms: int =
     # pausa sin depender de que el entorno de tests entregue eventos de
     # teclado reales (Xvfb no entrega <KeyRelease>).
     return {"al_teclear": _al_teclear, "ahora": _ahora}
+
+
+def agregar_scroll_vertical(tree: tk.Misc) -> ttk.Scrollbar:
+    """Le pone barra de scroll vertical a un Treeview ya creado y empaquetado.
+
+    Los Treeview de Tk se desplazan con la rueda y las flechas, pero sin
+    barra visible no hay nada que le diga al dueño que la lista sigue
+    para abajo: con 4.587 productos, ver 8 y creer que son todos es un
+    problema de verdad. La barra se ata al mismo padre, a la derecha.
+
+    Devuelve la barra (normalmente no hace falta guardarla).
+    """
+    padre = tree.master
+    barra = ttk.Scrollbar(padre, orient="vertical", command=tree.yview)
+    tree.configure(yscrollcommand=barra.set)
+
+    # Se reempaqueta el árbol para que la barra quede al costado y no
+    # encima: el orden de pack importa, y el Treeview ya venía empaquetado
+    # ocupando todo el ancho.
+    try:
+        info = tree.pack_info()
+        relleno_y = info.get("pady", 0)
+        tree.pack_forget()
+        barra.pack(side="right", fill="y", pady=relleno_y)
+        tree.pack(side="left", fill="both", expand=True, pady=relleno_y)
+    except Exception:
+        # Si por lo que sea no estaba empaquetado con pack, se deja la
+        # lista como estaba: perder la barra es mucho mejor que romper
+        # la pantalla entera.
+        barra.destroy()
+        return None
+    return barra
