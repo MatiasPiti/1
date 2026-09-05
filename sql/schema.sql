@@ -23,7 +23,10 @@ CREATE TABLE IF NOT EXISTS Productos (
     stock_maximo    INTEGER NOT NULL DEFAULT 0,   -- umbral sobre-stock (0 = sin límite)
     proveedor       TEXT,
     marca           TEXT,
-    categoria       TEXT,
+    categoria       TEXT,                          -- "Rubro" en la pantalla de precios
+    subrubro        TEXT,                          -- subdivisión del rubro (opcional)
+    costo_sin_iva   REAL NOT NULL DEFAULT 0,       -- costo neto; precio_compra es el mismo con IVA
+    margen_ganancia REAL NOT NULL DEFAULT 0,       -- % sobre precio_compra que da precio_venta
     activo          INTEGER NOT NULL DEFAULT 1,
     creado_en       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', 'localtime')),
     actualizado_en  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', 'localtime')),

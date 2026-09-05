@@ -30,6 +30,7 @@ POS + control de stock en Python/Tkinter/SQLite que compila a **7 ejecutables Wi
 | `USB_Dueno` | Pendrive | Panel de emergencia. |
 | `USB_Mantenimiento` | Pendrive de Matías | Diagnóstico y reparación en el local. |
 | `OtterInstalador` | Pendrive de instalación | Hace toda la instalación en un botón. |
+| `OtterActualizador` | Pendrive | Pone al día una instalación que ya anda, sin tocar datos. |
 
 **Build:** `build\build_all.bat` desde la raíz, en Windows. Genera todo en `dist\`.
 
@@ -83,19 +84,40 @@ completa por su camino real, y el candado de instancia única (probado matando e
 - **Facturas PDF sin código de barras:** se emparejan por nombre (`pos_core/matching.py`) pero
   **nunca se aplican solas** — siempre las confirma una persona. Emparejar mal le suma el stock a
   otro producto y no se nota hasta que la góndola no cierra.
+- **La pantalla de precios manda sobre el Excel.** El dueño escanea, ve lo cargado hoy y
+  cambia lo que quiera (`pos_core/precios.py`). De los cuatro números encadenados —Costo
+  S/IVA → Precio Costo → % Ganancia → Precio Venta Final— **solo el final es obligatorio**;
+  lo que se recalcula depende de **qué campo tocó**, que es lo único que no obliga a
+  adivinar su intención. `"1.500"` se lee como mil quinientos (convención argentina) y el
+  campo se reescribe normalizado para que se note al instante si se entendió mal.
+- **El carrito reusa sus celdas en vez de redibujarlas.** Antes destruía y recreaba las 150
+  celdas de un ticket de 30 líneas por cada tecla (61 ms por escaneo, 103 ms por flecha).
+  Si se toca `_refrescar_grilla_carrito`, mantener el criterio: la plata sale siempre de
+  `self.carrito`, el dibujo es solo dibujo.
+- **Ninguna ventana se pide más grande que el área útil del escritorio** (`ajustar_ventana`
+  en `apps/theme.py`, que le pregunta a Windows por el work area). En la PC del cliente
+  (1366x768) el Panel del Dueño quedaba tapado por la barra de tareas. Las pestañas van
+  adentro de `MarcoDesplazable`: en pantalla chica aparece barra, en grande se expanden
+  igual que antes.
 - **`StockService` es el único ejecutable sin `--noconsole`, y es a propósito.** Con `--noconsole`
   se queda sin stdout, `install` falla al imprimir su primer mensaje y la instalación se aborta
   sin mostrar ningún error: el servicio simplemente nunca aparece. Está explicado en el .bat.
 
 ## Lo que falta hacer
 
-**Antes de dejarlo andando en el local:**
-- [ ] Rehacer la build completa (`build\build_all.bat`) — el `.bat` cambió y el `espejo_apps` del
-      USB de Mantenimiento todavía tiene una versión vieja del servicio.
+**Ya instalado y funcionando en el local** (septiembre 2026): PC del local + laptop de Leo con
+Dueño Remoto, conectadas por Tailscale. Al instalar aparecieron dos cosas para recordar:
+la API remota **no habla HTTPS** (la dirección va con `http://`), y el token conviene pasarlo
+**copiando y pegando**, nunca tipeándolo (`l`/`I`/`1` y `O`/`0` se confunden y el error se ve
+como "no se pudo conectar").
+
+**Pendiente:**
+- [ ] Rehacer la build (`build\build_all.bat`, ahora son 8 ejecutables) y llevar el
+      `OtterActualizador` al local para aplicar los cambios de esta tanda.
 - [ ] Probar el circuito de emergencia de punta a punta desde pendrives de verdad: vender offline
       → "Preparar sincronización" → conciliar en el Maestro con `Ctrl+Shift+M`.
 - [ ] Configurar la impresora térmica POS-58 en la PC del local.
-- [ ] Instalar Tailscale en la PC del local; escribir las ACLs.
+- [ ] Escribir las ACLs de Tailscale antes de sumar un segundo cliente.
 - [ ] Cargar el token y el chat_id del bot de Telegram del cliente.
 
 **ARCA (facturación electrónica):**
@@ -119,7 +141,10 @@ clientes, una herramienta de notas). Se habló y se dejó para después.
 ## Cómo probar
 
 No hay suite de tests en el repo — se fue probando con scripts sueltos en un scratchpad temporal
-que **no sobrevive a la sesión**. Para volver a probar acá:
+que **no sobrevive a la sesión**. La última tanda dejó 47 suites en verde (incluidas: carrito
+dibujado contra 100 operaciones al azar, migración de una base de 4587 productos con ventas,
+el actualizador sobre una instalación viva, y la pantalla de precios por la API remota).
+Para volver a probar acá:
 
 ```bash
 python3.12 -m venv venv && venv/bin/pip install -r requirements.txt

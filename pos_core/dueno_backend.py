@@ -14,7 +14,8 @@ import dataclasses
 import os
 
 _NOMBRES_MODULOS = ("reports", "products", "stock_service", "filters", "bulk_edit",
-                     "pdf_import", "excel_import", "config", "sales", "alerts", "ofertas", "audit")
+                     "pdf_import", "excel_import", "config", "sales", "alerts", "ofertas",
+                     "audit", "precios")
 
 
 def _normalizar(valor):
@@ -55,11 +56,12 @@ class LocalBackend:
 
     def __init__(self):
         from pos_core import (stock_service, bulk_edit, pdf_import, excel_import, filters,
-                               config, alerts, audit, products, ofertas, reports, sales)
+                               config, alerts, audit, products, ofertas, reports, sales,
+                               precios)
         modulos = {"stock_service": stock_service, "bulk_edit": bulk_edit, "pdf_import": pdf_import,
                    "excel_import": excel_import, "filters": filters, "config": config,
                    "alerts": alerts, "audit": audit, "products": products, "ofertas": ofertas,
-                   "reports": reports, "sales": sales}
+                   "reports": reports, "sales": sales, "precios": precios}
         for nombre, modulo in modulos.items():
             setattr(self, nombre, _ModuloLocal(modulo))
 

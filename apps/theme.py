@@ -283,3 +283,242 @@ def abrir_dialogo_impresora(parent: tk.Misc) -> tk.Toplevel:
     ttk.Button(botones, text="Guardar", style="Accent.TButton", command=_guardar).pack(side="right", padx=6)
 
     return top
+
+
+# ====================================================================== #
+# Tamaño y posición de ventanas
+#
+# El problema real que resuelve esto: en la PC del cliente (pantalla de
+# 1366x768) la ventana del Panel del Dueño pedía 760px de alto + la barra
+# de título, y el resultado quedaba TAPADO por la barra de tareas de
+# Windows — botones importantes de cada pestaña caían abajo del todo y no
+# se podían tocar. Ahora ninguna ventana se pide más grande que el área
+# realmente usable del escritorio.
+# ====================================================================== #
+def area_util_pantalla(root: tk.Misc) -> tuple:
+    """(x, y, ancho, alto) del escritorio SIN la barra de tareas.
+
+    En Windows se le pregunta al sistema por el "work area" real (que ya
+    descuenta la barra de tareas, esté donde esté: abajo, arriba o al
+    costado). Si eso falla — o no es Windows — se cae a la pantalla
+    completa menos un margen prudente, que es peor pero nunca rompe.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+        rect = wintypes.RECT()
+        SPI_GETWORKAREA = 0x0030
+        if ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(rect), 0):
+            ancho = rect.right - rect.left
+            alto = rect.bottom - rect.top
+            if ancho > 200 and alto > 200:      # sanidad: valores absurdos se descartan
+                return (rect.left, rect.top, ancho, alto)
+    except Exception:
+        pass
+    return (0, 0, root.winfo_screenwidth(), max(root.winfo_screenheight() - 48, 200))
+
+
+def ajustar_ventana(root: tk.Misc, ancho: int, alto: int, *,
+                    minimo: tuple = (860, 520), margen: int = 8) -> None:
+    """Da a la ventana el tamaño pedido, pero nunca más que la pantalla.
+
+    `ancho`/`alto` son el tamaño IDEAL (el que se veía bien en el equipo
+    de desarrollo). Si el escritorio del cliente es más chico, se recorta
+    a lo que entra y la ventana queda centrada dentro del área usable.
+
+    `minimo` es hasta dónde se puede encoger antes de que la ventana deje
+    de tener sentido; si ni eso entra, gana la pantalla — más vale una
+    ventana apretada que una con los botones abajo de la barra de tareas.
+    """
+    x0, y0, area_ancho, area_alto = area_util_pantalla(root)
+
+    ancho_final = min(ancho, area_ancho - margen * 2)
+    alto_final = min(alto, area_alto - margen * 2)
+    ancho_final = max(ancho_final, min(minimo[0], area_ancho))
+    alto_final = max(alto_final, min(minimo[1], area_alto))
+
+    x = x0 + max((area_ancho - ancho_final) // 2, 0)
+    y = y0 + max((area_alto - alto_final) // 2, 0)
+    root.geometry(f"{int(ancho_final)}x{int(alto_final)}+{int(x)}+{int(y)}")
+    try:
+        root.minsize(min(minimo[0], area_ancho), min(minimo[1], area_alto))
+    except Exception:
+        pass
+
+
+def enlazar_rueda_mouse(canvas: tk.Canvas, widget: tk.Misc = None) -> None:
+    """Hace que la rueda del mouse desplace ese canvas.
+
+    Tk no lo trae de fábrica y además el evento es distinto según el
+    sistema: Windows manda <MouseWheel> con un `delta`, y X11 (Linux, y
+    los tests) manda Button-4/Button-5. Se atan los tres.
+
+    Se ata con bind_all mientras el puntero está ENCIMA del área: si se
+    atara al canvas nada más, la rueda no haría nada al estar el puntero
+    sobre una fila (que es un widget hijo, no el canvas).
+    """
+    objetivo = widget or canvas
+
+    def _scroll(event):
+        if not canvas.winfo_exists():
+            return
+        if getattr(event, "num", None) == 4:
+            canvas.yview_scroll(-2, "units")
+        elif getattr(event, "num", None) == 5:
+            canvas.yview_scroll(2, "units")
+        elif getattr(event, "delta", 0):
+            # En Windows delta es múltiplo de 120; en Mac es chico.
+            pasos = -1 * int(event.delta / 120) if abs(event.delta) >= 120 else -1 * int(event.delta)
+            canvas.yview_scroll(pasos * 2, "units")
+
+    def _entrar(_e=None):
+        canvas.bind_all("<MouseWheel>", _scroll)
+        canvas.bind_all("<Button-4>", _scroll)
+        canvas.bind_all("<Button-5>", _scroll)
+
+    def _salir(_e=None):
+        canvas.unbind_all("<MouseWheel>")
+        canvas.unbind_all("<Button-4>")
+        canvas.unbind_all("<Button-5>")
+
+    objetivo.bind("<Enter>", _entrar, add="+")
+    objetivo.bind("<Leave>", _salir, add="+")
+    canvas.bind("<Destroy>", _salir, add="+")
+
+
+class MarcoDesplazable(ttk.Frame):
+    """Contenedor con scroll vertical automático.
+
+    Se usa para el contenido de cada pestaña del Panel del Dueño: si la
+    pantalla del cliente es chica, en vez de que los controles de abajo
+    queden fuera de alcance, aparece una barra a la derecha y se llega a
+    todo. Si el contenido entra, la barra ni se muestra.
+
+    El contenido va adentro de `.interior` (un ttk.Frame normal).
+    """
+
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, **kwargs)
+        self._canvas = tk.Canvas(self, bg=COLORS["bg"], highlightthickness=0)
+        self._vsb = ttk.Scrollbar(self, orient="vertical", command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=self._on_scroll_set)
+
+        self._canvas.pack(side="left", fill="both", expand=True)
+        # La barra se empaqueta/despaqueta sola según haga falta (_on_scroll_set).
+        self._barra_visible = False
+
+        self.interior = ttk.Frame(self._canvas)
+        self._ventana = self._canvas.create_window((0, 0), window=self.interior, anchor="nw")
+
+        self._alto_aplicado = None
+        self.interior.bind("<Configure>", self._on_interior)
+        self._canvas.bind("<Configure>", self._on_canvas)
+        enlazar_rueda_mouse(self._canvas, self)
+
+    def _on_interior(self, _event=None):
+        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+        self._ajustar_alto()
+
+    def _on_canvas(self, event):
+        # El contenido tiene que ocupar TODO el ancho del canvas: si no,
+        # cualquier hijo empaquetado con fill="x" se queda del ancho de su
+        # propio contenido y la pestaña se ve angosta y desalineada.
+        self._canvas.itemconfigure(self._ventana, width=event.width)
+        self._ajustar_alto()
+
+    def _ajustar_alto(self):
+        """El contenido ocupa, como mínimo, todo el alto visible.
+
+        Sin esto, meter una pestaña adentro de un canvas le sacaría el
+        `expand=True` a sus hijos: una lista que hoy crece hasta el fondo
+        de la ventana pasaría a quedarse de su alto natural, con un
+        hueco vacío abajo en cualquier pantalla grande. Forzando el alto
+        de la ventana del canvas al mayor entre "lo que el contenido
+        pide" y "lo que se ve", en pantallas grandes todo sigue
+        expandiéndose igual que antes, y en pantallas chicas aparece la
+        barra y se llega a todo.
+        """
+        if not self._canvas.winfo_exists():
+            return
+        natural = self.interior.winfo_reqheight()
+        visible = self._canvas.winfo_height()
+        alto = max(natural, visible)
+        # Sin este guard, cambiar el alto vuelve a disparar <Configure>
+        # del interior y se entra en un bucle de redibujado.
+        if alto != self._alto_aplicado:
+            self._alto_aplicado = alto
+            self._canvas.itemconfigure(self._ventana, height=alto)
+
+    def _on_scroll_set(self, primero, ultimo):
+        hace_falta = not (float(primero) <= 0.0 and float(ultimo) >= 1.0)
+        if hace_falta and not self._barra_visible:
+            self._vsb.pack(side="right", fill="y")
+            self._barra_visible = True
+        elif not hace_falta and self._barra_visible:
+            self._vsb.pack_forget()
+            self._barra_visible = False
+        self._vsb.set(primero, ultimo)
+
+    def ver_widget(self, widget: tk.Misc) -> None:
+        """Desplaza lo justo para que `widget` quede a la vista."""
+        try:
+            if not (widget.winfo_exists() and self._canvas.winfo_exists()):
+                return
+            self._canvas.update_idletasks()
+            alto_total = max(self.interior.winfo_height(), 1)
+            arriba = widget.winfo_rooty() - self.interior.winfo_rooty()
+            abajo = arriba + widget.winfo_height()
+            vista_alto = self._canvas.winfo_height()
+            vista_arriba = self._canvas.canvasy(0)
+            vista_abajo = vista_arriba + vista_alto
+            if arriba < vista_arriba:
+                self._canvas.yview_moveto(max(arriba - 8, 0) / alto_total)
+            elif abajo > vista_abajo:
+                self._canvas.yview_moveto(max(abajo - vista_alto + 8, 0) / alto_total)
+        except Exception:
+            pass   # que no se vea perfecto nunca puede romper la pantalla
+
+
+def buscar_con_pausa(widget: tk.Misc, entrada: tk.Misc, accion, espera_ms: int = 250):
+    """Ata un buscador que espera a que el usuario TERMINE de escribir.
+
+    Sin esto, cada tecla dispara la búsqueda y el redibujado de la lista
+    entera: con el catálogo real (4.587 productos) eso son ~67 ms por
+    letra, y escribir "COCA COLA" se siente pegajoso, como si la máquina
+    no diera abasto. Con una pausa de 250 ms se busca UNA sola vez, al
+    terminar la palabra, y la escritura va fluida.
+
+    Se cancela el temporizador anterior en cada tecla, así que solo corre
+    la búsqueda de lo último que se escribió.
+    """
+    estado = {"pendiente": None}
+
+    def _al_teclear(_event=None):
+        if estado["pendiente"] is not None:
+            try:
+                widget.after_cancel(estado["pendiente"])
+            except Exception:
+                pass
+        estado["pendiente"] = widget.after(espera_ms, _correr)
+
+    def _correr():
+        estado["pendiente"] = None
+        if widget.winfo_exists():
+            accion()
+
+    def _ahora(_event=None):
+        """Enter no espera: si ya apretó Enter, quiere el resultado ya."""
+        if estado["pendiente"] is not None:
+            try:
+                widget.after_cancel(estado["pendiente"])
+            except Exception:
+                pass
+            estado["pendiente"] = None
+        _correr()
+
+    entrada.bind("<KeyRelease>", _al_teclear, add="+")
+    entrada.bind("<Return>", _ahora, add="+")
+    # Se devuelven los dos handlers para poder probar la lógica de la
+    # pausa sin depender de que el entorno de tests entregue eventos de
+    # teclado reales (Xvfb no entrega <KeyRelease>).
+    return {"al_teclear": _al_teclear, "ahora": _ahora}

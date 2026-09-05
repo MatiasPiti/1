@@ -18,7 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from pos_core.db import init_db
 from pos_core import sales, sync_export, audit, ticket_printer, excel_import
 from apps.theme import (COLORS, aplicar_tema, estriar_treeview, tag_fila,
-                         habilitar_copiar_pegar_global, abrir_dialogo_impresora)
+                         habilitar_copiar_pegar_global, abrir_dialogo_impresora,
+                         ajustar_ventana)
 from apps.caja_carrito import CarritoTecladoMixin
 
 ORIGEN = "USB_CAJA"
@@ -34,7 +35,7 @@ class AppUsbCaja(CarritoTecladoMixin, tk.Tk):
         super().__init__()
         aplicar_tema(self)
         self.title("Otter Caja (Emergencia)")
-        self.geometry("980x800")
+        ajustar_ventana(self, 1180, 800, minimo=(900, 520))
         self._init_carrito()
 
         banner = tk.Label(self, text="⚠  MODO EMERGENCIA PORTÁTIL - DATOS NO SINCRONIZADOS  ⚠",

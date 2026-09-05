@@ -1,6 +1,6 @@
 @echo off
 REM =====================================================================
-REM Compilacion de los 6 ejecutables portables de Otter + el servicio
+REM Compilacion de los 8 ejecutables portables de Otter + el servicio
 REM oculto de stock (7 en total).
 REM Ejecutar desde la raiz del repo: build\build_all.bat
 REM Requiere: pip install -r requirements.txt
@@ -21,39 +21,39 @@ REM quede afuera del .exe por un descuido del analisis automatico.
 set UNICA=--hidden-import pos_core.instancia_unica
 
 echo.
-echo === 1/7 Otter Caja ===
+echo === 1/8 Otter Caja ===
 %PYI% %DATA% %ICON% --name MaestroCaja --paths . ^
     %UNICA% apps\master_caja\main.py
 
 echo.
-echo === 2/7 Otter Dueno ===
+echo === 2/8 Otter Dueno ===
 %PYI% %DATA% %ICON% --name MaestroDueno --paths . ^
     --hidden-import matplotlib.backends.backend_tkagg ^
     %UNICA% apps\master_dueno\main.py
 
 echo.
-echo === 3/7 USB Caja (emergencia) ===
+echo === 3/8 USB Caja (emergencia) ===
 %PYI% %DATA% %ICON% --name USB_Caja --paths . ^
     %UNICA% apps\usb_caja\main.py
 
 echo.
-echo === 4/7 USB Dueno (emergencia) ===
+echo === 4/8 USB Dueno (emergencia) ===
 %PYI% %DATA% %ICON% --name USB_Dueno --paths . ^
     --hidden-import matplotlib.backends.backend_tkagg ^
     %UNICA% apps\usb_dueno\main.py
 
 echo.
-echo === 5/7 USB Mantenimiento (Desarrollador) ===
+echo === 5/8 USB Mantenimiento (Desarrollador) ===
 %PYI% %DATA% %ICON% --name USB_Mantenimiento --paths . apps\usb_dev\mantenimiento.py
 
 echo.
-echo === 6/7 Otter Dueno Remoto (otra PC, vía Tailscale) ===
+echo === 6/8 Otter Dueno Remoto (otra PC, vía Tailscale) ===
 %PYI% %DATA% %ICON% --name DuenoRemoto --paths . ^
     --hidden-import matplotlib.backends.backend_tkagg ^
     apps\dueno_remoto\main.py
 
 echo.
-echo === 7/7 Instalador ===
+echo === 7/8 Instalador ===
 REM El instalador busca las carpetas ya compiladas (MaestroCaja,
 REM DuenoRemoto, StockService...) AL LADO SUYO cuando se ejecuta, no al
 REM compilarse: por eso alcanza con que dist\ viaje entero al pendrive.
@@ -62,6 +62,13 @@ REM accesos directos), asi que hay que declararlo a mano.
 %PYI% %DATA% %ICON% --name OtterInstalador --paths . ^
     --hidden-import win32com.client ^
     apps\instalador\main.py
+
+echo.
+echo === 8/8 Actualizador ===
+REM Pone al dia una instalacion que ya funciona, sin tocar la base ni el
+REM config.ini. Busca las apps nuevas al lado suyo, igual que el instalador.
+%PYI% %DATA% %ICON% --name OtterActualizador --paths . ^
+    apps\actualizador\main.py
 
 echo.
 echo === Servicio oculto de stock (Windows Service) ===

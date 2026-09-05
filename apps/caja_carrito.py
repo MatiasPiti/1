@@ -28,7 +28,7 @@ _on_buscar(), _agregar_al_carrito() y _usuario_origen().
 import tkinter as tk
 from tkinter import messagebox
 
-from apps.theme import COLORS, celda_texto
+from apps.theme import COLORS, celda_texto, enlazar_rueda_mouse
 
 from pos_core import audit
 
@@ -99,15 +99,24 @@ class CarritoTecladoMixin:
 
         canvas = tk.Canvas(contenedor, bg=COLORS["surface"], highlightthickness=1,
                             highlightbackground=COLORS["border"])
-        vsb = tk.Scrollbar(contenedor, orient="vertical", command=canvas.yview)
+        # Barra ancha a propósito: en el mostrador se agarra con el mouse
+        # a las apuradas, y una barra fina de 10px es difícil de pegarle.
+        vsb = tk.Scrollbar(contenedor, orient="vertical", command=canvas.yview, width=18)
         canvas.configure(yscrollcommand=vsb.set)
         canvas.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
 
+        self.carrito_canvas = canvas
         self.carrito_grid = tk.Frame(canvas, bg=COLORS["surface"], takefocus=True)
-        canvas.create_window((0, 0), window=self.carrito_grid, anchor="nw")
+        self._ventana_grid = canvas.create_window((0, 0), window=self.carrito_grid, anchor="nw")
         self.carrito_grid.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        # La grilla tiene que ocupar todo el ancho del canvas; si no, las
+        # columnas quedan apretadas a la izquierda con un hueco blanco al
+        # costado y el SUBTOTAL no se lee desde el otro lado del mostrador.
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfigure(self._ventana_grid, width=e.width))
         self.carrito_grid.grid_columnconfigure(1, weight=1)
+        enlazar_rueda_mouse(canvas, contenedor)
 
         encabezados = [("CÓDIGO", "w"), ("PRODUCTO", "w"), ("CANT.", "center"),
                         ("P. UNIT.", "e"), ("SUBTOTAL", "e")]
@@ -116,6 +125,43 @@ class CarritoTecladoMixin:
                      font=("Segoe UI", 10, "bold"), padx=10, pady=8, anchor=anchor
                      ).grid(row=0, column=col, sticky="nsew")
 
+    # Cómo se dibuja el carrito, y por qué así:
+    #
+    # Antes, cada refresco destruía TODAS las celdas y las volvía a crear.
+    # Con un ticket de 30 líneas eso son 150 widgets destruidos y 150
+    # creados por cada tecla: 61 ms por escaneo y 103 ms por flecha, que
+    # es exactamente la sensación de "la caja va pegajosa".
+    #
+    # Ahora se reusan las celdas que ya existen y solo se toca lo que
+    # cambió: mover la selección pasa a ser cambiar el color de dos filas.
+    # OJO: esto es solo dibujo. La plata sale siempre de `self.carrito` y
+    # el total se recalcula acá de cero en cada pasada, así que un error
+    # de dibujo no puede hacer que se cobre distinto.
+    _COLUMNAS_CARRITO = (
+        ("Segoe UI", 10), ("Segoe UI", 12, "bold"), ("Segoe UI", 11),
+        ("Segoe UI", 10), ("Segoe UI", 15, "bold"),
+    )
+
+    def _textos_de_linea(self, item, subtotal):
+        return (item["codigo"], item["nombre"].upper(), str(item["cantidad"]),
+                f"${item['precio_unitario']:.2f}", f"${subtotal:.2f}")
+
+    def _crear_fila_carrito(self, item, bg):
+        colores = (COLORS["muted"], COLORS["text"], COLORS["text"],
+                   COLORS["muted"], COLORS["accent"])
+        anclas = ("w", "w", "center", "e", "e")
+        widgets = []
+        for col in range(5):
+            celda = celda_texto(self.carrito_grid, "", font=self._COLUMNAS_CARRITO[col],
+                                 color=colores[col], bg=bg, anchor=anclas[col])
+            celda.bind("<Button-1>", lambda e, i=item["_id"]: self._seleccionar_linea(i), add="+")
+            if col == 2:
+                # La columna CANT. se edita tocándola.
+                celda.config(cursor="xterm")
+                celda.bind("<Button-1>", lambda e, i=item["_id"]: self._editar_cantidad(i), add="+")
+            widgets.append(celda)
+        return widgets
+
     def _refrescar_grilla_carrito(self):
         self._asegurar_ids()
         if self._editor_cantidad is not None:
@@ -123,37 +169,86 @@ class CarritoTecladoMixin:
             # campo con lo que el cajero está tecleando.
             return sum(i["cantidad"] * i["precio_unitario"] for i in self.carrito)
 
-        for w in list(self.carrito_grid.grid_slaves()):
-            if int(w.grid_info()["row"]) > 0:
-                w.destroy()
+        if not hasattr(self, "_filas_carrito"):
+            self._filas_carrito = {}
+
+        # 1) Sacar de la pantalla las líneas que ya no están en el carrito.
+        ids_vigentes = {i["_id"] for i in self.carrito}
+        for linea_id in list(self._filas_carrito):
+            if linea_id not in ids_vigentes:
+                for w in self._filas_carrito[linea_id]["widgets"]:
+                    w.destroy()
+                del self._filas_carrito[linea_id]
 
         total = 0.0
-        for i, item in enumerate(self.carrito, start=1):
+        celda_de_la_seleccionada = None
+        for fila, item in enumerate(self.carrito, start=1):
             subtotal = item["cantidad"] * item["precio_unitario"]
             total += subtotal
             seleccionada = item.get("_id") == self.carrito_seleccionado
             bg = COLORS["accent_light"] if seleccionada else (
-                COLORS["stripe"] if i % 2 == 0 else COLORS["surface"])
+                COLORS["stripe"] if fila % 2 == 0 else COLORS["surface"])
+            textos = self._textos_de_linea(item, subtotal)
 
-            celdas = [
-                (item["codigo"], ("Segoe UI", 10), COLORS["muted"], "w"),
-                (item["nombre"].upper(), ("Segoe UI", 12, "bold"), COLORS["text"], "w"),
-                (str(item["cantidad"]), ("Segoe UI", 11), COLORS["text"], "center"),
-                (f"${item['precio_unitario']:.2f}", ("Segoe UI", 10), COLORS["muted"], "e"),
-                (f"${subtotal:.2f}", ("Segoe UI", 15, "bold"), COLORS["accent"], "e"),
-            ]
-            for col, (texto, font, color, anchor) in enumerate(celdas):
-                celda = celda_texto(self.carrito_grid, texto, font=font, color=color, bg=bg, anchor=anchor)
-                celda.grid(row=i, column=col, sticky="nsew", ipady=7, padx=(10 if col == 0 else 0, 10))
-                celda.bind("<Button-1>", lambda e, i=item["_id"]: self._seleccionar_linea(i), add="+")
-                if col == 2:
-                    # La columna CANT. se edita tocándola.
-                    celda.config(cursor="xterm")
-                    celda.bind("<Button-1>",
-                               lambda e, i=item["_id"]: self._editar_cantidad(i), add="+")
+            estado = self._filas_carrito.get(item["_id"])
+            if estado is None:
+                estado = {"widgets": self._crear_fila_carrito(item, bg),
+                          "textos": None, "bg": None, "fila": None}
+                self._filas_carrito[item["_id"]] = estado
+
+            if estado["fila"] != fila:
+                for col, celda in enumerate(estado["widgets"]):
+                    celda.grid(row=fila, column=col, sticky="nsew", ipady=7,
+                               padx=(10 if col == 0 else 0, 10))
+                estado["fila"] = fila
+            if estado["textos"] != textos:
+                for col, celda in enumerate(estado["widgets"]):
+                    if estado["textos"] is None or estado["textos"][col] != textos[col]:
+                        celda.config(text=textos[col])
+                estado["textos"] = textos
+            if estado["bg"] != bg:
+                for celda in estado["widgets"]:
+                    celda.config(bg=bg)
+                estado["bg"] = bg
+
+            if seleccionada:
+                celda_de_la_seleccionada = estado["widgets"][0]
 
         self.lbl_total.config(text=f"${total:.2f}")
+        if celda_de_la_seleccionada is not None:
+            self._asegurar_linea_visible(celda_de_la_seleccionada)
         return total
+
+    def _asegurar_linea_visible(self, celda):
+        """Desplaza el carrito para que la línea elegida se vea siempre.
+
+        Sin esto, en un ticket largo el cajero bajaba con la flecha, la
+        selección seguía moviéndose pero la pantalla se quedaba arriba:
+        terminaba editando o borrando una línea que no estaba viendo.
+        """
+        canvas = getattr(self, "carrito_canvas", None)
+        if canvas is None:
+            return
+        try:
+            if not (canvas.winfo_exists() and celda.winfo_exists()):
+                return
+            canvas.update_idletasks()
+            alto_total = max(self.carrito_grid.winfo_height(), 1)
+            arriba = celda.winfo_y()
+            abajo = arriba + celda.winfo_height()
+            alto_vista = canvas.winfo_height()
+            vista_arriba = canvas.canvasy(0)
+            vista_abajo = vista_arriba + alto_vista
+
+            # El encabezado es fijo arriba de la grilla: se deja su alto de
+            # aire para que la fila elegida no quede justo debajo de él.
+            margen = 4
+            if arriba < vista_arriba + margen:
+                canvas.yview_moveto(max(arriba - margen, 0) / alto_total)
+            elif abajo > vista_abajo - margen:
+                canvas.yview_moveto(max(abajo + margen - alto_vista, 0) / alto_total)
+        except Exception:
+            pass   # que no se vea la fila nunca puede impedir cobrar
 
     def _seleccionar_linea(self, linea_id):
         self.zona = "carrito"

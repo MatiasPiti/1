@@ -27,7 +27,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from pos_core.db import init_db
 from pos_core import sales, audit, ticket_printer
 from apps.theme import (COLORS, aplicar_tema, estriar_treeview, tag_fila,
-                         habilitar_copiar_pegar_global, abrir_dialogo_impresora)
+                         habilitar_copiar_pegar_global, abrir_dialogo_impresora,
+                         ajustar_ventana)
 from apps.caja_carrito import CarritoTecladoMixin
 
 ORIGEN = "MAESTRO"
@@ -42,7 +43,7 @@ class AppCaja(CarritoTecladoMixin, tk.Tk):
         super().__init__()
         aplicar_tema(self)
         self.title("Otter Caja")
-        self.geometry("980x760")
+        ajustar_ventana(self, 1180, 780, minimo=(900, 520))
         self._init_carrito()
 
         self._construir_ui()

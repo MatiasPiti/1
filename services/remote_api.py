@@ -73,7 +73,7 @@ def _json_default(valor):
 # ---------------------------------------------------------------------- #
 def _construir_allowlist() -> dict:
     from pos_core import (stock_service, bulk_edit, pdf_import, excel_import, filters, config,
-                           alerts, audit, products, ofertas, reports, sales)
+                           alerts, audit, products, ofertas, reports, sales, precios)
 
     return {
         "reports.resumen_dashboard": reports.resumen_dashboard,
@@ -106,6 +106,11 @@ def _construir_allowlist() -> dict:
         "ofertas.listar_ofertas": ofertas.listar_ofertas,
         "ofertas.cancelar_oferta": ofertas.cancelar_oferta,
         "audit.listar_lineas_eliminadas": audit.listar_lineas_eliminadas,
+        "precios.buscar_para_precios": precios.buscar_para_precios,
+        "precios.obtener_para_precios": precios.obtener_para_precios,
+        "precios.actualizar_precios": precios.actualizar_precios,
+        "precios.listar_rubros": precios.listar_rubros,
+        "precios.listar_subrubros": precios.listar_subrubros,
     }
 
 

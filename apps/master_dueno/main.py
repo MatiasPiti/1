@@ -23,7 +23,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from pos_core.db import init_db
 from pos_core.dueno_backend import LocalBackend, RemoteError
 from pos_core import arca
-from apps.theme import aplicar_tema, estriar_treeview, tag_fila, habilitar_copiar_pegar_global
+from apps.theme import (aplicar_tema, estriar_treeview, tag_fila,
+                         habilitar_copiar_pegar_global, ajustar_ventana, MarcoDesplazable,
+                         buscar_con_pausa)
 
 USUARIO = os.environ.get("USERNAME", "dueño")
 ORIGEN = "MAESTRO"
@@ -36,7 +38,10 @@ class AppDueno(tk.Tk):
         self.backend = backend or LocalBackend()
         self.es_remoto = not isinstance(self.backend, LocalBackend)
         self.title("Otter Dueño")
-        self.geometry("1180x760")
+        # Tamaño ideal, recortado a lo que entre en la pantalla del cliente:
+        # en un monitor de 1366x768 pedir 760 de alto dejaba la fila de
+        # botones de cada pestaña TAPADA por la barra de tareas.
+        ajustar_ventana(self, 1180, 760)
 
         # Estado del filtro que se está armando/editando en la pestaña de
         # Filtros: lista ordenada de códigos elegidos a mano por el dueño.
@@ -57,15 +62,20 @@ class AppDueno(tk.Tk):
         nb.pack(fill="both", expand=True, padx=10, pady=10)
         self.nb = nb
 
-        self.tab_dashboard = ttk.Frame(nb)
-        self.tab_stock = ttk.Frame(nb)
-        self.tab_bulk = ttk.Frame(nb)
-        self.tab_ofertas = ttk.Frame(nb)
-        self.tab_pdf = ttk.Frame(nb)
-        self.tab_excel = ttk.Frame(nb)
-        self.tab_arca = ttk.Frame(nb)
-        self.tab_alertas = ttk.Frame(nb)
-        self.tab_auditoria = ttk.Frame(nb)
+        # Cada pestaña va adentro de un MarcoDesplazable: si la pantalla
+        # del cliente es chica, aparece una barra a la derecha y se llega
+        # a todo, en vez de quedar controles cortados fuera de alcance.
+        # En pantallas grandes se comporta igual que antes (el contenido
+        # se expande hasta el fondo).
+        self.tab_dashboard = MarcoDesplazable(nb)
+        self.tab_stock = MarcoDesplazable(nb)
+        self.tab_bulk = MarcoDesplazable(nb)
+        self.tab_ofertas = MarcoDesplazable(nb)
+        self.tab_pdf = MarcoDesplazable(nb)
+        self.tab_excel = MarcoDesplazable(nb)
+        self.tab_arca = MarcoDesplazable(nb)
+        self.tab_alertas = MarcoDesplazable(nb)
+        self.tab_auditoria = MarcoDesplazable(nb)
 
         nb.add(self.tab_dashboard, text="Dashboard")
         nb.add(self.tab_stock, text="Stock")
@@ -97,9 +107,9 @@ class AppDueno(tk.Tk):
             (self._armar_auditoria, self.tab_auditoria, "Auditoría"),
         ):
             try:
-                armar(tab)
+                armar(tab.interior)
             except Exception as e:
-                ttk.Label(tab, text=f"No se pudo cargar «{nombre}»:\n{e}\n\n"
+                ttk.Label(tab.interior, text=f"No se pudo cargar «{nombre}»:\n{e}\n\n"
                                      f"Cerrá y volvé a abrir el panel cuando haya conexión.",
                           justify="left", wraplength=700).pack(padx=20, pady=20, anchor="w")
         habilitar_copiar_pegar_global(self)
@@ -264,6 +274,8 @@ class AppDueno(tk.Tk):
     # Stock manual / lector
     # ------------------------------------------------------------------ #
     def _armar_stock(self, frame):
+        self._armar_precios(frame)
+
         alta = ttk.LabelFrame(frame, text="Alta de producto nuevo (no registrado antes)", padding=12)
         alta.pack(fill="x", pady=(0, 10))
         ttk.Label(alta, text="Código:").grid(row=0, column=0, sticky="w")
@@ -291,6 +303,9 @@ class AppDueno(tk.Tk):
         self.alta_categoria.grid(row=1, column=5, padx=4, pady=(6, 0))
         ttk.Button(alta, text="Agregar producto", style="Accent.TButton",
                    command=self._crear_producto_nuevo).grid(row=1, column=7, padx=4, pady=(6, 0))
+        self.lbl_alta_codigo = ttk.Label(alta, text="", style="Muted.TLabel")
+        self.lbl_alta_codigo.grid(row=2, column=0, columnspan=8, sticky="w", pady=(6, 0))
+        self._preparar_campo_codigo(self.alta_codigo, self.alta_nombre, self.lbl_alta_codigo)
 
         form = ttk.LabelFrame(frame, text="Movimiento manual de stock", padding=12)
         form.pack(fill="x", pady=(0, 10))
@@ -307,6 +322,9 @@ class AppDueno(tk.Tk):
         ttk.Button(form, text="+ Sumar (Entrada)", command=self._sumar_stock).grid(row=0, column=4, padx=4)
         ttk.Button(form, text="− Restar (Salida)", style="Danger.TButton", command=self._restar_stock
                    ).grid(row=0, column=5, padx=4)
+        self.lbl_stock_codigo = ttk.Label(form, text="", style="Muted.TLabel")
+        self.lbl_stock_codigo.grid(row=1, column=0, columnspan=6, sticky="w", pady=(6, 0))
+        self._preparar_campo_codigo(self.stock_codigo, self.stock_cantidad, self.lbl_stock_codigo)
 
         lector = ttk.LabelFrame(frame, text="Lector USB (foco acá y escaneá para restar 1 unidad)", padding=12)
         lector.pack(fill="x", pady=(0, 10))
@@ -324,7 +342,8 @@ class AppDueno(tk.Tk):
         ttk.Label(buscador_fila, text="Buscar:").pack(side="left")
         self.stock_actual_buscar = ttk.Entry(buscador_fila)
         self.stock_actual_buscar.pack(side="left", fill="x", expand=True, padx=6)
-        self.stock_actual_buscar.bind("<KeyRelease>", lambda e: self._refrescar_stock_actual())
+        self._pausa_stock = buscar_con_pausa(self, self.stock_actual_buscar,
+                                              self._refrescar_stock_actual)
 
         self.tree_stock_actual = ttk.Treeview(
             stock_actual, columns=("codigo", "nombre", "stock"), show="headings", height=16)
@@ -338,6 +357,335 @@ class AppDueno(tk.Tk):
         self.tree_stock_actual.pack(fill="both", expand=True)
 
         self._refrescar_stock_actual()
+
+
+    # ------------------------------------------------------------------ #
+    # Actualización de precios (lo que antes era editar el Excel a mano)
+    # ------------------------------------------------------------------ #
+    # Campos calculados: Costo S/IVA -> Precio Costo -> % Ganancia ->
+    # Precio Venta Final. Solo el precio final es obligatorio; el resto es
+    # opcional y se deduce (ver pos_core/precios.py, que tiene la lógica y
+    # sus tests). Lo que se recalcula depende de qué campo tocó el dueño,
+    # que es lo único que no obliga a adivinar qué quiso hacer.
+    # ------------------------------------------------------------------ #
+    CAMPOS_PRECIO = (
+        ("costo_sin_iva", "Costo S/IVA:"),
+        ("precio_costo", "Precio Costo:"),
+        ("margen", "% Ganancia:"),
+        ("precio_final", "Precio Venta Final:"),
+    )
+
+    def _armar_precios(self, frame):
+        caja = ttk.LabelFrame(frame, text="Actualización de precios", padding=12)
+        caja.pack(fill="x", pady=(0, 10))
+
+        # --- buscador / lector ---
+        fila_buscar = ttk.Frame(caja)
+        fila_buscar.pack(fill="x", pady=(0, 8))
+        ttk.Label(fila_buscar, text="Escaneá o buscá (código o nombre):").pack(side="left")
+        self.precio_buscar = ttk.Entry(fila_buscar, font=("Segoe UI", 12), width=34)
+        self.precio_buscar.pack(side="left", padx=8, ipady=3)
+        self.precio_buscar.bind("<Return>", self._buscar_para_precios)
+        ttk.Button(fila_buscar, text="Buscar", command=self._buscar_para_precios).pack(side="left")
+        ttk.Button(fila_buscar, text="Limpiar", command=self._limpiar_precios).pack(side="left", padx=6)
+
+        # En su propia fila y a lo ancho: es el cartel que confirma QUÉ se
+        # escaneó y qué se guardó, así que no puede quedar cortado por un
+        # nombre largo (que es justo lo que pasa con los nombres reales).
+        self.lbl_precio_estado = ttk.Label(caja, text="", style="Muted.TLabel", anchor="w")
+        self.lbl_precio_estado.pack(fill="x", pady=(0, 6))
+
+        # --- lista de coincidencias (solo aparece si hay varias) ---
+        self.marco_candidatos = ttk.Frame(caja)
+        self.tree_candidatos = ttk.Treeview(
+            self.marco_candidatos, columns=("codigo", "nombre", "precio"),
+            show="headings", height=5)
+        for col, txt, ancho in (("codigo", "Código", 130), ("nombre", "Nombre", 420),
+                                 ("precio", "Precio actual", 120)):
+            self.tree_candidatos.heading(col, text=txt)
+            self.tree_candidatos.column(col, width=ancho,
+                                         anchor="e" if col == "precio" else "w")
+        estriar_treeview(self.tree_candidatos)
+        self.tree_candidatos.pack(fill="x")
+        self.tree_candidatos.bind("<Double-1>", self._elegir_candidato)
+        self.tree_candidatos.bind("<Return>", self._elegir_candidato)
+
+        # --- datos del producto ---
+        datos = ttk.Frame(caja)
+        datos.pack(fill="x")
+
+        ttk.Label(datos, text="Código:").grid(row=0, column=0, sticky="w", pady=3)
+        self.precio_codigo = ttk.Entry(datos, width=18, state="readonly")
+        self.precio_codigo.grid(row=0, column=1, sticky="w", padx=(4, 16))
+
+        ttk.Label(datos, text="Nombre:").grid(row=0, column=2, sticky="w", pady=3)
+        self.precio_nombre = ttk.Entry(datos, width=44)
+        self.precio_nombre.grid(row=0, column=3, columnspan=3, sticky="w", padx=4)
+
+        ttk.Label(datos, text="Rubro:").grid(row=1, column=0, sticky="w", pady=3)
+        self.precio_rubro = ttk.Combobox(datos, width=16)
+        self.precio_rubro.grid(row=1, column=1, sticky="w", padx=(4, 16))
+
+        ttk.Label(datos, text="Subrubro:").grid(row=1, column=2, sticky="w", pady=3)
+        self.precio_subrubro = ttk.Combobox(datos, width=16)
+        self.precio_subrubro.grid(row=1, column=3, sticky="w", padx=4)
+
+        # --- los cuatro números ---
+        self.entradas_precio = {}
+        for i, (clave, etiqueta) in enumerate(self.CAMPOS_PRECIO):
+            destacado = clave == "precio_final"
+            ttk.Label(datos, text=etiqueta,
+                      style="Header.TLabel" if destacado else "TLabel"
+                      ).grid(row=2 + i, column=0, sticky="w", pady=3)
+            entrada = ttk.Entry(datos, width=14,
+                                 font=("Segoe UI", 13, "bold") if destacado else ("Segoe UI", 11))
+            entrada.grid(row=2 + i, column=1, sticky="w", padx=(4, 16), pady=2)
+            # Se recalcula al salir del campo o al apretar Enter, nunca a
+            # cada tecla: ver números cambiar solos mientras se escribe es
+            # exactamente lo que hace que una pantalla se sienta rota.
+            entrada.bind("<FocusOut>", lambda e, c=clave: self._recalcular_precios(c))
+            entrada.bind("<Return>", lambda e, c=clave: self._recalcular_precios(c))
+            self.entradas_precio[clave] = entrada
+
+        ttk.Label(datos, text="(opcional — con el precio final alcanza)", style="Muted.TLabel"
+                  ).grid(row=2, column=2, columnspan=2, sticky="w", padx=4)
+
+        self.lbl_precio_anterior = ttk.Label(datos, text="", style="Muted.TLabel")
+        self.lbl_precio_anterior.grid(row=3, column=2, columnspan=2, sticky="w", padx=4)
+        self.lbl_precio_actualizado = ttk.Label(datos, text="", style="Muted.TLabel")
+        self.lbl_precio_actualizado.grid(row=4, column=2, columnspan=2, sticky="w", padx=4)
+
+        botones = ttk.Frame(caja)
+        botones.pack(fill="x", pady=(10, 0))
+        self.btn_guardar_precio = ttk.Button(botones, text="GUARDAR CAMBIOS",
+                                              style="Accent.TButton", command=self._guardar_precios)
+        self.btn_guardar_precio.pack(side="left")
+        ttk.Label(botones, text="Escaneá el próximo producto para seguir — no hace falta limpiar.",
+                  style="Muted.TLabel").pack(side="left", padx=12)
+
+        self._producto_en_precios = None
+        self._mostrar_candidatos([])
+        self._precios_habilitar(False)
+
+    # ---------------- helpers de la sección de precios ---------------- #
+    def _precios_habilitar(self, habilitado: bool):
+        estado = "normal" if habilitado else "disabled"
+        for entrada in self.entradas_precio.values():
+            entrada.config(state=estado)
+        for w in (self.precio_nombre, self.precio_rubro, self.precio_subrubro,
+                  self.btn_guardar_precio):
+            w.config(state=estado)
+
+    def _mostrar_candidatos(self, candidatos: list):
+        for fila in self.tree_candidatos.get_children():
+            self.tree_candidatos.delete(fila)
+        if not candidatos:
+            self.marco_candidatos.pack_forget()
+            return
+        for i, p in enumerate(candidatos):
+            self.tree_candidatos.insert(
+                "", "end", iid=p["codigo"],
+                values=(p["codigo"], p["nombre"], f"${(p.get('precio_venta') or 0):.2f}"),
+                tags=(tag_fila(i),))
+        self.marco_candidatos.pack(fill="x", pady=(0, 8))
+
+    def _texto_precio(self, valor):
+        return "" if valor in (None, "") else f"{float(valor):.2f}"
+
+    def _buscar_para_precios(self, event=None):
+        termino = self.precio_buscar.get().strip()
+        if not termino:
+            return "break"
+        try:
+            res = self.backend.precios.buscar_para_precios(termino)
+        except RemoteError as e:
+            messagebox.showerror("Sin conexión", str(e))
+            return "break"
+        if res.get("producto"):
+            self._cargar_producto_en_precios(res["producto"])
+        elif res.get("candidatos"):
+            self._mostrar_candidatos(res["candidatos"])
+            self.lbl_precio_estado.config(
+                text=f"{len(res['candidatos'])} coincidencias — elegí una de la lista")
+            self._precios_habilitar(False)
+        else:
+            self._mostrar_candidatos([])
+            self._precios_habilitar(False)
+            self.lbl_precio_estado.config(text="No se encontró ningún producto con eso.")
+        return "break"
+
+    def _elegir_candidato(self, event=None):
+        seleccion = self.tree_candidatos.selection() or self.tree_candidatos.focus()
+        codigo = seleccion[0] if isinstance(seleccion, tuple) and seleccion else seleccion
+        if not codigo:
+            return "break"
+        try:
+            self._cargar_producto_en_precios(self.backend.precios.obtener_para_precios(codigo))
+        except Exception as e:
+            messagebox.showerror("No se pudo abrir el producto", str(e))
+        return "break"
+
+    def _cargar_producto_en_precios(self, producto: dict):
+        """Deja la pantalla con los datos guardados hoy de ese producto."""
+        self._producto_en_precios = producto
+        self._mostrar_candidatos([])
+        self._precios_habilitar(True)
+
+        self.precio_codigo.config(state="normal")
+        self.precio_codigo.delete(0, "end")
+        self.precio_codigo.insert(0, producto["codigo"])
+        self.precio_codigo.config(state="readonly")
+
+        self.precio_nombre.delete(0, "end")
+        self.precio_nombre.insert(0, producto.get("nombre") or "")
+
+        try:
+            self.precio_rubro["values"] = self.backend.precios.listar_rubros()
+            self.precio_subrubro["values"] = self.backend.precios.listar_subrubros()
+        except Exception:
+            pass    # el desplegable es una comodidad, no puede frenar la carga
+        self.precio_rubro.set(producto.get("categoria") or "")
+        self.precio_subrubro.set(producto.get("subrubro") or "")
+
+        valores = {
+            "costo_sin_iva": producto.get("costo_sin_iva"),
+            "precio_costo": producto.get("precio_compra"),
+            "margen": producto.get("margen_ganancia"),
+            "precio_final": producto.get("precio_venta"),
+        }
+        for clave, entrada in self.entradas_precio.items():
+            entrada.delete(0, "end")
+            valor = valores.get(clave)
+            # Un 0 guardado es "nunca se cargó": se muestra vacío para que
+            # el dueño vea de un vistazo qué falta, en vez de un 0.00 que
+            # parece un dato real.
+            if valor not in (None, "") and float(valor) != 0:
+                entrada.insert(0, self._texto_precio(valor))
+
+        self.lbl_precio_anterior.config(
+            text=f"Precio actual: ${float(producto.get('precio_venta') or 0):.2f}")
+        actualizado = (producto.get("actualizado_en") or "")[:16].replace("T", " ")
+        self.lbl_precio_actualizado.config(
+            text=f"Última actualización: {actualizado}" if actualizado else "")
+        self.lbl_precio_estado.config(text=f"✔ {producto.get('nombre') or ''}")
+
+        self.precio_buscar.delete(0, "end")
+        self.entradas_precio["precio_final"].focus_set()
+        self.entradas_precio["precio_final"].selection_range(0, "end")
+
+    def _recalcular_precios(self, campo_cambiado: str):
+        """Completa los otros tres números a partir del que se acaba de tocar."""
+        if self._producto_en_precios is None:
+            return
+        actuales = {c: e.get() for c, e in self.entradas_precio.items()}
+        try:
+            from pos_core import precios as _precios
+            resultado = _precios.recalcular(
+                costo_sin_iva=actuales["costo_sin_iva"], precio_costo=actuales["precio_costo"],
+                margen=actuales["margen"], precio_final=actuales["precio_final"],
+                cambio=campo_cambiado)
+        except Exception:
+            return   # un número raro nunca puede trabar la pantalla
+        for clave, entrada in self.entradas_precio.items():
+            valor = resultado.get(clave)
+            texto = self._texto_precio(valor)
+            # Se reescribe siempre el campo tocado (así el dueño VE cómo se
+            # interpretó lo que escribió: "1.500" queda "1500.00" y se nota
+            # al instante si se entendió mal) y los que cambiaron de valor.
+            if entrada.get().strip() != texto and (clave == campo_cambiado or texto):
+                entrada.delete(0, "end")
+                if texto:
+                    entrada.insert(0, texto)
+
+    def _guardar_precios(self):
+        if self._producto_en_precios is None:
+            return
+        try:
+            guardado = self.backend.precios.actualizar_precios(
+                codigo=self._producto_en_precios["codigo"],
+                nombre=self.precio_nombre.get(),
+                categoria=self.precio_rubro.get(),
+                subrubro=self.precio_subrubro.get(),
+                costo_sin_iva=self.entradas_precio["costo_sin_iva"].get(),
+                precio_costo=self.entradas_precio["precio_costo"].get(),
+                margen=self.entradas_precio["margen"].get(),
+                precio_final=self.entradas_precio["precio_final"].get(),
+                usuario=USUARIO, origen=ORIGEN)
+        except Exception as e:
+            messagebox.showerror("No se pudo guardar", str(e))
+            return
+
+        self._producto_en_precios = guardado
+        self.lbl_precio_estado.config(
+            text=f"✔ Guardado: {guardado['nombre']} → ${float(guardado['precio_venta']):.2f}")
+        self.lbl_precio_anterior.config(text=f"Precio actual: ${float(guardado['precio_venta']):.2f}")
+        actualizado = (guardado.get("actualizado_en") or "")[:16].replace("T", " ")
+        self.lbl_precio_actualizado.config(text=f"Última actualización: {actualizado}")
+        self._refrescar_stock_actual()
+        # Listo para el siguiente: el dueño escanea y sigue, sin tocar nada.
+        self.precio_buscar.focus_set()
+
+    def _limpiar_precios(self):
+        self._producto_en_precios = None
+        self._mostrar_candidatos([])
+        self.precio_codigo.config(state="normal")
+        self.precio_codigo.delete(0, "end")
+        self.precio_codigo.config(state="readonly")
+        self.precio_nombre.delete(0, "end")
+        self.precio_rubro.set("")
+        self.precio_subrubro.set("")
+        for entrada in self.entradas_precio.values():
+            entrada.delete(0, "end")
+        self.lbl_precio_estado.config(text="")
+        self.lbl_precio_anterior.config(text="")
+        self.lbl_precio_actualizado.config(text="")
+        self._precios_habilitar(False)
+        self.precio_buscar.delete(0, "end")
+        self.precio_buscar.focus_set()
+
+
+    # ------------------------------------------------------------------ #
+    # Lector de código de barras en TODO campo de código del panel
+    #
+    # Un lector USB es un teclado: escribe el código y manda Enter. Sin
+    # esto, ese Enter no hacía nada y el dueño tenía que soltar el lector
+    # e ir al mouse en cada producto. Ahora el Enter avanza solo al campo
+    # siguiente (nunca dispara la acción: un escaneo de más no puede
+    # sumar stock ni crear una oferta sin que el dueño lo confirme) y, de
+    # paso, muestra el nombre del producto para que se vea al instante si
+    # se escaneó el que se quería.
+    # ------------------------------------------------------------------ #
+    def _preparar_campo_codigo(self, entrada, siguiente=None, etiqueta=None):
+        def _al_escanear(_event=None):
+            codigo = entrada.get().strip()
+            if codigo and etiqueta is not None:
+                etiqueta.config(text=self._nombre_de_codigo(codigo))
+            if siguiente is not None:
+                siguiente.focus_set()
+                try:
+                    siguiente.selection_range(0, "end")
+                except Exception:
+                    pass    # los Combobox no tienen selection_range
+            return "break"
+
+        entrada.bind("<Return>", _al_escanear)
+        entrada.bind("<KP_Enter>", _al_escanear)
+        if etiqueta is not None:
+            entrada.bind("<FocusOut>",
+                          lambda e: etiqueta.config(text=self._nombre_de_codigo(entrada.get().strip())))
+
+    def _nombre_de_codigo(self, codigo: str) -> str:
+        """Nombre del producto de ese código, para mostrar al lado del campo."""
+        if not codigo:
+            return ""
+        try:
+            res = self.backend.precios.buscar_para_precios(codigo)
+        except Exception:
+            return ""     # sin conexión el campo sigue andando, solo sin ayuda
+        producto = res.get("producto")
+        if producto and producto.get("codigo") == codigo:
+            return f"✔ {producto['nombre']}"
+        return "— sin producto con ese código —"
 
     def _on_cambio_pestana(self, event=None):
         if self.nb.select() == str(self.tab_stock):
@@ -432,7 +780,8 @@ class AppDueno(tk.Tk):
         buscador_fila.pack(fill="x", pady=(0, 6))
         self.picker_buscar = ttk.Entry(buscador_fila)
         self.picker_buscar.pack(side="left", fill="x", expand=True)
-        self.picker_buscar.bind("<KeyRelease>", lambda e: self._refrescar_picker_todos())
+        self._pausa_picker = buscar_con_pausa(self, self.picker_buscar,
+                                               self._refrescar_picker_todos)
         self.picker_todos = ttk.Treeview(izq, columns=("codigo", "nombre"), show="headings", height=12)
         self.picker_todos.heading("codigo", text="Código")
         self.picker_todos.heading("nombre", text="Nombre")
@@ -987,6 +1336,7 @@ class AppDueno(tk.Tk):
         ttk.Label(fila, text="Mínimo:").pack(side="left", padx=(10, 0))
         self.um_prod_min = ttk.Entry(fila, width=8)
         self.um_prod_min.pack(side="left", padx=4)
+        self._preparar_campo_codigo(self.um_prod_codigo, self.um_prod_min)
         ttk.Label(fila, text="Máximo:").pack(side="left", padx=(10, 0))
         self.um_prod_max = ttk.Entry(fila, width=8)
         self.um_prod_max.pack(side="left", padx=4)
@@ -1081,6 +1431,8 @@ class AppDueno(tk.Tk):
         ttk.Label(form, text="Código de producto:").grid(row=0, column=0, sticky="w")
         self.oferta_codigo = ttk.Entry(form, width=16)
         self.oferta_codigo.grid(row=0, column=1, padx=4)
+        self.lbl_oferta_codigo = ttk.Label(form, text="", style="Muted.TLabel")
+        self.lbl_oferta_codigo.grid(row=2, column=0, columnspan=6, sticky="w", pady=(6, 0))
 
         ttk.Label(form, text="Tipo de descuento:").grid(row=0, column=2, sticky="w")
         self.oferta_tipo = ttk.Combobox(
@@ -1092,6 +1444,7 @@ class AppDueno(tk.Tk):
         ttk.Label(form, text="Valor:").grid(row=0, column=4, sticky="w")
         self.oferta_valor = ttk.Entry(form, width=10)
         self.oferta_valor.grid(row=0, column=5, padx=4)
+        self._preparar_campo_codigo(self.oferta_codigo, self.oferta_valor, self.lbl_oferta_codigo)
 
         ttk.Label(form, text="Duración (días):").grid(row=1, column=0, sticky="w", pady=(6, 0))
         self.oferta_dias = ttk.Entry(form, width=8)
