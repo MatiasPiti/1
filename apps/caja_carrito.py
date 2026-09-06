@@ -146,6 +146,17 @@ class CarritoTecladoMixin:
         return (item["codigo"], item["nombre"].upper(), str(item["cantidad"]),
                 f"${item['precio_unitario']:.2f}", f"${subtotal:.2f}")
 
+    def _escribir_celda(self, celda, texto):
+        # `celda` es un tk.Entry de solo lectura (ver celda_texto en
+        # apps/theme.py): no tiene la opción "text" de un Label, así que
+        # config(text=...) no hace nada (o tira TclError según la versión
+        # de Tk) y la celda queda en blanco para siempre. Hay que abrirla,
+        # reescribirla y volver a cerrarla.
+        celda.config(state="normal")
+        celda.delete(0, "end")
+        celda.insert(0, texto)
+        celda.config(state="readonly")
+
     def _crear_fila_carrito(self, item, bg):
         colores = (COLORS["muted"], COLORS["text"], COLORS["text"],
                    COLORS["muted"], COLORS["accent"])
@@ -204,11 +215,13 @@ class CarritoTecladoMixin:
             if estado["textos"] != textos:
                 for col, celda in enumerate(estado["widgets"]):
                     if estado["textos"] is None or estado["textos"][col] != textos[col]:
-                        celda.config(text=textos[col])
+                        self._escribir_celda(celda, textos[col])
                 estado["textos"] = textos
             if estado["bg"] != bg:
                 for celda in estado["widgets"]:
-                    celda.config(bg=bg)
+                    # readonlybackground es lo que realmente se pinta en un
+                    # Entry readonly; "bg" solo, sin esto, no se ve.
+                    celda.config(bg=bg, readonlybackground=bg)
                 estado["bg"] = bg
 
             if seleccionada:
