@@ -7,17 +7,17 @@
 
 ## Quién es quién
 
-- **Matías** — el desarrollador. Es con quien hablás. **Respondele siempre en español.**
+- **Matías** — el desarrollador. Es con quien hablás. **Respondele siempre en español, corto y concreto.**
 - **Leo** — el dueño del negocio, el cliente. No es técnico. No toca el código ni Tailscale.
 - **El negocio** — kiosco/almacén "El Galpón Del Nono", San Luis 2892, Casilda (Santa Fe).
 
-Esto no es un ejercicio: es un sistema que va a estar cobrando plata real, todo el día, con un
+Esto no es un ejercicio: es un sistema que está cobrando plata real, todo el día, con un
 cajero que no sabe de computadoras y sin nadie cerca para arreglarlo. Cuando haya que elegir,
 elegí lo que falla menos, no lo que es más elegante.
 
 ## Qué es Otter
 
-POS + control de stock en Python/Tkinter/SQLite que compila a **7 ejecutables Windows portables**
+POS + control de stock en Python/Tkinter/SQLite que compila a **9 ejecutables Windows portables**
 (PyInstaller `--onedir`). Ver `README.md` para el detalle. En una línea cada uno:
 
 | Ejecutable | Dónde va | Para qué |
@@ -25,12 +25,12 @@ POS + control de stock en Python/Tkinter/SQLite que compila a **7 ejecutables Wi
 | `MaestroCaja` | PC del local | La caja. Vende, imprime ticket, descuenta stock. |
 | `MaestroDueno` | PC del local | Panel del dueño: stock, precios, reportes, ARCA, ofertas. |
 | `StockService` | PC del local | Servicio de Windows: alertas Telegram + API remota. |
-| `DuenoRemoto` | Laptop de Leo | El mismo panel, contra la PC del local por Tailscale. |
-| `USB_Caja` | Pendrive | Caja de emergencia si se rompe la PC. Base propia, se concilia después. |
-| `USB_Dueno` | Pendrive | Panel de emergencia. |
+| `DuenoRemoto` | Laptop de Leo | El mismo panel, contra la PC del local por Tailscale. Necesita que el local esté prendido — no reemplaza a `USB_Dueno` (ver más abajo). |
+| `USB_Caja` | Pendrive | Caja de emergencia si se rompe la PC del local. Base propia, se concilia después. |
+| `USB_Dueno` | Pendrive | Panel de emergencia del dueño si se rompe la PC del local. Base propia, se concilia después. |
 | `USB_Mantenimiento` | Pendrive de Matías | Diagnóstico y reparación en el local. |
 | `OtterInstalador` | Pendrive de instalación | Hace toda la instalación en un botón. |
-| `OtterActualizador` | Pendrive | Pone al día una instalación que ya anda, sin tocar datos. |
+| `OtterActualizador` | Pendrive | Pone al día una instalación que ya anda, sin tocar datos ni config. |
 
 **Build:** `build\build_all.bat` desde la raíz, en Windows. Genera todo en `dist\`.
 
@@ -43,7 +43,9 @@ POS + control de stock en Python/Tkinter/SQLite que compila a **7 ejecutables Wi
    del negocio. Es el error más caro posible y el instalador existe en parte para evitarlo.
 3. **Nunca copiar `dist\database\` ni `dist\config.ini` al cliente** — tienen datos de prueba.
 4. **El token `galpon-nono-686dd219a7d742b8` quedó expuesto en un chat: no se usa nunca más.**
-   El instalador genera uno nuevo solo.
+   El instalador genera uno nuevo solo. El token y la IP de Tailscale **reales** del cliente viven
+   únicamente en su `config.ini` — nunca se los pide ni se los repite en un chat; se transfieren
+   copiando y pegando directo en la PC (nunca tipeados: `l`/`I`/`1` y `O`/`0` se confunden).
 5. La cuenta de Tailscale es de Matías y es la llave de la red de todos los clientes:
    **2FA activado**, y **escribir las ACLs antes de sumar un segundo cliente** — si no, los
    clientes se ven entre sí.
@@ -52,16 +54,48 @@ POS + control de stock en Python/Tkinter/SQLite que compila a **7 ejecutables Wi
 
 ## Estado actual
 
+**Instalación y cobro cerrados (septiembre 2026).** El sistema está instalado y funcionando en el
+local: PC del local (`MaestroCaja` + `MaestroDueno` + `StockService`) y laptop de Leo con
+`DuenoRemoto`, conectadas por Tailscale. **Matías ya cobró los USD 800 de instalación.** Todo
+verificado en Windows real, no solo en sandbox.
+
 Todo está en `main`, commiteado y pusheado. La rama `claude/dual-pos-portable-emergency-dvt5ym`
 quedó vieja (tiene solo dos subidas manuales de archivos por la web): **el trabajo va a `main`**.
 
-Verificado en Windows real: los 7 ejecutables compilan, las apps abren, el Excel de 4587
-productos carga, el servicio instala y arranca, la API remota autentica.
+Últimos commits relevantes:
+- `16d9652` — memoria del proyecto en `CLAUDE.md`.
+- `3799aae` — pantalla de precios sin depender del Excel, ventanas que entran en pantallas chicas,
+  scroll del carrito con barra + flechas.
+- `15de1a6` — la edición masiva de precios no se veía (la fila de "Aplicar %" quedaba tapada abajo
+  del corte de `MarcoDesplazable`).
+- `ff32d8a` — **el carrito de la Caja quedaba en blanco** al escanear o cargar a mano (ver detalle
+  abajo, en "Decisiones que ya se tomaron"). Encontrado y arreglado en producción, en vivo, con el
+  negocio ya anduviendo.
 
-Verificado en sandbox (37 suites de tests, todas en verde): venta completa solo con teclado con
-la plata cuadrando, 8 facturas ARCA simultáneas, 7 procesos concurrentes sobre el stock,
-atomicidad con fallas de disco inyectadas, pedidos hostiles contra la API remota, instalación
-completa por su camino real, y el candado de instancia única (probado matando el proceso).
+### Bugs encontrados y arreglados durante la instalación real
+
+Estos son gotchas de infraestructura que van a volver a aparecer si se reinstala o se depura de
+nuevo — documentados para no perder tiempo re-descubriéndolos:
+
+- **`sc` en PowerShell NO es el comando de servicios de Windows.** Es un alias de `Set-Content`
+  (escribir archivos). `sc query NombreServicio` no tira ningún error de servicio: silenciosamente
+  intenta escribir un archivo llamado `query`. Para consultar servicios reales, usar
+  `Get-Service -Name NombreServicio` o `sc.exe query NombreServicio` (con el `.exe` explícito).
+- **El `StockService` puede quedar `Stopped`** después de una instalación o de que el
+  `OtterActualizador` lo pare para actualizar (no lo relanza si algo falla, a propósito, para no
+  frenar la actualización). Sin el servicio corriendo, `DuenoRemoto` da "no se pudo conectar"
+  aunque IP, token y Tailscale estén perfectos. Diagnóstico: `Get-Service SistemaDualStockService`
+  → si dice `Stopped`, `Start-Service SistemaDualStockService` (como administrador) y confirmar con
+  `netstat -ano | findstr 8765` que algo quedó en `LISTENING`.
+- **PowerShell abre en `C:\Windows\system32` cuando se lo ejecuta "como administrador"**, no en la
+  carpeta donde se lo abrió antes — hay que volver a `cd` a la carpeta del proyecto.
+- **PyInstaller puede fallar con `PermissionError` al recompilar un ejecutable que sigue corriendo**
+  (o cuyo `.exe` quedó bloqueado por un proceso colgado/servicio activo). Antes de recompilar:
+  cerrar la app y, si es un servicio, pararlo (`Get-Service` / `Start-Service` / `sc.exe`).
+- **`OtterActualizador` frena limpio ante un archivo bloqueado** (`PermissionError`) sin borrar la
+  instalación anterior — es el comportamiento correcto, ante la duda no rompe nada. Solución:
+  cerrar el `.exe` que está bloqueando (Task Manager si hace falta) y volver a apretar
+  "ACTUALIZAR".
 
 ### Decisiones que ya se tomaron (no re-litigar)
 
@@ -94,6 +128,18 @@ completa por su camino real, y el candado de instancia única (probado matando e
   celdas de un ticket de 30 líneas por cada tecla (61 ms por escaneo, 103 ms por flecha).
   Si se toca `_refrescar_grilla_carrito`, mantener el criterio: la plata sale siempre de
   `self.carrito`, el dibujo es solo dibujo.
+  - **Gotcha real que costó una venta a ciegas:** las celdas del carrito (`celda_texto` en
+    `apps/theme.py`) son `tk.Entry` de **solo lectura**, no `Label` (para poder seleccionar/copiar
+    texto). Un `Entry` no tiene la opción `text`: hacer `celda.config(text=...)` no actualiza nada
+    (la celda queda vacía para siempre) y silenciosamente no vuelve a fallar, así que no saltaba en
+    los tests anteriores porque nunca se probó releer el contenido real de la celda tras un
+    refresco. Para escribirle texto a una celda hay que abrirla, escribir, volver a cerrarla —ver
+    `_escribir_celda()` en `apps/caja_carrito.py`— y para cambiarle el color de fondo hay que tocar
+    `readonlybackground`, no solo `bg` (es lo que Tk realmente pinta cuando el `Entry` está en modo
+    `readonly`). El total cobrado nunca estuvo mal —sale de `self.carrito`, no de la pantalla— pero
+    el cajero vendía sin ver el ticket, lo cual no es aceptable igual.
+  - **Al testear el carrito, no uses `celda.cget("text")`** (siempre da `""` en un `Entry`) — leé
+    `celda.get()`.
 - **Ninguna ventana se pide más grande que el área útil del escritorio** (`ajustar_ventana`
   en `apps/theme.py`, que le pregunta a Windows por el work area). En la PC del cliente
   (1366x768) el Panel del Dueño quedaba tapado por la barra de tareas. Las pestañas van
@@ -102,23 +148,24 @@ completa por su camino real, y el candado de instancia única (probado matando e
 - **`StockService` es el único ejecutable sin `--noconsole`, y es a propósito.** Con `--noconsole`
   se queda sin stdout, `install` falla al imprimir su primer mensaje y la instalación se aborta
   sin mostrar ningún error: el servicio simplemente nunca aparece. Está explicado en el .bat.
+- **`USB_Dueno` sigue siendo necesario aunque ya funcione Tailscale + `DuenoRemoto`.** Son
+  soluciones a problemas distintos: `DuenoRemoto` necesita que la PC del local esté viva y
+  prendida (es una ventana remota a la base real); `USB_Dueno` es para cuando esa PC **se rompió**
+  — trae su propia base y arranca en cualquier PC sin depender de que el local funcione. Sacarlo
+  dejaría a Leo sin panel el día que la PC del local falle, que es exactamente el escenario para el
+  que existe (misma lógica que `USB_Caja`).
 
 ## Lo que falta hacer
 
-**Ya instalado y funcionando en el local** (septiembre 2026): PC del local + laptop de Leo con
-Dueño Remoto, conectadas por Tailscale. Al instalar aparecieron dos cosas para recordar:
-la API remota **no habla HTTPS** (la dirección va con `http://`), y el token conviene pasarlo
-**copiando y pegando**, nunca tipeándolo (`l`/`I`/`1` y `O`/`0` se confunden y el error se ve
-como "no se pudo conectar").
-
 **Pendiente:**
-- [ ] Rehacer la build (`build\build_all.bat`, ahora son 8 ejecutables) y llevar el
-      `OtterActualizador` al local para aplicar los cambios de esta tanda.
 - [ ] Probar el circuito de emergencia de punta a punta desde pendrives de verdad: vender offline
       → "Preparar sincronización" → conciliar en el Maestro con `Ctrl+Shift+M`.
 - [ ] Configurar la impresora térmica POS-58 en la PC del local.
 - [ ] Escribir las ACLs de Tailscale antes de sumar un segundo cliente.
 - [ ] Cargar el token y el chat_id del bot de Telegram del cliente.
+- [ ] Traer al repo un test que arme el carrito, agregue una línea y lea `celda.get()` de cada
+      columna (no solo el dato en `self.carrito`) — el bug del carrito en blanco pasó screening
+      precisamente porque ningún test anterior releía el texto real dibujado en pantalla.
 
 **ARCA (facturación electrónica):**
 - [ ] El cliente **ya tiene un certificado real** de su sistema viejo en `c:\mmarket\feafip\`
@@ -138,13 +185,17 @@ como "no se pudo conectar").
 **Postergado (no urgente):** apps personales de Matías para la consola RG35XX-DS (un dashboard de
 clientes, una herramienta de notas). Se habló y se dejó para después.
 
+**Postergado (evaluado, no decidido):** hacer opcional el control de stock (toggle
+`[general] control_stock` en `config.ini`) para clientes que no quieren cargarlo (compran sin
+factura, no restan por rotura/vencimiento). Sin ese servicio no hay alertas de Telegram — eso ya
+se aceptó como consecuencia obvia. Recomendación cuando se retome: modificar el sistema actual en
+vez de bifurcarlo, un solo punto de control en `sales.cerrar_ticket()` + ocultar pestañas, con
+regresión completa antes de tocar producción.
+
 ## Cómo probar
 
-No hay suite de tests en el repo — se fue probando con scripts sueltos en un scratchpad temporal
-que **no sobrevive a la sesión**. La última tanda dejó 47 suites en verde (incluidas: carrito
-dibujado contra 100 operaciones al azar, migración de una base de 4587 productos con ventas,
-el actualizador sobre una instalación viva, y la pantalla de precios por la API remota).
-Para volver a probar acá:
+No hay suite de tests automatizados en el repo — se prueba con scripts sueltos en un scratchpad
+temporal que **no sobrevive a la sesión**. Para volver a armar el entorno acá:
 
 ```bash
 python3.12 -m venv venv && venv/bin/pip install -r requirements.txt
@@ -153,10 +204,16 @@ xvfb-run -a venv/bin/python <script>     # las apps son Tkinter, necesitan displ
 
 Las apps se pueden instanciar directo (`AppCaja()`, `AppDueno(backend=...)`) y manejar con
 `app.update()`; para probar la API remota se levanta con `remote_api.iniciar_servidor(...)` en un
-puerto libre. Los `messagebox` se reemplazan por stubs para que no bloqueen.
+puerto libre. Los `messagebox` se reemplazan por stubs para que no bloqueen. Para crear un
+producto de prueba sin pelearse con el esquema de `Productos`, usar
+`pos_core.products.crear_producto(codigo=..., nombre=..., precio_venta=..., stock_inicial=...,
+usuario=...)` en vez de un `INSERT` a mano (tiene columnas `NOT NULL` como `uuid_unico` que ese
+helper completa solo). Para aislar la base, `pos_core.paths.set_base_override(ruta_temporal)`
+antes de `pos_core.db.init_db()`.
 
-**Vale la pena traer esos tests al repo** la próxima vez que se toque algo serio: hoy cada cambio
-se revalida desde cero.
+**Vale la pena traer esos tests al repo** la próxima vez que se toque algo serio: cada cambio se
+revalida desde cero, y ya hubo un bug (el carrito en blanco) que un test de "¿se agregó al
+`self.carrito`?" no hubiera agarrado — hacía falta releer lo que quedó dibujado en pantalla.
 
 ## Cómo trabajar en este repo
 
@@ -167,3 +224,6 @@ se revalida desde cero.
   tiene un motivo (ver `build_all.bat` y el `--noconsole`).
 - Matías prefiere respuestas **cortas y concretas**. Cuando pide un resumen de lo hecho, que sea
   breve de verdad.
+- Matías compila y despliega él mismo desde Windows, guiado paso a paso por consola — no tiene
+  acceso de shell a este repo desde su lado salvo `git`/`PowerShell`/`PyInstaller`. Cuando haga
+  falta un comando, dárselo completo y copiable, no en pasos sueltos para armar.
