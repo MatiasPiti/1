@@ -234,3 +234,27 @@ def aplicar_migraciones(path: str = None) -> list:
                 except sqlite3.OperationalError as e2:
                     cambios.append(f"{tabla}.{nombre_col}: no se pudo agregar automáticamente ({e2})")
     return cambios
+
+
+def preparar_base(path: str = None) -> list:
+    """Lo que corre cada app al arrancar: crear la base si no está y, si ya
+    existe pero es de una versión anterior, ponerla al día.
+
+    init_db() sola NO alcanza: hace CREATE TABLE IF NOT EXISTS, así que
+    sobre una tabla que ya existe no agrega las columnas nuevas. En un
+    pendrive de emergencia reusado (base armada antes de un cambio de
+    esquema, ejecutable nuevo encima) eso se traduce en una app que abre
+    y vende bien, y recién revienta más tarde en la pantalla que usa la
+    columna nueva: pasó con subrubro/costo_sin_iva/margen_ganancia, donde
+    la pantalla de precios tiraba "no such column: subrubro".
+
+    Si la migración falla, el error NO se propaga: ante la duda la app
+    abre igual (una base sin poner al día vende; una app que no arranca a
+    las 8 de la mañana, no). Devuelve los cambios aplicados, o [] si no
+    hubo ninguno o si la migración no pudo correr.
+    """
+    init_db(path)
+    try:
+        return aplicar_migraciones(path)
+    except Exception:
+        return []

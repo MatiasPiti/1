@@ -362,8 +362,11 @@ python apps/master_caja/main.py        # ya se puede cobrar
 6. Crear accesos directos de `MaestroCaja.exe` para el cajero (sin ver la carpeta `database\`).
 
 **C) Preparar los USBs de emergencia:**
-1. Copiar `dist\USB_Caja\` completo a la raíz de un pendrive, y `dist\USB_Dueno\` a otro (o al
-   mismo, en carpetas separadas).
+1. Copiar `dist\USB_Caja\` completo a la raíz de un pendrive, y `dist\USB_Dueno\` a la raíz de
+   **otro**. Uno por pendrive, con el `.exe` en la raíz: así lo espera la detección automática
+   del USB de Mantenimiento (busca `USB_Caja.exe` / `USB_Dueno.exe` en la raíz de cada unidad,
+   no adentro de subcarpetas), y así no chocan entre sí las carpetas `_internal\` que genera
+   PyInstaller para cada app.
 2. Ejecutar cada uno una vez para que se cree su propio `database\stock.db` vacío.
 3. **Importante:** cargar en cada USB una copia actualizada de los productos (vía Excel) para que
    el cajero de emergencia pueda buscar y cobrar productos reales.

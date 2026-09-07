@@ -109,6 +109,20 @@ xcopy /E /I /Y dist\USB_Caja dist\USB_Mantenimiento\espejo_apps\USB_Caja >nul
 xcopy /E /I /Y dist\USB_Dueno dist\USB_Mantenimiento\espejo_apps\USB_Dueno >nul
 xcopy /E /I /Y dist\StockService dist\USB_Mantenimiento\espejo_apps\StockService >nul
 
+REM El espejo tiene que llevar SOLO programa, nunca datos. Al probar los
+REM .exe desde dist\, cada app se crea ahi mismo su config.ini, su
+REM database\, sus logs y sus tickets de prueba, y el xcopy de arriba se
+REM los lleva puestos: el USB de Mantenimiento terminaria copiandolos
+REM sobre la instalacion del cliente. Se limpian del espejo (no de dist\,
+REM que queda como esta para seguir probando).
+for %%A in (MaestroCaja MaestroDueno USB_Caja USB_Dueno StockService) do (
+    if exist dist\USB_Mantenimiento\espejo_apps\%%A\config.ini del /Q dist\USB_Mantenimiento\espejo_apps\%%A\config.ini
+    if exist dist\USB_Mantenimiento\espejo_apps\%%A\database rmdir /S /Q dist\USB_Mantenimiento\espejo_apps\%%A\database
+    if exist dist\USB_Mantenimiento\espejo_apps\%%A\logs rmdir /S /Q dist\USB_Mantenimiento\espejo_apps\%%A\logs
+    if exist dist\USB_Mantenimiento\espejo_apps\%%A\tickets rmdir /S /Q dist\USB_Mantenimiento\espejo_apps\%%A\tickets
+    if exist dist\USB_Mantenimiento\espejo_apps\%%A\SYNC_DATA rmdir /S /Q dist\USB_Mantenimiento\espejo_apps\%%A\SYNC_DATA
+)
+
 echo.
 echo Listo. Los ejecutables quedan en dist\NombreApp\NombreApp.exe
 echo Copia cada carpeta dist\MaestroCaja, dist\MaestroDueno, etc. a su

@@ -97,6 +97,33 @@ nuevo — documentados para no perder tiempo re-descubriéndolos:
   cerrar el `.exe` que está bloqueando (Task Manager si hace falta) y volver a apretar
   "ACTUALIZAR".
 
+### Revisión previa a armar los 3 USBs (septiembre 2026)
+
+Antes de que Matías grabara los pendrives se revisó todo el circuito USB y se encontraron
+tres cosas, las tres arregladas y con test que las cuida (ver `tests/`):
+
+- **El USB de Mantenimiento pisaba el `config.ini` real del cliente.** La lista de exclusiones
+  de `reparar_archivos_app` solo se aplicaba a las CARPETAS, no a los archivos sueltos: la
+  base (`database\`) estaba protegida, pero el `config.ini` de la raíz —donde viven el token
+  y la IP de Tailscale reales— se reemplazaba por el del espejo. Y el espejo trae el de
+  prueba, porque `build_all.bat` copiaba `dist\<App>\` entero y ahí queda todo lo que las
+  apps se crean al probarlas (`config.ini`, `database\`, `logs\`, `tickets\`). Resultado:
+  conectar el USB para reparar dejaba al Dueño Remoto sin conexión, sin decir nada.
+  Ahora el filtro corre también archivo por archivo Y el `.bat` limpia los datos del espejo.
+- **Un pendrive reusado rompía la pantalla de precios.** `init_db()` hace `CREATE TABLE IF NOT
+  EXISTS`: sobre una base que ya existe NO agrega las columnas nuevas. Con una base anterior
+  a septiembre y el ejecutable nuevo encima, la caja vendía bien pero Precios tiraba
+  `no such column: subrubro`. Ahora las cuatro apps arrancan con `pos_core.db.preparar_base()`
+  (init + migración), y si la migración falla **no** se propaga el error: la app abre igual.
+- **Reparar a mano la carpeta de un USB lo trataba como Maestro** y le copiaba adentro
+  `MaestroCaja\`, `MaestroDueno\` y `StockService\`. Ahora el tipo se deduce del contenido
+  (`tipo_de_instalacion`).
+
+Además: **un USB de emergencia por pendrive, con el `.exe` en la raíz.** La detección
+automática busca `USB_Caja.exe` / `USB_Dueno.exe` en la raíz de cada unidad, no en subcarpetas,
+y dos apps en la misma raíz chocarían sus carpetas `_internal\` de PyInstaller. El README decía
+que se podían poner las dos en un mismo pendrive: se corrigió.
+
 ### Decisiones que ya se tomaron (no re-litigar)
 
 - **El ticket queda con el formato que tiene.** El encabezado dice `OTTER` y el renglón dice
@@ -163,9 +190,10 @@ nuevo — documentados para no perder tiempo re-descubriéndolos:
 - [ ] Configurar la impresora térmica POS-58 en la PC del local.
 - [ ] Escribir las ACLs de Tailscale antes de sumar un segundo cliente.
 - [ ] Cargar el token y el chat_id del bot de Telegram del cliente.
-- [ ] Traer al repo un test que arme el carrito, agregue una línea y lea `celda.get()` de cada
+- [x] Traer al repo un test que arme el carrito, agregue una línea y lea `celda.get()` de cada
       columna (no solo el dato en `self.carrito`) — el bug del carrito en blanco pasó screening
       precisamente porque ningún test anterior releía el texto real dibujado en pantalla.
+      Hecho: `tests/test_usb_caja.py` (y seis pruebas más, ver `tests/README.md`).
 
 **ARCA (facturación electrónica):**
 - [ ] El cliente **ya tiene un certificado real** de su sistema viejo en `c:\mmarket\feafip\`
@@ -194,13 +222,17 @@ regresión completa antes de tocar producción.
 
 ## Cómo probar
 
-No hay suite de tests automatizados en el repo — se prueba con scripts sueltos en un scratchpad
-temporal que **no sobrevive a la sesión**. Para volver a armar el entorno acá:
+Las pruebas viven en `tests/` (scripts sueltos, sin framework: cada uno termina con código 0 si
+pasó). Detalle de qué cuida cada una en `tests/README.md`.
 
 ```bash
 python3.12 -m venv venv && venv/bin/pip install -r requirements.txt
-xvfb-run -a venv/bin/python <script>     # las apps son Tkinter, necesitan display
+xvfb-run -a venv/bin/python tests/correr_todos.py   # las apps son Tkinter, necesitan display
+xvfb-run -a venv/bin/python tests/test_usb_caja.py  # una sola, con su salida completa
 ```
+
+En Linux hace falta `python3-tk` instalado en el sistema y crear el venv con
+`--system-site-packages` (o el venv queda sin `tkinter` y no abre ninguna app).
 
 Las apps se pueden instanciar directo (`AppCaja()`, `AppDueno(backend=...)`) y manejar con
 `app.update()`; para probar la API remota se levanta con `remote_api.iniciar_servidor(...)` en un
@@ -209,11 +241,11 @@ producto de prueba sin pelearse con el esquema de `Productos`, usar
 `pos_core.products.crear_producto(codigo=..., nombre=..., precio_venta=..., stock_inicial=...,
 usuario=...)` en vez de un `INSERT` a mano (tiene columnas `NOT NULL` como `uuid_unico` que ese
 helper completa solo). Para aislar la base, `pos_core.paths.set_base_override(ruta_temporal)`
-antes de `pos_core.db.init_db()`.
+antes de `pos_core.db.preparar_base()`.
 
-**Vale la pena traer esos tests al repo** la próxima vez que se toque algo serio: cada cambio se
-revalida desde cero, y ya hubo un bug (el carrito en blanco) que un test de "¿se agregó al
-`self.carrito`?" no hubiera agarrado — hacía falta releer lo que quedó dibujado en pantalla.
+**Al agregar una prueba, que mire lo que se ve, no solo lo que se guardó**: ya hubo un bug (el
+carrito en blanco) que un test de "¿se agregó al `self.carrito`?" no hubiera agarrado — hacía
+falta releer el texto real dibujado en pantalla con `celda.get()`.
 
 ## Cómo trabajar en este repo
 

@@ -20,7 +20,7 @@ from tkinter import ttk, messagebox, filedialog
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from pos_core.db import init_db
+from pos_core.db import preparar_base
 from pos_core.dueno_backend import LocalBackend, RemoteError
 from pos_core import arca
 from apps.theme import (aplicar_tema, estriar_treeview, tag_fila,
@@ -1615,7 +1615,9 @@ if __name__ == "__main__":
     from pos_core.paths import set_base_override_to_parent_dir
     # Caja y Dueño Maestro comparten UNA sola DB (carpeta padre de instalación).
     set_base_override_to_parent_dir()
-    init_db()
+    # crea la base si falta y, si el pendrive/instalación trae una de una
+    # versión anterior, le agrega las columnas nuevas antes de abrir
+    preparar_base()
     if not _unica_instancia("dueno", "el Panel del Dueño"):
         raise SystemExit(0)
     AppDueno().mainloop()

@@ -16,7 +16,7 @@ from tkinter import messagebox
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import apps.master_dueno.main as maestro_mod
-from pos_core.db import init_db
+from pos_core.db import preparar_base
 from pos_core import sync_export
 
 maestro_mod.ORIGEN = "USB_DUENO"
@@ -81,7 +81,9 @@ def _unica_instancia(nombre_app: str, titulo: str) -> bool:
 
 
 if __name__ == "__main__":
-    init_db()
+    # crea la base si falta y, si el pendrive/instalación trae una de una
+    # versión anterior, le agrega las columnas nuevas antes de abrir
+    preparar_base()
     if not _unica_instancia("usb_dueno", "el Panel del Dueño del USB"):
         raise SystemExit(0)
     AppUsbDueno().mainloop()

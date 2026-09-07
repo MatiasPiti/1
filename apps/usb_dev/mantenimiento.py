@@ -61,12 +61,31 @@ _MAPA_ESPEJO = {
     "USB_CAJA": [("", "USB_Caja")],
     "USB_DUENO": [("", "USB_Dueno")],
 }
-_EXCLUIR_DE_REPARACION_ARCHIVOS = {"database", "sync_data", "logs", "config.ini",
+# Lo que NUNCA se copia desde la copia de referencia a la instalación: son
+# datos del cliente, no programa. Vale para carpetas Y para archivos
+# sueltos (ver reparar_archivos_app: si solo se filtran las carpetas, el
+# config.ini del espejo termina pisando el del cliente).
+_EXCLUIR_DE_REPARACION_ARCHIVOS = {"database", "sync_data", "logs", "tickets", "config.ini",
                                     "reporte_mantenimiento.txt", "sincronizacion_exitosa.txt"}
 
 
 def _timestamp() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def tipo_de_instalacion(carpeta: str) -> str:
+    """Qué clase de instalación es la carpeta elegida a mano.
+
+    Importa porque el tipo decide QUÉ se copia desde espejo_apps: dar por
+    sentado "MAESTRO" sobre la carpeta de un USB de emergencia le metía
+    adentro MaestroCaja\\, MaestroDueno\\ y StockService\\ — las apps
+    equivocadas, en un pendrive que no las usa.
+    """
+    if os.path.isfile(os.path.join(carpeta, "USB_Caja.exe")):
+        return "USB_CAJA"
+    if os.path.isfile(os.path.join(carpeta, "USB_Dueno.exe")):
+        return "USB_DUENO"
+    return "MAESTRO"
 
 
 # ---------------------------------------------------------------------- #
@@ -382,6 +401,14 @@ def reparar_archivos_app(carpeta_instalacion: str, tipo_instalacion: str,
             carpetas[:] = [c for c in carpetas if c.lower() not in _EXCLUIR_DE_REPARACION_ARCHIVOS]
             rel = os.path.relpath(raiz, origen)
             for nombre_archivo in archivos:
+                # El filtro va también archivo por archivo, no solo por
+                # carpeta: el config.ini del cliente vive suelto en la raíz
+                # de la instalación y tiene el token y la IP REALES del
+                # Dueño Remoto. Pisarlo con el del espejo (que es el de
+                # prueba del build) deja al dueño sin conexión al local, y
+                # no se nota hasta que alguien lo intenta usar.
+                if nombre_archivo.lower() in _EXCLUIR_DE_REPARACION_ARCHIVOS:
+                    continue
                 origen_archivo = os.path.join(raiz, nombre_archivo)
                 destino_dir = os.path.join(destino, rel) if rel != "." else destino
                 destino_archivo = os.path.join(destino_dir, nombre_archivo)
@@ -510,7 +537,7 @@ class AppMantenimiento(tk.Tk):
             return
         self.salida.delete("1.0", "end")
         try:
-            log = ejecutar_mantenimiento(carpeta, "MAESTRO")
+            log = ejecutar_mantenimiento(carpeta, tipo_de_instalacion(carpeta))
         except Exception as e:
             messagebox.showerror("Error inesperado", str(e))
             return

@@ -24,7 +24,7 @@ from tkinter import ttk, messagebox, simpledialog
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from pos_core.db import init_db
+from pos_core.db import preparar_base
 from pos_core import sales, audit, ticket_printer
 from apps.theme import (COLORS, aplicar_tema, estriar_treeview, tag_fila,
                          habilitar_copiar_pegar_global, abrir_dialogo_impresora,
@@ -367,7 +367,9 @@ if __name__ == "__main__":
     from pos_core.paths import set_base_override_to_parent_dir
     # Caja y Dueño Maestro comparten UNA sola DB (carpeta padre de instalación).
     set_base_override_to_parent_dir()
-    init_db()
+    # crea la base si falta y, si el pendrive/instalación trae una de una
+    # versión anterior, le agrega las columnas nuevas antes de abrir
+    preparar_base()
     if not _unica_instancia("caja", "Otter Caja"):
         raise SystemExit(0)
     AppCaja().mainloop()
