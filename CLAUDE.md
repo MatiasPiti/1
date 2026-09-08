@@ -278,6 +278,7 @@ del sistema del cliente. Matías las pidió así: separadas y ordenadas.
 | **Chuleta Otter** | `MatiasPiti/chuletas_diagnosticos` | Ocho secciones de diagnóstico, **offline**. Sin permiso de INTERNET a propósito: es la garantía de que funciona con la red caída. El contenido está todo en `Chuleta.kt`. |
 | **Ventas Otter** | `MatiasPiti/dashboard-ventas` | Total vendido hoy, más vendidos, y stock ≤ 5. Usa `reports.resumen_dashboard` y `products.listar_stock`, que **ya estaban en la allowlist**: se instala y anda, sin recompilar nada en el local. El stock va en un botón aparte porque trae el catálogo entero (4587 productos). |
 | **Precios Otter** | `MatiasPiti/calculadora-precios` | La cadena Costo S/IVA → Precio Costo → % Ganancia → Precio Final, **offline**. `Precios.kt` es un port de `pos_core/precios.py`, **verificado contra el original con 1037 casos al azar, cero diferencias**. |
+| **Presupuestos Otter** | `MatiasPiti/presupuestos-otter` | Cotizar un cliente nuevo, **offline**. Ver abajo: es la única que toca el negocio de Matías, no el del cliente. |
 
 **Se compilan sin PC.** Ninguna necesita Android Studio: cada repo tiene
 `.github/workflows/apk.yml`, que en cada push a `main` compila el APK en los servidores de GitHub
@@ -305,7 +306,46 @@ así que no puede haber deriva. Se le metió un bug a propósito para confirmar 
 agarró el caso caro, `761.917` leído como 761,92.
 
 **El criterio, para la próxima app:** si una parte de la lógica se puede escribir sin dependencias
-de Android, conviene separarla así — se verifica de verdad en vez de compilarse a ciegas.
+de Android, conviene separarla así — se verifica de verdad en vez de compilarse a ciegas. Se
+aplicó también en Presupuestos Otter.
+
+### Cuánto cobra Matías por el sistema (para Presupuestos Otter)
+
+Esto es el negocio de Matías, no el del cliente, y **es dato suyo**: si cambia, cambia acá y en la
+app (los precios son editables adentro de la app y quedan guardados).
+
+- **Instalación: la suma de las partes que el cliente pida.** El sistema completo —el que se le
+  instaló a El Galpón Del Nono— son **USD 800**.
+- **Abono mensual: USD 95, para todos, obligatorio.** Cubre mantenimiento, soporte y
+  actualizaciones personalizadas.
+- El reparto por módulo que trae la app de fábrica suma exactamente esos 800 y **lo propuso
+  Claude, no Matías**: 350 el núcleo (Caja + Panel), 90 el servicio de stock + Telegram, 90 el
+  Dueño Remoto, 80 los USBs, 120 ARCA y 70 la migración del catálogo. Es un punto de partida para
+  editar, no un precio acordado.
+- Se cotiza **en USD y en pesos**. La cotización del dólar se carga a mano —nunca desde una API,
+  que puede romperse o quedar bloqueada— y la app avisa cuando la última tiene más de una semana.
+
+La pantalla del cliente describe cada parte **por lo que le resuelve al negocio**, no por cómo se
+llama el ejecutable ("seguís vendiendo desde un pendrive si la computadora falla", no
+"`USB_Caja`"), y va rotada 180° para leerla desde el otro lado del mostrador. Si el aparato expone
+una segunda pantalla (la de arriba de la RG35XX-DS) el resumen va ahí; **eso no se pudo probar**,
+así que si no la encuentra usa la pantalla completa y un toque da vuelta el resumen.
+
+### Evaluado y postergado: la app de góndola
+
+Escanear un código de barras con la cámara para ver y cambiar precios caminando el local. Es la
+idea original de Matías (venía de querer un lector en la consola). **Matías la postergó**, pero el
+análisis ya está hecho:
+
+- Sale **sin tocar la PC del cliente**: `precios.buscar_para_precios` y `precios.actualizar_precios`
+  ya están en la allowlist.
+- **Solo celular, no la RG:** la consola no tiene cámara.
+- **Escribe en la base real del negocio**, así que la confirmación tiene que mostrar el nombre del
+  producto en grande y el precio de antes y después: un escaneo equivocado más un precio mal
+  tecleado cambia lo que cobra la caja al instante.
+- **`actualizar_precios` no registra quién cambió el precio** — solo pisa `actualizado_en`. Con el
+  Panel del Dueño alcanzaba (una PC, en el local); con un celular en el bolsillo, ya no tanto.
+  Arreglarlo implica tocar el sistema del cliente y recompilar: es una decisión aparte.
 
 **Lo que NO se puede hacer, y por qué** (evaluado, descartado): una app en la RG conectada **por
 USB** que repare la PC sola. Cuando se conecta la RG a la PC, Windows es el *host* y la RG el
