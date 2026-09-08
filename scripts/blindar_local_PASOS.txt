@@ -1,0 +1,119 @@
+===========================================================
+ BLINDAR LA PC DEL LOCAL - PASOS
+ (para que el Dueno Remoto deje de caerse solo)
+===========================================================
+
+Se hace UNA sola vez, EN LA PC DEL LOCAL.
+Tiempo: 5 minutos.
+
+
+-----------------------------------------------------------
+PASO 0 - ABRIR POWERSHELL COMO ADMINISTRADOR
+-----------------------------------------------------------
+Inicio -> escribir "PowerShell" -> clic derecho sobre
+"Windows PowerShell" -> "Ejecutar como administrador".
+
+OJO: se abre en C:\Windows\system32, NO en la carpeta donde
+lo abriste antes. Por eso el paso 1 es moverse.
+
+
+-----------------------------------------------------------
+PASO 1 - IR AL REPO Y TRAER LOS CAMBIOS
+-----------------------------------------------------------
+    cd C:\ruta\al\repo
+    git pull origin claude/memoria-repositorio-jhi4i9
+
+(la carpeta del repo es donde esta build\build_all.bat)
+
+
+-----------------------------------------------------------
+PASO 2 - CORRER EL SCRIPT
+-----------------------------------------------------------
+    powershell -ExecutionPolicy Bypass -File .\scripts\blindar_local.ps1
+
+Hace 4 cosas:
+  1. El servicio arranca con Windows y se reintenta solo.
+  2. La PC no se suspende mas.
+  3. Instala un watchdog que cada 5 min levanta el servicio
+     si quedo parado.
+  4. Deja Tailscale en modo "unattended".
+
+NO toca la base de datos ni el config.ini.
+
+
+-----------------------------------------------------------
+PASO 3 - LEER LA VERIFICACION
+-----------------------------------------------------------
+Al final imprime el estado. Tiene que decir:
+
+  [ ] SistemaDualStockService ... Running ... Automatic
+  [ ] OtterWatchdog ... Ready
+  [ ] una linea del 8765 con LISTENING
+
+Si falta alguna de las tres, avisar a Matias con el texto
+del error tal cual aparece.
+
+
+-----------------------------------------------------------
+PASO 4 - CONFIRMAR TAILSCALE A MANO
+-----------------------------------------------------------
+Icono de Tailscale (al lado del reloj) -> que este tildado
+"Run unattended" / "Ejecutar sin supervision".
+
+El script lo intenta, pero segun la version puede no
+aplicar. Esta es la causa que mas preocupa: sin esto,
+Tailscale se desconecta cuando se cierra la sesion de
+Windows y la PC queda invisible aunque este encendida.
+
+
+-----------------------------------------------------------
+PASO 5 - LA PRUEBA DE VERDAD
+-----------------------------------------------------------
+Esto es lo que confirma que se arreglo (el paso 3 no
+alcanza):
+
+  1. CERRAR SESION en la PC del local.
+     Cerrar sesion, NO apagar.
+  2. Desde el celular (con Tailscale conectado), abrir:
+        http://100.91.59.19:8765/health
+     o mirar el semaforo en la app.
+
+  Si contesta algo (aunque diga "token invalido"), el
+  servicio esta vivo con la sesion cerrada: quedo bien.
+  Si no contesta, avisar.
+
+Lo que sobrevive a cerrar sesion, sobrevive a la noche.
+
+
+-----------------------------------------------------------
+PASO 6 - DENTRO DE UNOS DIAS
+-----------------------------------------------------------
+    Get-Content C:\SistemaDual\watchdog\watchdog.log -Tail 20
+
+  - Vacio  -> nunca hizo falta, todo bien.
+  - Con lineas -> dice cuantas veces se cayo solo y a que
+    hora. Ese dato es el que hoy no teniamos.
+
+
+===========================================================
+ SI ALGO FALLA
+===========================================================
+Copiar el error TAL CUAL aparece y mandarlo. No hace falta
+interpretarlo.
+
+Recordatorio de comandos sueltos, por si hace falta a mano:
+
+  Estado del servicio:
+      Get-Service SistemaDualStockService
+
+  Arrancarlo (como administrador):
+      Start-Service SistemaDualStockService
+
+  Ver si hay algo escuchando:
+      netstat -ano | findstr 8765
+
+  OJO: en PowerShell, "sc" NO es el comando de servicios
+  (es un alias de Set-Content, que escribe archivos). Para
+  servicios: Get-Service / Start-Service, o sc.exe con el
+  .exe explicito.
+===========================================================
