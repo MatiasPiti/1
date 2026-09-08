@@ -46,6 +46,10 @@ POS + control de stock en Python/Tkinter/SQLite que compila a **9 ejecutables Wi
    El instalador genera uno nuevo solo. El token y la IP de Tailscale **reales** del cliente viven
    únicamente en su `config.ini` — nunca se los pide ni se los repite en un chat; se transfieren
    copiando y pegando directo en la PC (nunca tipeados: `l`/`I`/`1` y `O`/`0` se confunden).
+   **Una captura de pantalla de la consola es un chat igual**: en septiembre volvieron a quedar
+   expuestos así el token de `[remoto]` y el del bot de Telegram, y hay que rotar los dos (está en
+   los pendientes). Al mandar capturas de esa pantalla, tapar esas líneas. Y al rotar un token,
+   generarlo **sin caracteres confundibles** si va a haber que tipearlo en un celular.
 5. La cuenta de Tailscale es de Matías y es la llave de la red de todos los clientes:
    **2FA activado**, y **escribir las ACLs antes de sumar un segundo cliente** — si no, los
    clientes se ven entre sí.
@@ -63,6 +67,10 @@ Todo está en `main`, commiteado y pusheado. La rama `claude/dual-pos-portable-e
 quedó vieja (tiene solo dos subidas manuales de archivos por la web): **el trabajo va a `main`**.
 
 Últimos commits relevantes:
+- `blindar_local` — script que cierra las tres causas por las que el Dueño Remoto se caía solo
+  (ver abajo). **Falta correrlo en la PC del local.**
+- Revisión de los 3 USBs antes de grabarlos: tres fallos encontrados y arreglados, con `tests/`
+  traído al repo (7 pruebas, todas en verde).
 - `16d9652` — memoria del proyecto en `CLAUDE.md`.
 - `3799aae` — pantalla de precios sin depender del Excel, ventanas que entran en pantallas chicas,
   scroll del carrito con barra + flechas.
@@ -96,6 +104,46 @@ nuevo — documentados para no perder tiempo re-descubriéndolos:
   instalación anterior — es el comportamiento correcto, ante la duda no rompe nada. Solución:
   cerrar el `.exe` que está bloqueando (Task Manager si hace falta) y volver a apretar
   "ACTUALIZAR".
+
+### El Dueño Remoto se cayó dos veces en el mismo día (septiembre 2026)
+
+Leo llegó a su casa y no pudo conectar, con Tailscale **en verde de las dos puntas** y la PC del
+local encendida. Pasó dos veces el mismo día. Lo que se aprendió:
+
+- **Tailscale en verde solo dice que la VPN está bien.** No dice que haya algo escuchando. Todo el
+  tiempo que se pierde mirando IPs y tokens es tiempo perdido: el problema está más arriba.
+- **"La PC está encendida" no alcanza.** Suspendida, hibernada o con la sesión cerrada es, para la
+  red, lo mismo que apagada.
+- **La causa de las dos veces fue la misma:** el `StockService` parado. La primera, porque para
+  recompilar hay que pararlo y nadie lo relanza (el `.bat` no lo hace, el `OtterActualizador`
+  tampoco). Es el gotcha ya documentado arriba, ahora confirmado en producción dos veces.
+
+**El diagnóstico que separa las causas en dos pasos** (se puede hacer entero desde el celular):
+
+1. App de Tailscale: ¿el nodo del local figura **online**? Si dice offline, la PC está dormida o
+   Tailscale se cayó ahí — no se arregla en remoto.
+2. Navegador: `http://<ip>:8765/health`. Si contesta **algo**, aunque sea
+   `{"ok": false, "error": "token inválido"}`, **el servicio está vivo** (rechaza porque el
+   navegador no manda el token) y el problema es del lado del Dueño Remoto. Si no carga nada, el
+   servicio está caído.
+
+Desde una PC el equivalente es `Test-NetConnection <ip> -Port 8765`: **`PingSucceeded: True` con
+`TcpTestSucceeded: False` significa exactamente "la red llega, no hay nada escuchando"**.
+
+**El blindaje quedó en `scripts/blindar_local.ps1`** (con sus pasos en texto plano al lado, en
+`scripts/blindar_local_PASOS.txt`). Se corre una vez, como administrador, en la PC del local, y
+cierra las tres causas: servicio en `Automatic` + reintentos, una tarea programada `OtterWatchdog`
+que cada 5 minutos lo levanta si quedó parado (y deja registro en
+`C:\SistemaDual\watchdog\watchdog.log`), la PC que no se suspende más, y Tailscale en modo
+*unattended* — sin esto último Tailscale se desconecta al cerrar la sesión de Windows, que es el
+sospechoso principal del caso "prendida pero no responde". **El script no está probado en Windows
+real todavía.**
+
+Un detalle que confundió el diagnóstico: **cada app guarda su `config.ini` al lado de su propio
+`.exe`** (las tres del Maestro son la excepción: comparten el de la carpeta padre). En la laptop
+de Leo el config vive en `C:\Otter\DuenoRemoto\`, no en `C:\SistemaDual\` — y **el Dueño Remoto
+solo lo escribe cuando logra conectar por primera vez**, así que "no existe" puede significar "esta
+instalación nunca conectó", no que se haya borrado algo.
 
 ### Revisión previa a armar los 3 USBs (septiembre 2026)
 
@@ -185,6 +233,14 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
 ## Lo que falta hacer
 
 **Pendiente:**
+- [ ] **Correr `scripts/blindar_local.ps1` en la PC del local** (como administrador) y verificar
+      con la prueba real: cerrar sesión —no apagar— y confirmar desde el celular que el `/health`
+      sigue contestando. Nunca se ejecutó en Windows todavía.
+- [ ] **Rotar los dos tokens del cliente**: el de `[remoto]` y el del bot de Telegram quedaron
+      visibles en una captura de pantalla mandada por chat. El de Telegram se revoca con `/revoke`
+      en @BotFather; el de `[remoto]` se cambia en `C:\SistemaDual\config.ini`, se reinicia el
+      servicio **y hay que cargar el nuevo también en la laptop de Leo** (si no, se queda sin
+      panel). Hacerlo cuando estén las dos máquinas a mano.
 - [ ] Probar el circuito de emergencia de punta a punta desde pendrives de verdad: vender offline
       → "Preparar sincronización" → conciliar en el Maestro con `Ctrl+Shift+M`.
 - [ ] Configurar la impresora térmica POS-58 en la PC del local.
@@ -210,8 +266,36 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
 - [ ] Quedaron **8 productos afuera por colisión de código**: cargarlos a mano.
 - [ ] Hacer el inventario físico: el catálogo entra con stock 0.
 
-**Postergado (no urgente):** apps personales de Matías para la consola RG35XX-DS (un dashboard de
-clientes, una herramienta de notas). Se habló y se dejó para después.
+## Las herramientas de Matías (consola RG35XX-DS y celular)
+
+Dejaron de estar postergadas: la RG35XX-DS **corre Android 14**, así que son apps Android normales
+y andan igual en el celular. **Viven en repos propios, uno por app** — no en este repo, que es el
+del sistema del cliente. Matías las pidió así: separadas y ordenadas.
+
+| App | Repo | Para qué |
+|---|---|---|
+| **Semáforo Clientes** | `MatiasPiti/semaforo-clientes` | Lista de clientes; para cada uno consulta `GET /health` de su `remote_api` cada 20s. Verde = OK, amarillo = PC viva con el servicio caído, violeta = token mal, rojo = sin respuesta. |
+| **Chuleta Otter** | `MatiasPiti/chuletas_diagnosticos` | Ocho secciones de diagnóstico, **offline**. Sin permiso de INTERNET a propósito: es la garantía de que funciona con la red caída. El contenido está todo en `Chuleta.kt`. |
+
+**Se compilan sin PC.** Ninguna necesita Android Studio: cada repo tiene
+`.github/workflows/apk.yml`, que en cada push a `main` compila el APK en los servidores de GitHub
+y lo publica como *release*. Desde el navegador del celular se toca el `.apk` y se instala (hay
+que permitir "apps de origen desconocido"). Es un APK de debug: uso propio, no Play Store.
+
+Los datos de cada cliente (IP de Tailscale, puerto, token) se cargan a mano en la app, en el
+dispositivo. No están en ningún repo.
+
+**Lo que NO se puede hacer, y por qué** (evaluado, descartado): una app en la RG conectada **por
+USB** que repare la PC sola. Cuando se conecta la RG a la PC, Windows es el *host* y la RG el
+*dispositivo*: en esa dirección Android no puede ejecutar nada en Windows. Las vueltas posibles
+son hacerse pasar por un teclado USB (escribe a ciegas, no puede leer la respuesta, así que no hay
+"comprueba y rehace") o compartir red por USB, que es lo mismo que ya da Tailscale. Y hay una
+trampa de fondo: **la API remota vive adentro del `StockService`, así que si lo que se cayó es el
+servicio, ninguna app puede pedirle que se arranque a sí mismo.** Por eso el watchdog corre en la
+PC y no en la consola. Si algún día se hace un "arreglar desde la app", va con reglas fijas y
+lista blanca de acciones, nunca con un modelo decidiendo solo: un agente con permiso para ejecutar
+cosas en la PC de la caja es exactamente lo que puede dejar el negocio cerrado a las 8 de la
+mañana.
 
 **Postergado (evaluado, no decidido):** hacer opcional el control de stock (toggle
 `[general] control_stock` en `config.ini`) para clientes que no quieren cargarlo (compran sin
