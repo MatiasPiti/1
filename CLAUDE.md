@@ -276,6 +276,7 @@ del sistema del cliente. Matías las pidió así: separadas y ordenadas.
 |---|---|---|
 | **Semáforo Clientes** | `MatiasPiti/semaforo-clientes` | Lista de clientes; para cada uno consulta `GET /health` de su `remote_api` cada 20s. Verde = OK, amarillo = PC viva con el servicio caído, violeta = token mal, rojo = sin respuesta. |
 | **Chuleta Otter** | `MatiasPiti/chuletas_diagnosticos` | Ocho secciones de diagnóstico, **offline**. Sin permiso de INTERNET a propósito: es la garantía de que funciona con la red caída. El contenido está todo en `Chuleta.kt`. |
+| **Ventas Otter** | `MatiasPiti/dashboard-ventas` | Total vendido hoy, más vendidos, y stock ≤ 5. Usa `reports.resumen_dashboard` y `products.listar_stock`, que **ya estaban en la allowlist**: se instala y anda, sin recompilar nada en el local. El stock va en un botón aparte porque trae el catálogo entero (4587 productos). |
 
 **Se compilan sin PC.** Ninguna necesita Android Studio: cada repo tiene
 `.github/workflows/apk.yml`, que en cada push a `main` compila el APK en los servidores de GitHub
@@ -283,7 +284,12 @@ y lo publica como *release*. Desde el navegador del celular se toca el `.apk` y 
 que permitir "apps de origen desconocido"). Es un APK de debug: uso propio, no Play Store.
 
 Los datos de cada cliente (IP de Tailscale, puerto, token) se cargan a mano en la app, en el
-dispositivo. No están en ningún repo.
+dispositivo. No están en ningún repo. **Costo asumido de tenerlas separadas: al rotar un token
+hay que cargarlo en cada app que lo use** (hoy el semáforo y el dashboard), además de la laptop
+de Leo. Matías eligió repos y APKs separadas a propósito, para tener todo seccionado.
+
+**Ninguna de las tres se probó todavía contra el local real** — compilan y el APK sale solo, pero
+el primer contacto con la API lo hace Matías.
 
 **Lo que NO se puede hacer, y por qué** (evaluado, descartado): una app en la RG conectada **por
 USB** que repare la PC sola. Cuando se conecta la RG a la PC, Windows es el *host* y la RG el
