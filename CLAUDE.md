@@ -67,10 +67,13 @@ Todo está en `main`, commiteado y pusheado. La rama `claude/dual-pos-portable-e
 quedó vieja (tiene solo dos subidas manuales de archivos por la web): **el trabajo va a `main`**.
 
 Últimos commits relevantes:
-- `blindar_local` — script que cierra las tres causas por las que el Dueño Remoto se caía solo
-  (ver abajo). **Falta correrlo en la PC del local.**
+- **Respaldo diario verificado + cartel de arranque** — el sistema no tenía NINGUNA copia
+  automática y con la base rota no abría en silencio. Ver la sección del riesgo más grande, abajo.
+  **Falta recompilar y actualizar la PC del local: hasta entonces no está andando allá.**
+- `blindar_local` — reescrito: ahora vigila el PUERTO y no el estado del servicio, guarda la
+  evidencia antes de tocar nada, y cubre batería. **Falta correrlo en la PC del local.**
 - Revisión de los 3 USBs antes de grabarlos: tres fallos encontrados y arreglados, con `tests/`
-  traído al repo (7 pruebas, todas en verde).
+  traído al repo (hoy 9 pruebas, todas en verde).
 - `16d9652` — memoria del proyecto en `CLAUDE.md`.
 - `3799aae` — pantalla de precios sin depender del Excel, ventanas que entran en pantallas chicas,
   scroll del carrito con barra + flechas.
@@ -133,11 +136,72 @@ Desde una PC el equivalente es `Test-NetConnection <ip> -Port 8765`: **`PingSucc
 **El blindaje quedó en `scripts/blindar_local.ps1`** (con sus pasos en texto plano al lado, en
 `scripts/blindar_local_PASOS.txt`). Se corre una vez, como administrador, en la PC del local, y
 cierra las tres causas: servicio en `Automatic` + reintentos, una tarea programada `OtterWatchdog`
-que cada 5 minutos lo levanta si quedó parado (y deja registro en
-`C:\SistemaDual\watchdog\watchdog.log`), la PC que no se suspende más, y Tailscale en modo
-*unattended* — sin esto último Tailscale se desconecta al cerrar la sesión de Windows, que es el
-sospechoso principal del caso "prendida pero no responde". **El script no está probado en Windows
-real todavía.**
+cada 5 minutos (deja registro en `C:\SistemaDual\watchdog\watchdog.log`, que ahora rota al MB),
+la PC que no se suspende más, y Tailscale en modo *unattended* — sin esto último Tailscale se
+desconecta al cerrar la sesión de Windows, que es el sospechoso principal del caso "prendida pero
+no responde". **El script no está probado en Windows real todavía.**
+
+**La primera versión del blindaje no alcanzaba, y se reescribió.** Lo que estaba mal:
+
+- **Vigilaba el estado del servicio, no el puerto.** La API remota se levanta ADENTRO del servicio
+  con `iniciar_si_esta_habilitado()`, que loguea y sigue si falla. O sea que el servicio puede
+  decir `Running`, el watchdog darlo por bueno, y que no haya nadie escuchando en el 8765: para
+  Leo eso es "no me puedo conectar" y para el watchdog era todo normal. **Ahora abre el puerto**,
+  que es lo único que le importa al Dueño Remoto. Con dos frenos: no reinicia si `[remoto]
+  habilitado` no es `true` (si no, reiniciaría cada 5 minutos para siempre), y se planta después
+  de 3 reinicios en 24 hs — si el puerto sigue muerto, reiniciar no es la solución.
+- **`tailscale up --unattended` casi seguro fallaba.** Tailscale contesta que hay que repetir
+  TODOS los flags no-default y no aplica nada. Va con `tailscale set --unattended=true`, que
+  cambia una sola preferencia, y `up` queda de respaldo.
+- **`powercfg` solo cubría enchufado.** Si es notebook, se dormía igual apenas se corta la luz,
+  que es justo cuando más importa. Ahora AC y DC.
+- **Se perdía la evidencia.** El paso 0 guarda `sc.exe qc`, el estado del servicio, la cola del
+  log y 7 días de errores del sistema en
+  `C:\SistemaDual\watchdog\estado_antes_del_blindaje.txt` **antes** de cambiar nada. Es la
+  última chance de saber por qué se paró la segunda vez: después el `StartupType` queda en
+  `Automatic` y esa pista desaparece. **Ese archivo hay que mirarlo.**
+
+### El riesgo más grande no era ese: no había NINGÚN respaldo (septiembre 2026)
+
+Buscando por qué se cayó el Dueño Remoto apareció algo peor, que nunca habíamos mirado: **el
+sistema no tenía copias de seguridad automáticas**. La base se copiaba solo cuando corría
+`OtterActualizador` o cuando el USB de Mantenimiento la encontraba corrupta — o sea casi nunca. Y
+el rescate de último recurso del USB (`_restaurar_backup_mas_reciente`) buscaba justamente esas
+copias, así que el día que hiciera falta no iba a encontrar nada. El disco que falla se lleva las
+ventas, el stock y los 4587 productos que costó migrar del sistema viejo.
+
+Peor todavía, la otra mitad: con la base dañada los `.exe` **están compilados sin consola**, así
+que el cajero hacía doble clic a las 8 de la mañana y no pasaba absolutamente nada. Ni un cartel,
+ni un archivo. Verificado, no supuesto.
+
+Lo que quedó hecho:
+
+- **`pos_core/respaldo.py`** — copia diaria adentro del `StockService`, que es lo único que ya
+  corre 24/7 y arranca con Windows (no depende de que nadie se acuerde). Usa la API de backup de
+  SQLite y no una copia de archivo (con WAL, copiar el `.db` suelto puede llevarse una base a
+  medio escribir), **la verifica con `integrity_check` antes de darla por buena**, escribe a un
+  temporal para no dejar una copia incompleta con nombre de copia buena, conserva 14 días y no
+  corre con menos de 300 MB libres. Van en `backups\`, fuera de `database\`.
+- **`pos_core/arranque.py`** — envuelve el arranque de las cuatro apps. Si algo falla antes de que
+  exista la ventana, **lo dice en un cartel**, lo escribe en `logs/arranque.log`, y si el problema
+  es la base ilegible ofrece restaurar la copia mostrando de qué día es y qué se perdería. La base
+  dañada no se borra: queda al lado como `stock.db.danada_<sello>`. Antes de reemplazar el archivo
+  llama a `db.cerrar_conexion()` — en Windows, pisar un archivo abierto falla, y eso rompía la
+  restauración justo cuando tiene que funcionar.
+- **El USB de Mantenimiento**, tres cosas del mismo tipo que el bug del `config.ini`: ya no puede
+  pisar `backups\` del cliente con los del espejo; el informe ahora **dice si el negocio está
+  respaldado y desde cuándo** (una copia de tres semanas es casi lo mismo que ninguna, y si está
+  atrasada lo más probable es que el servicio esté parado); el rescate de último recurso mira
+  también las copias diarias; y **cada paso va aislado**, porque con la base rota y sin ninguna
+  copia el mantenimiento moría con un traceback y sin informe, justo cuando el informe es lo único
+  que queda.
+- **Los logs rotan.** `stock_daemon.log` y el del watchdog escribían para siempre. Un disco lleno
+  es una de las formas de corromper una base SQLite en uso: el remedio no puede causar la
+  enfermedad.
+
+**Un susto que no era**: `PRAGMA synchronous` nunca se toca en el código, pero el default de
+SQLite es `FULL` (verificado, no supuesto), así que un corte de luz **no** pierde ventas ya
+cobradas. No hay nada que hacer ahí.
 
 Un detalle que confundió el diagnóstico: **cada app guarda su `config.ini` al lado de su propio
 `.exe`** (las tres del Maestro son la excepción: comparten el de la carpeta padre). En la laptop
@@ -246,10 +310,25 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
 - [ ] Configurar la impresora térmica POS-58 en la PC del local.
 - [ ] Escribir las ACLs de Tailscale antes de sumar un segundo cliente.
 - [ ] Cargar el token y el chat_id del bot de Telegram del cliente.
+- [ ] **Recompilar y actualizar la PC del local con el respaldo diario y el cartel de arranque.**
+      Nada de eso está andando en el local hasta que Matías recompile (`build\build_all.bat`) y
+      pase el `OtterActualizador`. Después, confirmar que a las 24 hs exista
+      `C:\SistemaDual\backups\stock_<fecha>.db`.
+- [ ] **Decidir dónde va una copia FUERA de la PC.** Las copias diarias protegen contra la base
+      dañada, un borrado o un bug, pero **están en el mismo disco**: no cubren que el disco muera
+      ni que se roben la máquina. Las dos opciones sensatas son un pendrive que quede puesto
+      siempre, o copiar a la PC de Matías por Tailscale. Es una decisión, no código.
+- [ ] **Nadie se entera de nada.** Telegram solo avisa umbrales de stock (`revisar_umbrales_y_alertar`)
+      y encima está sin configurar. No hay ningún aviso de "el servicio se cayó", "hace 3 días que
+      no hay copia" ni "el disco está lleno": todo queda escrito en logs que nadie lee. La app
+      Semáforo Clientes tapa una parte, pero solo mientras Matías la mire. Cuando esté el token de
+      Telegram, lo barato es mandar por ahí lo que hoy va al `watchdog.log`.
+- [ ] Excluir `C:\SistemaDual` del antivirus: los `.exe` de PyInstaller no están firmados y un
+      antivirus que ponga uno en cuarentena deja el negocio sin caja sin decir por qué.
 - [x] Traer al repo un test que arme el carrito, agregue una línea y lea `celda.get()` de cada
       columna (no solo el dato en `self.carrito`) — el bug del carrito en blanco pasó screening
       precisamente porque ningún test anterior releía el texto real dibujado en pantalla.
-      Hecho: `tests/test_usb_caja.py` (y seis pruebas más, ver `tests/README.md`).
+      Hecho: `tests/test_usb_caja.py` (y ocho pruebas más, ver `tests/README.md`).
 
 **ARCA (facturación electrónica):**
 - [ ] El cliente **ya tiene un certificado real** de su sistema viejo en `c:\mmarket\feafip\`
