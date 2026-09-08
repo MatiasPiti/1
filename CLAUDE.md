@@ -277,6 +277,7 @@ del sistema del cliente. Matías las pidió así: separadas y ordenadas.
 | **Semáforo Clientes** | `MatiasPiti/semaforo-clientes` | Lista de clientes; para cada uno consulta `GET /health` de su `remote_api` cada 20s. Verde = OK, amarillo = PC viva con el servicio caído, violeta = token mal, rojo = sin respuesta. |
 | **Chuleta Otter** | `MatiasPiti/chuletas_diagnosticos` | Ocho secciones de diagnóstico, **offline**. Sin permiso de INTERNET a propósito: es la garantía de que funciona con la red caída. El contenido está todo en `Chuleta.kt`. |
 | **Ventas Otter** | `MatiasPiti/dashboard-ventas` | Total vendido hoy, más vendidos, y stock ≤ 5. Usa `reports.resumen_dashboard` y `products.listar_stock`, que **ya estaban en la allowlist**: se instala y anda, sin recompilar nada en el local. El stock va en un botón aparte porque trae el catálogo entero (4587 productos). |
+| **Precios Otter** | `MatiasPiti/calculadora-precios` | La cadena Costo S/IVA → Precio Costo → % Ganancia → Precio Final, **offline**. `Precios.kt` es un port de `pos_core/precios.py`, **verificado contra el original con 1037 casos al azar, cero diferencias**. |
 
 **Se compilan sin PC.** Ninguna necesita Android Studio: cada repo tiene
 `.github/workflows/apk.yml`, que en cada push a `main` compila el APK en los servidores de GitHub
@@ -288,8 +289,23 @@ dispositivo. No están en ningún repo. **Costo asumido de tenerlas separadas: a
 hay que cargarlo en cada app que lo use** (hoy el semáforo y el dashboard), además de la laptop
 de Leo. Matías eligió repos y APKs separadas a propósito, para tener todo seccionado.
 
-**Ninguna de las tres se probó todavía contra el local real** — compilan y el APK sale solo, pero
-el primer contacto con la API lo hace Matías.
+**Ninguna se probó todavía contra el local real** — compilan y el APK sale solo, pero el primer
+contacto con la API lo hace Matías. La excepción es Precios Otter, que no habla con nadie y sí
+está verificada: ver abajo.
+
+**Cómo se verificó Precios Otter, y por qué se puede hacer de nuevo.** Desde este entorno
+`dl.google.com` está bloqueado (por eso no se puede compilar un APK acá), pero **Maven Central y
+el portal de plugins de Gradle sí responden**: alcanza para compilar y correr Kotlin puro en la
+JVM. Como el cálculo de precios no tiene nada de Android, se compiló y se corrió contra
+`pos_core/precios.py` con casos al azar comparando los cuatro números — 428 de lectura de números
+tecleados (`1.500,50`, `$ 2.499,00`, `.500`, basura) y 609 de la cadena completa con los borde
+(margen −100, costos en cero, todo vacío). Cero diferencias, redondeo incluido. La verificación
+vive en `verificacion/` de ese repo y **compila el mismo archivo que usa la app**, no una copia,
+así que no puede haber deriva. Se le metió un bug a propósito para confirmar que tiene dientes:
+agarró el caso caro, `761.917` leído como 761,92.
+
+**El criterio, para la próxima app:** si una parte de la lógica se puede escribir sin dependencias
+de Android, conviene separarla así — se verifica de verdad en vez de compilarse a ciegas.
 
 **Lo que NO se puede hacer, y por qué** (evaluado, descartado): una app en la RG conectada **por
 USB** que repare la PC sola. Cuando se conecta la RG a la PC, Windows es el *host* y la RG el
