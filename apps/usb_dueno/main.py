@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import apps.master_dueno.main as maestro_mod
 from pos_core.db import preparar_base
+from pos_core import arranque
 from pos_core import sync_export
 
 maestro_mod.ORIGEN = "USB_DUENO"
@@ -80,10 +81,16 @@ def _unica_instancia(nombre_app: str, titulo: str) -> bool:
     return False
 
 
-if __name__ == "__main__":
-    # crea la base si falta y, si el pendrive/instalación trae una de una
-    # versión anterior, le agrega las columnas nuevas antes de abrir
+def _preparar():
+    # crea la base si falta y, si el pendrive trae una de una versión
+    # anterior, le agrega las columnas nuevas antes de abrir
     preparar_base()
     if not _unica_instancia("usb_dueno", "el Panel del Dueño del USB"):
         raise SystemExit(0)
-    AppUsbDueno().mainloop()
+
+
+if __name__ == "__main__":
+    # Si algo de esto falla, el .exe está compilado sin consola: sin este
+    # envoltorio el cajero hace doble clic y no pasa NADA, sin un cartel
+    # que diga por qué (ver pos_core/arranque.py).
+    arranque.iniciar("el Panel del Dueño del USB", _preparar, lambda: AppUsbDueno())

@@ -16,6 +16,7 @@ from tkinter import ttk, messagebox, simpledialog, filedialog
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from pos_core.db import preparar_base
+from pos_core import arranque
 from pos_core import sales, sync_export, audit, ticket_printer, excel_import
 from apps.theme import (COLORS, aplicar_tema, estriar_treeview, tag_fila,
                          habilitar_copiar_pegar_global, abrir_dialogo_impresora,
@@ -307,10 +308,16 @@ def _unica_instancia(nombre_app: str, titulo: str) -> bool:
     return False
 
 
-if __name__ == "__main__":
-    # crea la base si falta y, si el pendrive/instalación trae una de una
-    # versión anterior, le agrega las columnas nuevas antes de abrir
+def _preparar():
+    # crea la base si falta y, si el pendrive trae una de una versión
+    # anterior, le agrega las columnas nuevas antes de abrir
     preparar_base()
     if not _unica_instancia("usb_caja", "la Caja de emergencia"):
         raise SystemExit(0)
-    AppUsbCaja().mainloop()
+
+
+if __name__ == "__main__":
+    # Si algo de esto falla, el .exe está compilado sin consola: sin este
+    # envoltorio el cajero hace doble clic y no pasa NADA, sin un cartel
+    # que diga por qué (ver pos_core/arranque.py).
+    arranque.iniciar("la Caja de emergencia", _preparar, lambda: AppUsbCaja())

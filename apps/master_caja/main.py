@@ -25,6 +25,7 @@ from tkinter import ttk, messagebox, simpledialog
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from pos_core.db import preparar_base
+from pos_core import arranque
 from pos_core import sales, audit, ticket_printer
 from apps.theme import (COLORS, aplicar_tema, estriar_treeview, tag_fila,
                          habilitar_copiar_pegar_global, abrir_dialogo_impresora,
@@ -363,13 +364,19 @@ def _unica_instancia(nombre_app: str, titulo: str) -> bool:
     return False
 
 
-if __name__ == "__main__":
+def _preparar():
     from pos_core.paths import set_base_override_to_parent_dir
     # Caja y Dueño Maestro comparten UNA sola DB (carpeta padre de instalación).
     set_base_override_to_parent_dir()
-    # crea la base si falta y, si el pendrive/instalación trae una de una
-    # versión anterior, le agrega las columnas nuevas antes de abrir
+    # crea la base si falta y, si la instalación trae una de una versión
+    # anterior, le agrega las columnas nuevas antes de abrir
     preparar_base()
     if not _unica_instancia("caja", "Otter Caja"):
         raise SystemExit(0)
-    AppCaja().mainloop()
+
+
+if __name__ == "__main__":
+    # Si algo de esto falla, el .exe está compilado sin consola: sin este
+    # envoltorio el cajero hace doble clic y no pasa NADA, sin un cartel
+    # que diga por qué (ver pos_core/arranque.py).
+    arranque.iniciar("Otter Caja", _preparar, lambda: AppCaja())

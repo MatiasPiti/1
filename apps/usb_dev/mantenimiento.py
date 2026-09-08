@@ -65,8 +65,9 @@ _MAPA_ESPEJO = {
 # datos del cliente, no programa. Vale para carpetas Y para archivos
 # sueltos (ver reparar_archivos_app: si solo se filtran las carpetas, el
 # config.ini del espejo termina pisando el del cliente).
-_EXCLUIR_DE_REPARACION_ARCHIVOS = {"database", "sync_data", "logs", "tickets", "config.ini",
-                                    "reporte_mantenimiento.txt", "sincronizacion_exitosa.txt"}
+_EXCLUIR_DE_REPARACION_ARCHIVOS = {"database", "sync_data", "logs", "tickets", "backups",
+                                    "config.ini", "reporte_mantenimiento.txt",
+                                    "sincronizacion_exitosa.txt"}
 
 
 def _timestamp() -> str:
@@ -224,8 +225,27 @@ def _restaurar_backup_mas_reciente(db_path: str, carpeta_instalacion: str, log: 
       contrario.
     - Cada candidato se VERIFICA antes de darlo por bueno; si está dañado
       también, se prueba el siguiente más nuevo.
+
+    Se miran DOS orígenes, y el segundo es el que en la práctica va a
+    tener algo: los `.backup_*` sueltos al lado de la base, que solo
+    existen si alguna vez corrió el Actualizador o este mismo USB, y las
+    copias diarias de `backups/` (ver pos_core/respaldo.py), que el
+    servicio de stock hace solo todos los días. Antes se miraban únicamente
+    los primeros, y por eso el "último recurso" casi nunca tenía nada que
+    restaurar justo el día que hacía falta.
     """
-    candidatos = sorted(glob.glob(db_path + ".backup_*"), reverse=True)
+    candidatos = glob.glob(db_path + ".backup_*")
+    candidatos += glob.glob(os.path.join(carpeta_instalacion, "backups", "stock_*.db"))
+    # Por fecha de modificación y no por nombre: los dos orígenes usan
+    # formatos de nombre distintos y ordenarlos como texto mezclaría una
+    # copia diaria vieja adelante de un .backup_ nuevo.
+    def _cuando(ruta):
+        try:
+            return os.path.getmtime(ruta)
+        except OSError:
+            return 0.0
+
+    candidatos = sorted(candidatos, key=_cuando, reverse=True)
     if excluir:
         candidatos = [c for c in candidatos if os.path.abspath(c) != os.path.abspath(excluir)]
 
@@ -290,7 +310,13 @@ def corregir_datos_invalidos(db_path: str, log: list) -> None:
         conn.commit()
         log.append(f"[DATOS] Se corrigieron {len(negativos)} producto(s) con stock negativo (llevados a 0, "
                     f"con su movimiento de ajuste registrado para auditoría).")
-    except sqlite3.OperationalError as e:
+    except sqlite3.DatabaseError as e:
+        # DatabaseError y no solo OperationalError: si la base quedó
+        # ilegible y NO hubo ninguna copia para rescatarla, acá sale
+        # "file is not a database", que es DatabaseError. Dejarlo escapar
+        # tumbaba el mantenimiento entero con un traceback y sin informe,
+        # justo el día en que el informe es lo único que queda para saber
+        # qué pasó.
         log.append(f"[DATOS] No se pudo revisar consistencia de datos: {e}")
     finally:
         conn.close()
@@ -312,6 +338,43 @@ def verificar_espacio_disco(carpeta_instalacion: str, log: list, minimo_mb: int 
                     f"corromperse al escribir.")
     else:
         log.append(f"[DISCO] Espacio libre OK: {libres_mb:.0f} MB.")
+
+
+def verificar_respaldos(carpeta_instalacion: str, log: list) -> None:
+    """¿Este negocio está respaldado, o solo lo parece?
+
+    El USB se conecta cuando algo ya salió mal, y en ese momento la
+    pregunta más cara es "¿hay de dónde volver?". Que la carpeta exista no
+    alcanza: una copia de hace tres semanas es casi lo mismo que no tener
+    ninguna, y eso hay que verlo ANTES de necesitarla, no después.
+    """
+    carpeta = os.path.join(carpeta_instalacion, "backups")
+    copias = sorted(glob.glob(os.path.join(carpeta, "stock_*.db")),
+                    key=lambda c: os.path.basename(c), reverse=True)
+    if not copias:
+        log.append("[RESPALDO] ¡ATENCIÓN! No hay NINGUNA copia de seguridad en backups\\. "
+                    "Si la base se daña no hay de dónde volver. Las hace solo el servicio de "
+                    "stock (SistemaDualStockService): revisar que esté corriendo y que la "
+                    "instalación sea de septiembre 2026 o posterior.")
+        return
+
+    ultima = copias[0]
+    try:
+        cuando = datetime.fromtimestamp(os.path.getmtime(ultima))
+        dias = (datetime.now() - cuando).days
+        mb = os.path.getsize(ultima) / (1024 * 1024)
+    except OSError as e:
+        log.append(f"[RESPALDO] Hay copias pero no se pudieron leer: {e}")
+        return
+
+    detalle = (f"{len(copias)} copia(s); la más nueva es {os.path.basename(ultima)} "
+               f"({mb:.1f} MB, del {cuando:%Y-%m-%d %H:%M})")
+    if dias >= 2:
+        log.append(f"[RESPALDO] ¡ATENCIÓN! La última copia tiene {dias} días. {detalle}. "
+                    f"El servicio de stock las hace todos los días: si está atrasada, "
+                    f"lo más probable es que el servicio esté parado.")
+    else:
+        log.append(f"[RESPALDO] Copias al día: {detalle}.")
 
 
 def verificar_servicio_windows(carpeta_instalacion: str, log: list) -> None:
@@ -442,15 +505,30 @@ def ejecutar_mantenimiento(carpeta_instalacion: str, tipo_instalacion: str = "MA
     carpeta_usb_dev = get_base_path()
     db_path = os.path.join(carpeta_instalacion, "database", "stock.db")
 
-    verificar_espacio_disco(carpeta_instalacion, log)
-    verificar_y_reparar_db(carpeta_instalacion, log)
-    aplicar_migraciones_esquema(db_path, log)
-    corregir_datos_invalidos(db_path, log)
+    # Cada paso va aislado: este USB se conecta cuando algo YA está roto, y
+    # un paso que explota no puede llevarse puestos los demás ni, sobre
+    # todo, el informe — que muchas veces es lo único con lo que después se
+    # entiende qué pasó. Ya ocurrió: con la base destruida y sin ninguna
+    # copia para restaurar, la revisión de datos tiraba "file is not a
+    # database" y el mantenimiento entero moría con un traceback.
+    def paso(etiqueta, funcion, *argumentos):
+        try:
+            funcion(*argumentos)
+        except Exception as e:
+            log.append(f"[{etiqueta}] ERROR inesperado en este paso: {e}. "
+                        f"Se sigue con el resto del mantenimiento.")
+
+    paso("DISCO", verificar_espacio_disco, carpeta_instalacion, log)
+    paso("DB", verificar_y_reparar_db, carpeta_instalacion, log)
+    paso("ESQUEMA", aplicar_migraciones_esquema, db_path, log)
+    paso("DATOS", corregir_datos_invalidos, db_path, log)
+    paso("RESPALDO", verificar_respaldos, carpeta_instalacion, log)
     if tipo_instalacion == "MAESTRO":
-        verificar_servicio_windows(carpeta_instalacion, log)
-    restaurar_config(carpeta_instalacion, carpeta_usb_dev, log)
-    limpiar_logs_viejos(carpeta_instalacion, log)
-    reparar_archivos_app(carpeta_instalacion, tipo_instalacion, carpeta_usb_dev, log)
+        paso("SERVICIO", verificar_servicio_windows, carpeta_instalacion, log)
+    paso("CONFIG", restaurar_config, carpeta_instalacion, carpeta_usb_dev, log)
+    paso("LOGS", limpiar_logs_viejos, carpeta_instalacion, log)
+    paso("ARCHIVOS", reparar_archivos_app, carpeta_instalacion, tipo_instalacion,
+         carpeta_usb_dev, log)
 
     log.append("=== Fin del mantenimiento ===")
 

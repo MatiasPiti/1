@@ -72,6 +72,26 @@ def get_connection(path: str = None) -> sqlite3.Connection:
     return _local.conn
 
 
+def cerrar_conexion() -> None:
+    """Cierra y olvida la conexión de este hilo.
+
+    Hace falta antes de REEMPLAZAR el archivo de la base (restaurar una
+    copia). En Windows, mover o pisar un archivo que sigue abierto falla
+    con un error de archivo en uso, así que sin esto la restauración se
+    cae justo el día que hace falta que funcione. Es seguro llamarla
+    aunque no haya conexión abierta.
+    """
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    for atributo in ("conn", "conn_path"):
+        if hasattr(_local, atributo):
+            delattr(_local, atributo)
+
+
 def init_db(path: str = None) -> None:
     """Crea el archivo .db y todas las tablas si no existen. Segura de
     llamar en cada arranque (idempotente)."""

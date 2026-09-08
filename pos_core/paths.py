@@ -90,6 +90,16 @@ def logs_dir() -> str:
     return ensure_dir(os.path.join(get_base_path(), "logs"))
 
 
+def backups_dir() -> str:
+    """Carpeta 'backups/' con las copias diarias de la base.
+
+    Va FUERA de database/ a propósito: el USB de Mantenimiento excluye
+    database/ al reponer archivos, y las copias tienen que quedar
+    igualmente lejos de cualquier cosa que reemplace la base viva.
+    """
+    return ensure_dir(os.path.join(get_base_path(), "backups"))
+
+
 def tickets_dir() -> str:
     """Respaldo en texto de los tickets, usado cuando no hay impresora
     disponible (ver pos_core/ticket_printer.py)."""

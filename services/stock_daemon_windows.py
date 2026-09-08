@@ -21,6 +21,7 @@ import logging
 import os
 import sys
 import time
+from logging.handlers import RotatingFileHandler
 
 from pos_core.paths import logs_dir, set_base_override_to_parent_dir
 
@@ -35,12 +36,21 @@ from pos_core.db import get_connection, init_db
 from pos_core import stock_service
 from pos_core.sales import CODIGO_SIN_BARRA
 
-logging.basicConfig(
-    filename=os.path.join(logs_dir(), "stock_daemon.log"),
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-)
+# Con rotación y NO con basicConfig(filename=...): este servicio corre
+# 24/7 desde que arranca Windows, y una sola línea de error repitiéndose
+# (una venta que nunca se puede aplicar, la API remota rechazando) escribe
+# sin parar en un archivo que nunca se cierra. Un disco lleno no es solo
+# "se acabó el espacio": es la forma más común de corromper una base
+# SQLite en pleno uso, o sea exactamente el desastre que este servicio
+# tiene que evitar. 5 archivos de 2 MB = 10 MB como techo, para siempre.
+_handler = RotatingFileHandler(
+    os.path.join(logs_dir(), "stock_daemon.log"),
+    maxBytes=2 * 1024 * 1024, backupCount=4, encoding="utf-8")
+_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
 log = logging.getLogger("stock_daemon")
+log.setLevel(logging.INFO)
+if not log.handlers:
+    log.addHandler(_handler)
 
 INTERVALO_SEGUNDOS = 5
 
@@ -88,7 +98,31 @@ def _ventas_con_stock_pendiente():
 _fallas_ya_registradas = set()
 
 
+# El respaldo se intenta desde acá y no desde una tarea aparte porque
+# este servicio es lo único que ya corre 24/7 y arranca con Windows: es el
+# único lugar donde una copia diaria no depende de que alguien se acuerde.
+# Se chequea una vez por hora (no en cada ciclo de 5 segundos) y la
+# función se encarga sola de no repetir la copia del día.
+INTERVALO_RESPALDO_SEGUNDOS = 3600
+_ultimo_intento_respaldo = 0.0
+
+
+def _respaldar_si_corresponde():
+    global _ultimo_intento_respaldo
+    ahora = time.time()
+    if ahora - _ultimo_intento_respaldo < INTERVALO_RESPALDO_SEGUNDOS:
+        return
+    _ultimo_intento_respaldo = ahora
+    try:
+        from pos_core import respaldo
+        respaldo.hacer_copia()
+    except Exception:
+        # Un fallo del respaldo NUNCA puede frenar el descuento de stock.
+        log.exception("No se pudo intentar la copia diaria")
+
+
 def ciclo_watchdog():
+    _respaldar_si_corresponde()
     pendientes = _ventas_con_stock_pendiente()
     for p in pendientes:
         clave = (p["venta_uuid"], p["producto_codigo"])

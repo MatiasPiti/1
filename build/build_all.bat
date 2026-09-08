@@ -121,6 +121,7 @@ for %%A in (MaestroCaja MaestroDueno USB_Caja USB_Dueno StockService) do (
     if exist dist\USB_Mantenimiento\espejo_apps\%%A\logs rmdir /S /Q dist\USB_Mantenimiento\espejo_apps\%%A\logs
     if exist dist\USB_Mantenimiento\espejo_apps\%%A\tickets rmdir /S /Q dist\USB_Mantenimiento\espejo_apps\%%A\tickets
     if exist dist\USB_Mantenimiento\espejo_apps\%%A\SYNC_DATA rmdir /S /Q dist\USB_Mantenimiento\espejo_apps\%%A\SYNC_DATA
+    if exist dist\USB_Mantenimiento\espejo_apps\%%A\backups rmdir /S /Q dist\USB_Mantenimiento\espejo_apps\%%A\backups
 )
 
 echo.
