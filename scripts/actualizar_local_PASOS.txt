@@ -1,25 +1,63 @@
 ===========================================================
- ACTUALIZAR LA PC DEL LOCAL - PASOS
+ ACTUALIZAR LA PC DEL LOCAL - PASOS COMPLETOS
  (respaldo diario + cartel de arranque + blindaje)
+ Otter - El Galpon Del Nono
 ===========================================================
 
-Se hace UNA sola vez, EN LA PC DEL LOCAL.
-Tiempo: entre 30 y 45 minutos (compilar tarda).
+Este archivo alcanza solo: no hace falta abrir ningun otro.
 
-HACERLO CON EL NEGOCIO CERRADO. Entre el PASO 2 y el PASO 5
+
+-----------------------------------------------------------
+ANTES DE EMPEZAR - LEER ESTO
+-----------------------------------------------------------
+CUANDO: con el negocio CERRADO. Entre el PASO 2 y el PASO 5
 la caja no se puede usar y Leo no se puede conectar.
 
-La laptop de Leo NO se toca: DuenoRemoto no cambio.
+CUANTO TARDA: 30 a 45 minutos (lo que tarda es compilar).
+
+QUE NECESITAS:
+  - Estar sentado en la PC del local.
+  - PowerShell como administrador.
+  - La carpeta del repo (donde esta build\build_all.bat).
+
+QUE NO SE TOCA:
+  - La laptop de Leo. DuenoRemoto no cambio.
+  - La base de datos ni el config.ini. No los toca nada de
+    esto.
+
+SI TIENEN QUE VENDER MIENTRAS TANTO:
+  Usar el USB_Caja, NO el sistema viejo de mmarket. Las
+  ventas del sistema viejo no entran nunca a Otter (del
+  FoxPro solo se saco el catalogo, no hay forma de importar
+  ventas) y quedan afuera de los reportes para siempre.
+  El USB_Caja se concilia despues con Ctrl+Shift+M en el
+  Maestro.
+
+QUE SE GANA CON ESTO:
+  1. El sistema hace una copia de la base todos los dias,
+     solo, y la verifica antes de darla por buena. Hasta
+     ahora NO habia ninguna copia automatica.
+  2. Si la base se dana, la caja lo DICE en un cartel y
+     ofrece restaurar la copia. Antes hacias doble clic y
+     no pasaba absolutamente nada.
+  3. El Dueno Remoto deja de caerse solo (blindaje).
 
 
------------------------------------------------------------
-PASO 0 - GUARDAR LA EVIDENCIA (antes de tocar nada)
------------------------------------------------------------
-PowerShell COMO ADMINISTRADOR.
-(Se abre en C:\Windows\system32, no donde lo abriste antes.)
+===========================================================
+ PASO 0 - GUARDAR LA EVIDENCIA (antes de tocar nada)
+===========================================================
+Abrir PowerShell COMO ADMINISTRADOR:
+  Inicio -> escribir "PowerShell" -> clic derecho sobre
+  "Windows PowerShell" -> "Ejecutar como administrador".
+
+OJO: se abre en C:\Windows\system32, NO donde lo abriste
+antes.
 
 Es la ultima chance de saber por que se paro el servicio la
-segunda vez. Despues del blindaje esa pista se pierde.
+segunda vez que se cayo el Dueno Remoto. Despues del
+blindaje esa pista se pierde para siempre.
+
+Copiar y pegar TODO el bloque de una vez:
 
     $out = "$HOME\Desktop\estado_previo_otter.txt"
     "=== $(Get-Date) ===" | Out-File $out
@@ -29,113 +67,180 @@ segunda vez. Despues del blindaje esa pista se pierde.
     Get-WinEvent -FilterHashtable @{LogName='System';Level=1,2;StartTime=(Get-Date).AddDays(-7)} -MaxEvents 40 -ErrorAction SilentlyContinue | Select-Object TimeCreated,Id,ProviderName,Message | Format-List | Out-String | Out-File $out -Append
     notepad $out
 
-Queda en el Escritorio. MANDARSELO A CLAUDE.
+Queda en el Escritorio: estado_previo_otter.txt
+>>> MANDARSELO A CLAUDE <<<
 
 
------------------------------------------------------------
-PASO 1 - TRAER EL CODIGO
------------------------------------------------------------
-Ir a la carpeta del repo (donde esta build\build_all.bat).
-
+===========================================================
+ PASO 1 - TRAER EL CODIGO
+===========================================================
     cd C:\ruta\al\repo
     git pull origin main
 
+(la carpeta del repo es donde esta build\build_all.bat)
 
------------------------------------------------------------
-PASO 2 - CERRAR LO QUE BLOQUEA LA COMPILACION
------------------------------------------------------------
+
+===========================================================
+ PASO 2 - CERRAR LO QUE BLOQUEA LA COMPILACION
+===========================================================
+PyInstaller no puede reemplazar un .exe que sigue abierto o
+que tiene el servicio activo: falla con PermissionError.
+
     Stop-Service SistemaDualStockService -Force
     Get-Process MaestroCaja,MaestroDueno,StockService,DuenoRemoto -ErrorAction SilentlyContinue | Stop-Process -Force
     Get-Service SistemaDualStockService
 
-Tiene que decir Stopped.
+Tiene que decir:  Status = Stopped
 
->>> DESDE ACA LA CAJA NO SE PUEDE USAR <<<
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+>>> DESDE ACA LA CAJA NO SE PUEDE USAR                  <<<
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 
------------------------------------------------------------
-PASO 3 - COMPILAR
------------------------------------------------------------
+===========================================================
+ PASO 3 - COMPILAR
+===========================================================
     build\build_all.bat
 
-Tarda. Si tira PermissionError es que algo quedo abierto:
-volver al PASO 2.
+Tarda un rato largo. Genera todo en dist\
 
-Si el antivirus se queja o desaparece algun .exe, poner
-C:\SistemaDual y la carpeta dist\ como excepcion y compilar
-de nuevo. Los .exe de PyInstaller no estan firmados.
+SI FALLA CON "PermissionError":
+    Algo quedo abierto. Volver al PASO 2. Si sigue igual,
+    abrir el Administrador de tareas y cerrar a mano
+    cualquier MaestroCaja / MaestroDueno / StockService.
+
+SI EL ANTIVIRUS SE QUEJA O DESAPARECE UN .exe:
+    Poner C:\SistemaDual y la carpeta dist\ como excepcion
+    del antivirus y compilar de nuevo. Los .exe de
+    PyInstaller no estan firmados y algunos antivirus los
+    mandan a cuarentena sin avisar.
 
 
------------------------------------------------------------
-PASO 4 - ACTUALIZAR LA INSTALACION
------------------------------------------------------------
-dist\OtterActualizador\OtterActualizador.exe
-    -> boton derecho -> Ejecutar como administrador
+===========================================================
+ PASO 4 - ACTUALIZAR LA INSTALACION
+===========================================================
+Ir a:  dist\OtterActualizador\OtterActualizador.exe
+
+    -> boton derecho
+    -> "Ejecutar como administrador"
     -> apretar ACTUALIZAR
 
 No toca la base ni el config.ini.
 
+SI DICE QUE UN ARCHIVO ESTA BLOQUEADO:
+    Frena limpio sin romper nada (esta bien que haga eso).
+    Cerrar el .exe que lo bloquea y volver a apretar
+    ACTUALIZAR.
 
------------------------------------------------------------
-PASO 5 - ARRANCAR EL SERVICIO
------------------------------------------------------------
-*** ESTE ES EL PASO QUE SE OLVIDO LAS DOS VECES QUE SE ***
-*** CAYO EL DUENO REMOTO. NO SALTEARLO.                ***
 
-El Actualizador relanza el servicio SOLO si estaba corriendo
-antes de actualizar. Como lo paramos en el PASO 2, no lo va
-a arrancar. Hay que hacerlo a mano:
+===========================================================
+ PASO 5 - ARRANCAR EL SERVICIO
+===========================================================
+*************************************************
+*** ESTE ES EL PASO QUE SE OLVIDO LAS DOS     ***
+*** VECES QUE SE CAYO EL DUENO REMOTO.        ***
+*** NO SALTEARLO.                             ***
+*************************************************
+
+Por que: el Actualizador relanza el servicio SOLO si estaba
+corriendo antes de actualizar. Como lo paramos en el PASO 2,
+nunca lo va a arrancar. Hay que hacerlo a mano.
 
     Start-Service SistemaDualStockService
     Start-Sleep -Seconds 8
     Get-Service SistemaDualStockService
     netstat -ano | findstr 8765
 
-Tiene que decir Running Y aparecer una linea con LISTENING.
-Si no aparece el LISTENING: parar aca y avisar.
+Tiene que pasar LAS DOS COSAS:
+    [ ] Status = Running
+    [ ] una linea con LISTENING
 
->>> RECIEN ACA LA CAJA VUELVE A ESTAR OPERATIVA <<<
+Si falta el LISTENING: PARAR ACA y avisar. Significa que el
+servicio arranco pero la API remota no levanto, que es
+justo el caso que Leo ve como "no me puedo conectar".
+
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+>>> RECIEN ACA LA CAJA VUELVE A ESTAR OPERATIVA         <<<
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 
------------------------------------------------------------
-PASO 6 - CORRER EL BLINDAJE
------------------------------------------------------------
+===========================================================
+ PASO 6 - CORRER EL BLINDAJE
+===========================================================
     powershell -ExecutionPolicy Bypass -File .\scripts\blindar_local.ps1
 
-Al final imprime una tabla con una columna OK. Las 5 filas
-tienen que decir SI. Si alguna dice NO, mandar la tabla.
+Se corre UNA sola vez. Hace 5 cosas:
 
-(El detalle de lo que hace esta en blindar_local_PASOS.txt)
+  0. Guarda el estado actual en
+     C:\SistemaDual\watchdog\estado_antes_del_blindaje.txt
+  1. El servicio arranca con Windows y se reintenta solo.
+  2. La PC no se suspende mas (ni enchufada ni a bateria).
+  3. Instala un watchdog que cada 5 minutos revisa EL
+     PUERTO (no solo si el servicio dice "Running": la API
+     remota puede no haber levantado con el servicio
+     corriendo, y ese es el caso que no se ve). Si esta
+     muerto, lo reinicia. Se planta despues de 3 reinicios
+     en 24 hs.
+  4. Deja Tailscale en modo "unattended" - sin esto,
+     Tailscale se desconecta al cerrar la sesion de
+     Windows.
+
+NO toca la base ni el config.ini.
+
+AL FINAL IMPRIME UNA TABLA. Las 5 filas tienen que decir SI:
+
+    [ ] Servicio en Automatic
+    [ ] Watchdog instalado        (Estado=Ready)
+    [ ] Tailscale unattended
+    [ ] Servicio corriendo
+    [ ] Puerto 8765 escuchando
+
+Si "Tailscale unattended" dice NO, hacerlo a mano:
+    icono de Tailscale (al lado del reloj) -> Preferences
+    -> "Run unattended". Es el punto mas importante de todos.
+
+Si alguna otra dice NO: mandar la tabla mas el archivo
+estado_antes_del_blindaje.txt
 
 
------------------------------------------------------------
-PASO 7 - LA PRUEBA DE VERDAD
------------------------------------------------------------
-CERRAR SESION en la PC del local (NO apagar).
+===========================================================
+ PASO 7 - LA PRUEBA DE VERDAD
+===========================================================
+CERRAR SESION en la PC del local. NO APAGAR.
+(Inicio -> el usuario -> "Cerrar sesion")
 
-Desde el celular, con Tailscale conectado, abrir:
+Despues, desde el celular con Tailscale conectado, abrir en
+el navegador:
 
     http://IP-DEL-LOCAL:8765/health
 
-Si contesta CUALQUIER COSA -aunque sea "token invalido"-
-esta vivo. Eso es lo que antes fallaba al cerrar sesion.
+Si contesta CUALQUIER COSA -aunque diga "token invalido"-
+esta VIVO. El navegador no manda el token, por eso rechaza:
+que rechace ya prueba que hay alguien escuchando.
+
+Si no carga nada: el servicio esta caido. Volver al PASO 5.
+
+Esto es exactamente lo que fallaba antes al cerrar sesion.
 
 
------------------------------------------------------------
-PASO 8 - AL DIA SIGUIENTE, CONFIRMAR EL RESPALDO
------------------------------------------------------------
+===========================================================
+ PASO 8 - AL DIA SIGUIENTE: CONFIRMAR EL RESPALDO
+===========================================================
     dir C:\SistemaDual\backups
 
-Tiene que haber un archivo stock_<fecha de hoy>.db.
-Si a las 24 hs no aparece, el servicio no esta corriendo.
+Tiene que haber un archivo:  stock_<fecha de hoy>.db
+
+Si a las 24 horas no aparece ninguno, el servicio no esta
+corriendo. Revisar con el PASO 5.
 
 
 ===========================================================
- OPCIONAL - PROBAR EL CARTEL DE BASE DANADA
+ OPCIONAL (recomendado) - PROBAR EL CARTEL DE BASE DANADA
 ===========================================================
-Nunca se probo en Windows real. Hacerlo EN EL USB DE
-EMERGENCIA, NUNCA EN LA PC DEL LOCAL (el USB tiene base
-propia, no hay riesgo):
+Esto nunca se probo en Windows real.
+
+HACERLO EN EL USB DE EMERGENCIA, NUNCA EN LA PC DEL LOCAL.
+El USB tiene base propia, asi que no hay ningun riesgo.
 
   1. Abrir USB_Caja.exe una vez y cerrarlo (para que se
      cree la base).
@@ -143,6 +248,56 @@ propia, no hay riesgo):
      cualquier cosa, guardar.
   3. Volver a abrir USB_Caja.exe.
 
-Tiene que aparecer un cartel explicando que la base esta
-danada. Sin el cartel, no pasaba absolutamente nada: el
-.exe moria en silencio.
+Tiene que aparecer un cartel diciendo que la base esta
+danada y ofreciendo restaurar la copia.
+
+Antes de este cambio no pasaba absolutamente nada: el .exe
+moria en silencio, sin cartel y sin archivo.
+
+
+===========================================================
+ SI ALGO SALE MAL - DIAGNOSTICO EN 2 PASOS
+===========================================================
+(se puede hacer entero desde el celular)
+
+1. App de Tailscale: el nodo del local, esta ONLINE?
+      NO -> la PC esta dormida o Tailscale se cayo ahi.
+            No se arregla en remoto.
+      SI -> seguir al 2.
+
+2. Navegador: http://IP-DEL-LOCAL:8765/health
+      Contesta algo -> el servicio esta VIVO, el problema
+                       es del lado del Dueno Remoto.
+      No carga nada -> el servicio esta caido.
+
+Desde una PC el equivalente es:
+    Test-NetConnection IP-DEL-LOCAL -Port 8765
+
+    PingSucceeded True + TcpTestSucceeded False
+    = la red llega, no hay nada escuchando.
+
+
+===========================================================
+ COMANDOS UTILES
+===========================================================
+Estado del servicio:
+    Get-Service SistemaDualStockService
+
+Arrancarlo (como administrador):
+    Start-Service SistemaDualStockService
+
+Ver si el puerto escucha:
+    netstat -ano | findstr 8765
+
+Que hizo el watchdog:
+    Get-Content C:\SistemaDual\watchdog\watchdog.log -Tail 20
+
+Si una app no abrio y no dijo por que:
+    Get-Content C:\SistemaDual\logs\arranque.log -Tail 40
+
+Las copias que hay:
+    dir C:\SistemaDual\backups
+
+OJO: "sc" a secas en PowerShell NO es el comando de
+servicios, es un alias de Set-Content (escribir archivos).
+Usar Get-Service, o sc.exe con el .exe explicito.
