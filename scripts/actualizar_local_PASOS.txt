@@ -1,0 +1,148 @@
+===========================================================
+ ACTUALIZAR LA PC DEL LOCAL - PASOS
+ (respaldo diario + cartel de arranque + blindaje)
+===========================================================
+
+Se hace UNA sola vez, EN LA PC DEL LOCAL.
+Tiempo: entre 30 y 45 minutos (compilar tarda).
+
+HACERLO CON EL NEGOCIO CERRADO. Entre el PASO 2 y el PASO 5
+la caja no se puede usar y Leo no se puede conectar.
+
+La laptop de Leo NO se toca: DuenoRemoto no cambio.
+
+
+-----------------------------------------------------------
+PASO 0 - GUARDAR LA EVIDENCIA (antes de tocar nada)
+-----------------------------------------------------------
+PowerShell COMO ADMINISTRADOR.
+(Se abre en C:\Windows\system32, no donde lo abriste antes.)
+
+Es la ultima chance de saber por que se paro el servicio la
+segunda vez. Despues del blindaje esa pista se pierde.
+
+    $out = "$HOME\Desktop\estado_previo_otter.txt"
+    "=== $(Get-Date) ===" | Out-File $out
+    sc.exe qc SistemaDualStockService 2>&1 | Out-File $out -Append
+    Get-Service SistemaDualStockService | Format-List * | Out-String | Out-File $out -Append
+    Get-Content C:\SistemaDual\logs\stock_daemon.log -Tail 80 -ErrorAction SilentlyContinue | Out-File $out -Append
+    Get-WinEvent -FilterHashtable @{LogName='System';Level=1,2;StartTime=(Get-Date).AddDays(-7)} -MaxEvents 40 -ErrorAction SilentlyContinue | Select-Object TimeCreated,Id,ProviderName,Message | Format-List | Out-String | Out-File $out -Append
+    notepad $out
+
+Queda en el Escritorio. MANDARSELO A CLAUDE.
+
+
+-----------------------------------------------------------
+PASO 1 - TRAER EL CODIGO
+-----------------------------------------------------------
+Ir a la carpeta del repo (donde esta build\build_all.bat).
+
+    cd C:\ruta\al\repo
+    git pull origin main
+
+
+-----------------------------------------------------------
+PASO 2 - CERRAR LO QUE BLOQUEA LA COMPILACION
+-----------------------------------------------------------
+    Stop-Service SistemaDualStockService -Force
+    Get-Process MaestroCaja,MaestroDueno,StockService,DuenoRemoto -ErrorAction SilentlyContinue | Stop-Process -Force
+    Get-Service SistemaDualStockService
+
+Tiene que decir Stopped.
+
+>>> DESDE ACA LA CAJA NO SE PUEDE USAR <<<
+
+
+-----------------------------------------------------------
+PASO 3 - COMPILAR
+-----------------------------------------------------------
+    build\build_all.bat
+
+Tarda. Si tira PermissionError es que algo quedo abierto:
+volver al PASO 2.
+
+Si el antivirus se queja o desaparece algun .exe, poner
+C:\SistemaDual y la carpeta dist\ como excepcion y compilar
+de nuevo. Los .exe de PyInstaller no estan firmados.
+
+
+-----------------------------------------------------------
+PASO 4 - ACTUALIZAR LA INSTALACION
+-----------------------------------------------------------
+dist\OtterActualizador\OtterActualizador.exe
+    -> boton derecho -> Ejecutar como administrador
+    -> apretar ACTUALIZAR
+
+No toca la base ni el config.ini.
+
+
+-----------------------------------------------------------
+PASO 5 - ARRANCAR EL SERVICIO
+-----------------------------------------------------------
+*** ESTE ES EL PASO QUE SE OLVIDO LAS DOS VECES QUE SE ***
+*** CAYO EL DUENO REMOTO. NO SALTEARLO.                ***
+
+El Actualizador relanza el servicio SOLO si estaba corriendo
+antes de actualizar. Como lo paramos en el PASO 2, no lo va
+a arrancar. Hay que hacerlo a mano:
+
+    Start-Service SistemaDualStockService
+    Start-Sleep -Seconds 8
+    Get-Service SistemaDualStockService
+    netstat -ano | findstr 8765
+
+Tiene que decir Running Y aparecer una linea con LISTENING.
+Si no aparece el LISTENING: parar aca y avisar.
+
+>>> RECIEN ACA LA CAJA VUELVE A ESTAR OPERATIVA <<<
+
+
+-----------------------------------------------------------
+PASO 6 - CORRER EL BLINDAJE
+-----------------------------------------------------------
+    powershell -ExecutionPolicy Bypass -File .\scripts\blindar_local.ps1
+
+Al final imprime una tabla con una columna OK. Las 5 filas
+tienen que decir SI. Si alguna dice NO, mandar la tabla.
+
+(El detalle de lo que hace esta en blindar_local_PASOS.txt)
+
+
+-----------------------------------------------------------
+PASO 7 - LA PRUEBA DE VERDAD
+-----------------------------------------------------------
+CERRAR SESION en la PC del local (NO apagar).
+
+Desde el celular, con Tailscale conectado, abrir:
+
+    http://IP-DEL-LOCAL:8765/health
+
+Si contesta CUALQUIER COSA -aunque sea "token invalido"-
+esta vivo. Eso es lo que antes fallaba al cerrar sesion.
+
+
+-----------------------------------------------------------
+PASO 8 - AL DIA SIGUIENTE, CONFIRMAR EL RESPALDO
+-----------------------------------------------------------
+    dir C:\SistemaDual\backups
+
+Tiene que haber un archivo stock_<fecha de hoy>.db.
+Si a las 24 hs no aparece, el servicio no esta corriendo.
+
+
+===========================================================
+ OPCIONAL - PROBAR EL CARTEL DE BASE DANADA
+===========================================================
+Nunca se probo en Windows real. Hacerlo EN EL USB DE
+EMERGENCIA, NUNCA EN LA PC DEL LOCAL (el USB tiene base
+propia, no hay riesgo):
+
+  1. Abrir USB_Caja.exe una vez y cerrarlo (para que se
+     cree la base).
+  2. Abrir database\stock.db con el Bloc de notas, escribir
+     cualquier cosa, guardar.
+  3. Volver a abrir USB_Caja.exe.
+
+Tiene que aparecer un cartel explicando que la base esta
+danada. Sin el cartel, no pasaba absolutamente nada: el
+.exe moria en silencio.
