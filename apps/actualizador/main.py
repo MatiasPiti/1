@@ -40,6 +40,57 @@ CANDIDATOS_REMOTO = [r"C:\Otter", r"C:\DuenoRemoto"]
 APPS_LOCAL = ["MaestroCaja", "MaestroDueno", "StockService"]
 APPS_REMOTO = ["DuenoRemoto"]
 
+# Datos del cliente, no programa. Vale en las dos direcciones:
+#
+#  - NO se traen desde el origen. Al probar los .exe desde dist\ antes de
+#    llevarlos, cada app se crea ahí su config.ini, su database\, sus logs
+#    y sus tickets de prueba, y el build se los lleva puestos.
+#  - NO se pierden del destino. La carpeta vieja se reemplaza entera, así
+#    que sin esto se borra lo que viviera adentro. Es exactamente el caso
+#    del Dueño Remoto: su config.ini —con la IP de Tailscale y el token
+#    REALES— vive AL LADO de su .exe, no en la carpeta padre como las tres
+#    del Maestro. Actualizar la laptop de Leo lo borraba y lo dejaba sin
+#    panel, y recuperarlo obliga a tipear el token a mano, que es
+#    justamente lo que no hay que hacer nunca.
+_DATOS_DEL_CLIENTE = {"config.ini", "database", "logs", "tickets", "sync_data",
+                       "backups", "sincronizacion_exitosa.txt"}
+
+
+def _ignorar_datos(carpeta, nombres):
+    """Para copytree: qué NO traer desde la carpeta recién compilada."""
+    return [n for n in nombres if n.lower() in _DATOS_DEL_CLIENTE]
+
+
+def _devolver_datos_del_cliente(anterior: str, destino_app: str, log) -> None:
+    """Repone en la carpeta nueva los datos que había en la vieja.
+
+    Se hace DESPUÉS de copiar el programa nuevo: lo que se reemplaza es el
+    programa, nunca los datos.
+    """
+    if not os.path.isdir(anterior):
+        return
+    for nombre in os.listdir(anterior):
+        if nombre.lower() not in _DATOS_DEL_CLIENTE:
+            continue
+        origen = os.path.join(anterior, nombre)
+        llegada = os.path.join(destino_app, nombre)
+        try:
+            if os.path.exists(llegada):
+                # Vino del build pese al filtro: los datos del cliente mandan.
+                if os.path.isdir(llegada):
+                    shutil.rmtree(llegada, ignore_errors=True)
+                else:
+                    os.remove(llegada)
+            if os.path.isdir(origen):
+                shutil.copytree(origen, llegada)
+            else:
+                shutil.copy2(origen, llegada)
+            log(f"    (se conservó {nombre} del cliente)")
+        except Exception as e:
+            # Que no se pueda reponer un dato NO puede dejar la instalación
+            # a medio actualizar: se avisa y se sigue.
+            log(f"    ATENCIÓN: no se pudo conservar {nombre}: {e}")
+
 
 def es_administrador() -> bool:
     try:
@@ -211,8 +262,11 @@ class Actualizador(tk.Tk):
         if modo == "local":
             servicio_estaba = self._parar_servicio(destino)
 
-        # 3) Reemplazar los programas. La base, el config y los tickets
-        #    viven FUERA de estas carpetas, así que no los toca.
+        # 3) Reemplazar los programas. Se copia solo el programa (ver
+        #    _DATOS_DEL_CLIENTE) y se repone después lo que hubiera de
+        #    datos adentro de la carpeta. En el Maestro la base y el config
+        #    viven en la carpeta padre y esto no cambia nada; en el Dueño
+        #    Remoto el config vive ADENTRO, y sin esto se perdía.
         for app in apps:
             self._log(f"Actualizando {app}...")
             origen_app = os.path.join(self.origen, app)
@@ -225,11 +279,12 @@ class Actualizador(tk.Tk):
                 # falla a la mitad, todavía existe con qué volver atrás.
                 os.rename(destino_app, anterior)
             try:
-                shutil.copytree(origen_app, destino_app)
+                shutil.copytree(origen_app, destino_app, ignore=_ignorar_datos)
             except Exception:
                 if os.path.isdir(anterior) and not os.path.isdir(destino_app):
                     os.rename(anterior, destino_app)   # volver a la anterior
                 raise
+            _devolver_datos_del_cliente(anterior, destino_app, self._log)
             shutil.rmtree(anterior, ignore_errors=True)
         self._log("Programas actualizados.\n")
 

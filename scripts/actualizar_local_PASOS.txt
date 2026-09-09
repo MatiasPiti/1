@@ -44,6 +44,50 @@ QUE SE GANA CON ESTO:
 
 
 ===========================================================
+ RECOMENDADO - COMPILAR EN CASA, ANTES DE IR
+===========================================================
+Compilar es lo unico que tarda (30-45 min). Se puede hacer
+EN CASA y llegar al local con todo listo: asi la ventana con
+el negocio cerrado baja a unos 10 minutos.
+
+El OtterActualizador busca las apps nuevas AL LADO DE SI
+MISMO, asi que alcanza con llevar la carpeta dist\ entera en
+un pendrive.
+
+EN CASA:
+
+    git pull origin main
+    build\build_all.bat
+
+Despues copiar al pendrive:
+    - la carpeta  dist\  ENTERA
+    - la carpeta  scripts\  (para el blindaje del PASO 6)
+
+>>> SI PROBASTE LOS .exe DESDE dist\ ANTES DE COPIAR <<<
+Cada app se crea ahi su config.ini, database\, logs\ y
+tickets\ de prueba. Borralos antes de copiar al pendrive:
+
+    Get-ChildItem dist -Directory | ForEach-Object {
+        foreach ($d in "database","logs","tickets","backups","SYNC_DATA") {
+            $r = Join-Path $_.FullName $d
+            if (Test-Path $r) { Remove-Item $r -Recurse -Force }
+        }
+        $c = Join-Path $_.FullName "config.ini"
+        if (Test-Path $c) { Remove-Item $c -Force }
+    }
+
+O mas simple: borrar dist\ entera y volver a compilar sin
+abrir ningun .exe.
+
+(El Actualizador ya filtra estos datos y conserva los del
+cliente, pero no le des trabajo de mas.)
+
+SI COMPILASTE EN CASA: en el local salteate el PASO 1 y el
+PASO 3, y en el PASO 4 corre el OtterActualizador DESDE EL
+PENDRIVE.
+
+
+===========================================================
  PASO 0 - GUARDAR LA EVIDENCIA (antes de tocar nada)
 ===========================================================
 Abrir PowerShell COMO ADMINISTRADOR:

@@ -195,6 +195,15 @@ Lo que quedó hecho:
   también las copias diarias; y **cada paso va aislado**, porque con la base rota y sin ninguna
   copia el mantenimiento moría con un traceback y sin informe, justo cuando el informe es lo único
   que queda.
+- **El `OtterActualizador` borraba el `config.ini` del Dueño Remoto.** Reemplaza la carpeta de
+  cada app entera (`os.rename` de la vieja + `copytree` de la nueva). En el Maestro eso no
+  importaba porque el config y la base viven en la carpeta padre, pero **el config del Dueño
+  Remoto vive ADENTRO de su carpeta** — con la IP de Tailscale y el token reales. Actualizar la
+  laptop de Leo lo dejaba sin panel, y recuperarlo obliga a tipear el token a mano, que es
+  justamente lo que prohíbe la regla 4. Ahora el `copytree` ignora los datos del cliente y se
+  reponen después desde la carpeta anterior; de paso, tampoco se cuelan el `config.ini` y la
+  `database\` de prueba que quedan en `dist\` al probar los `.exe`. Lo cuida
+  `tests/test_actualizador.py`.
 - **Los logs rotan.** `stock_daemon.log` y el del watchdog escribían para siempre. Un disco lleno
   es una de las formas de corromper una base SQLite en uso: el remedio no puede causar la
   enfermedad.
