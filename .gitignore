@@ -18,6 +18,7 @@ venv/
 # GANANCIA: son los números con los que el negocio compite, y este repo es
 # público. Se generan cuando hacen falta y se pasan por fuera de git.
 Lista_Precios*.xlsx
+Otter_importar*.xlsx
 *_para_claude/
 dbf_para_claude/
 *.DBF
