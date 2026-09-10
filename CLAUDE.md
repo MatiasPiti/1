@@ -193,6 +193,29 @@ no responde". **El script no está probado en Windows real todavía.**
   última chance de saber por qué se paró la segunda vez: después el `StartupType` queda en
   `Automatic` y esa pista desaparece. **Ese archivo hay que mirarlo.**
 
+### Soporte remoto: que la próxima no obligue a viajar (septiembre 2026)
+
+Cada causa nueva obligaba a manejar hasta Casilda. **`scripts/soporte_remoto.ps1`** deja la PC del
+local reparable a distancia por **SSH sobre Tailscale**: reiniciar el servicio, leer logs, correr
+el blindaje otra vez, todo desde casa o desde el celular.
+
+- **Windows 10 Home no tiene RDP**, pero **sí trae el servidor OpenSSH de Microsoft** como
+  característica opcional. No es software de terceros: en la PC que cobra la plata del negocio no
+  se instala cualquier cosa.
+- **El firewall se limita a `100.64.0.0/10`** (el rango de Tailscale). Esto NO es "abrir el
+  puerto 22": desde internet no se llega, igual que la API remota (regla 1).
+- **Se crea un usuario aparte, `otter_soporte`**, y al del cajero NO se le toca nada. Ponerle
+  contraseña al usuario que abre la caja a las 8 de la mañana sería romper la regla 6. El usuario
+  de soporte además se oculta de la pantalla de inicio de sesión.
+- **El servicio `sshd` va en `Automatic` con reintentos**, por la misma razón que el
+  `StockService`: un soporte remoto que no levanta tras un reinicio no sirve para nada.
+- **Probarlo con datos móviles antes de irse del local.** Si no entra estando ahí, tampoco va a
+  entrar desde casa.
+- **Es una decisión de Matías con su cliente**, no algo que se instale sin avisar: Leo tiene que
+  saber que su proveedor puede entrar a esa PC a reparar.
+- Para ver la pantalla (la GUI de la Caja) SSH no alcanza. Si algún día hace falta, RustDesk
+  apuntado a la IP de Tailscale, nunca a sus servidores.
+
 ### El riesgo más grande no era ese: no había NINGÚN respaldo (septiembre 2026)
 
 Buscando por qué se cayó el Dueño Remoto apareció algo peor, que nunca habíamos mirado: **el
