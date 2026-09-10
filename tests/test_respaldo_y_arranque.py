@@ -92,6 +92,17 @@ def _dialogo_falso(titulo, mensaje, preguntar=False):
     return respuestas.pop(0) if preguntar and respuestas else True
 
 
+def _resumen(dialogos):
+    """Título + primera línea del mensaje.
+
+    El título solo no alcanza: el cartel de "se restauró" y el de "no se
+    pudo restaurar" comparten título (los dos son el nombre de la app), así
+    que mirando solo títulos un fallo se lee como un éxito. Pasó de verdad
+    al correr esto en Windows.
+    """
+    return [f"{t} | {(m or '').splitlines()[0][:60]}" for t, m, _ in dialogos]
+
+
 arranque._dialogo = _dialogo_falso
 
 # --- 2a. El cajero dice que NO: no se toca nada y se avisa ---
@@ -107,7 +118,9 @@ except SystemExit:
 if abrio["si"]:
     fallos.append("con la base rota y sin restaurar, dijo que abrió igual")
 titulos = [d[0] for d in dialogos]
-print("DIÁLOGOS (dijo que NO):", titulos)
+print("DIÁLOGOS (dijo que NO):")
+for linea in _resumen(dialogos):
+    print("   ", linea)
 if not any("dañada" in t for t in titulos):
     fallos.append("no ofreció restaurar la copia")
 if not any("no pudo abrir" in t for t in titulos):
@@ -116,7 +129,10 @@ if not os.path.isfile(os.path.join(paths.logs_dir(), "arranque.log")):
     fallos.append("no dejó registro en logs/arranque.log")
 
 # --- 2b. El cajero dice que SÍ: se restaura y el sistema abre ---
-_db.cerrar_conexion()
+# A propósito NO se cierra la conexión acá: así queda igual que en
+# producción, donde el intento de arranque que acaba de fallar dejó su
+# propio handle abierto sobre la base dañada. En Windows eso impide
+# renombrar el archivo, y por ahí se caía la restauración entera.
 respuestas.append(True)
 dialogos.clear()
 ventana_construida = {"si": False}
@@ -132,7 +148,11 @@ try:
 except SystemExit:
     fallos.append("dijo que sí a restaurar y aun así no abrió")
 
-print("DIÁLOGOS (dijo que SÍ):", [d[0] for d in dialogos])
+print("DIÁLOGOS (dijo que SÍ):")
+for linea in _resumen(dialogos):
+    print("   ", linea)
+if any("No se pudo restaurar" in (m or "") for _, m, _ in dialogos):
+    fallos.append("la restauración falló: ver el detalle en los diálogos de arriba")
 if not ventana_construida["si"]:
     fallos.append("restauró pero no llegó a construir la ventana")
 

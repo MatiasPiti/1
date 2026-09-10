@@ -6,7 +6,7 @@ dist\\USB_Caja\\), build_all.bat copia esa carpeta a espejo_apps\\, y
 después el USB repara una instalación real del cliente.
 """
 import os, sys, tempfile, shutil, configparser
-sys.path.insert(0, "/home/user/1")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 usb_dev = tempfile.mkdtemp(prefix="usbmant_")   # el pendrive de mantenimiento
 from pos_core import paths

@@ -25,6 +25,7 @@ que al menos explique por qué y ofrezca la salida.
 
 import os
 import shutil
+import time
 import traceback
 from datetime import datetime
 
@@ -76,6 +77,26 @@ def _dialogo(titulo: str, mensaje: str, preguntar: bool = False) -> bool:
             pass
 
 
+def _copiar_encima(origen: str, destino: str, intentos: int = 5) -> None:
+    """Escribe `origen` ENCIMA de `destino`, reintentando unas veces.
+
+    `copyfile` abre el destino en modo escritura en vez de renombrarlo, que
+    es lo único que Windows deja hacer sobre un archivo que alguien todavía
+    tiene abierto. Los reintentos son para el caso en que un antivirus o el
+    indexador de Windows lo estén mirando justo en ese instante: son
+    bloqueos de fracciones de segundo, pero acá caerse significa que el
+    negocio no abre.
+    """
+    for intento in range(intentos):
+        try:
+            shutil.copyfile(origen, destino)
+            return
+        except OSError:
+            if intento == intentos - 1:
+                raise
+            time.sleep(0.4)
+
+
 def _ofrecer_restaurar_copia(nombre_app: str) -> bool:
     """Si hay copias diarias, ofrece volver a la más reciente.
 
@@ -109,25 +130,46 @@ def _ofrecer_restaurar_copia(nombre_app: str) -> bool:
     try:
         from pos_core.db import cerrar_conexion
         # Sin esto, en Windows el archivo sigue abierto por el intento de
-        # arranque fallido y moverlo tira "el archivo está en uso": la
-        # restauración se caería justo cuando hace falta que funcione.
+        # arranque fallido y no se puede tocar.
         cerrar_conexion()
 
         destino = db_path()
         sello = datetime.now().strftime("%Y%m%d_%H%M%S")
+        aviso_extra = ""
+
+        # La base dañada se COPIA a un lado, no se mueve. En Windows, mover
+        # o renombrar un archivo que todavía tenga un handle abierto falla
+        # con "el archivo está en uso" — y falla de verdad: se comprobó
+        # corriendo las pruebas en Windows real, donde la restauración
+        # entera abortaba por esto y la caja se quedaba sin abrir. Copiar
+        # funciona igual con el archivo abierto, y sobreescribir después el
+        # original también (se abre en modo escritura, no se renombra).
         if os.path.exists(destino):
-            os.replace(destino, f"{destino}.danada_{sello}")
+            try:
+                shutil.copy2(destino, f"{destino}.danada_{sello}")
+            except Exception as e:
+                # Que no se pueda guardar la dañada NO puede impedir
+                # restaurar: sin restaurar el negocio no abre, que es peor.
+                # Se avisa para que quede claro qué se perdió.
+                aviso_extra = ("\n\nOJO: no se pudo guardar una copia de la base dañada "
+                               f"({e}), así que lo que hubiera adentro se pierde.")
+
         # Los sidecars pertenecen a la base ANTERIOR: si quedan, SQLite
         # intenta reproducirlos sobre la copia restaurada y la arruina.
         for sufijo in ("-wal", "-shm"):
             sidecar = destino + sufijo
-            if os.path.exists(sidecar):
-                os.remove(sidecar)
-        shutil.copy2(ultima["ruta"], destino)
+            try:
+                if os.path.exists(sidecar):
+                    os.remove(sidecar)
+            except OSError:
+                pass
+
+        _copiar_encima(ultima["ruta"], destino)
+
         _dialogo(nombre_app,
                  f"Listo: se restauró la copia del {ultima['fecha']}.\n\n"
                  "El sistema va a abrir ahora. Avisale a Matías igual, para\n"
-                 "revisar qué pasó y recuperar lo que falte.")
+                 "revisar qué pasó y recuperar lo que falte." + aviso_extra)
         return True
     except Exception as e:
         _dialogo(nombre_app,

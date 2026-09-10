@@ -219,6 +219,19 @@ Lo que quedó hecho:
   reponen después desde la carpeta anterior; de paso, tampoco se cuelan el `config.ini` y la
   `database\` de prueba que quedan en `dist\` al probar los `.exe`. Lo cuida
   `tests/test_actualizador.py`.
+- **Restaurar la copia fallaba EN WINDOWS, y solo se vio corriendo las pruebas ahí.** La
+  restauración hacía `os.replace()` para apartar la base dañada: en Linux eso funciona con el
+  archivo abierto, en Windows NO — el intento de arranque que acaba de fallar todavía tiene su
+  handle, el rename tira "el archivo está en uso" y **la restauración entera abortaba**, dejando
+  la caja sin abrir. Justo lo que este código existe para evitar. Ahora la base dañada se **copia**
+  a un lado en vez de moverse, y la copia sana se escribe **encima** con `shutil.copyfile` (abrir
+  en modo escritura sí se puede sobre un archivo abierto) con reintentos, por si el antivirus o el
+  indexador están mirando el archivo en ese instante. Si ni siquiera se puede guardar la dañada,
+  **se restaura igual y se avisa**: sin restaurar el negocio no abre, que es peor (regla 6).
+- **Correr `tests/correr_todos.py` en Windows es obligatorio antes de compilar.** Ese bug no
+  aparecía en Linux, y `tests/test_usb_mantenimiento.py` ni siquiera arrancaba allá: tenía
+  `sys.path.insert(0, "/home/user/1")` — la ruta absoluta del sandbox— hardcodeada. Las pruebas
+  que solo se corren en Linux dan una seguridad que no es real.
 - **Los logs rotan.** `stock_daemon.log` y el del watchdog escribían para siempre. Un disco lleno
   es una de las formas de corromper una base SQLite en uso: el remedio no puede causar la
   enfermedad.
