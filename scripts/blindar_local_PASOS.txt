@@ -38,7 +38,12 @@ Hace 5 cosas, en este orden:
      la segunda vez. Una vez que el script corre, esa pista
      se pierde: MANDAR ESE ARCHIVO.
   1. El servicio arranca con Windows y se reintenta solo.
-  2. La PC no se suspende mas (ni enchufada ni a bateria).
+  2. La PC no se suspende mas: se aplica a TODOS los planes de
+     energia (no solo al activo), se apaga la hibernacion, y se
+     le saca a la placa de red el "apagar para ahorrar energia"
+     -que deja la PC despierta pero fuera de la red-. La
+     pantalla SI se sigue apagando a los 10 min: eso no tiene
+     nada que ver, y que este negra NO es que la PC duerma.
   3. Instala un watchdog que cada 5 min revisa EL PUERTO
      (no solo si el servicio dice "Running": la API remota
      puede no haber levantado con el servicio corriendo, y

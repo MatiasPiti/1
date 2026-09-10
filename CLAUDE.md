@@ -169,7 +169,24 @@ no responde". **El script no está probado en Windows real todavía.**
   TODOS los flags no-default y no aplica nada. Va con `tailscale set --unattended=true`, que
   cambia una sola preferencia, y `up` queda de respaldo.
 - **`powercfg` solo cubría enchufado.** Si es notebook, se dormía igual apenas se corta la luz,
-  que es justo cuando más importa. Ahora AC y DC.
+  que es justo cuando más importa. Se corrigió a AC y DC — **y aun así siguió sin alcanzar**, ver
+  el punto siguiente.
+- **La PC se siguió suspendiendo DESPUÉS de correr el blindaje** (10/9/2026). `powercfg /change`
+  toca **solo el plan de energía activo**: si Windows cambia de plan (una actualización, el
+  software del fabricante, alguien que toca el icono de la batería), los tiempos vuelven y la PC
+  se duerme igual. Ahora se recorren **todos los planes** con `setacvalueindex`/`setdcvalueindex`
+  sobre `SUB_SLEEP`, se apaga la hibernación (`powercfg /hibernate off`), y **se verifica leyendo
+  la config de vuelta** en vez de darla por aplicada.
+- **La placa de red se apaga sola "para ahorrar energía", y eso no se ve en `powercfg`.** La PC
+  queda despierta pero desaparecida de la red: es exactamente el síntoma "está prendida y no
+  responde", y no lo tapa ninguno de los otros arreglos. El blindaje ahora corre
+  `Disable-NetAdapterPowerManagement` en cada placa física. Ojo: reinicia el adaptador, así que
+  corta la red un instante — el script avisa antes.
+- **Que la pantalla esté negra NO es que la PC duerma.** El blindaje deja el monitor apagándose a
+  los 10 minutos a propósito. Antes de perseguir una suspensión, mirar si el `/health` sigue
+  contestando: si contesta, la PC está viva y solo se apagó la pantalla. Los eventos
+  **Kernel-Power Id 42** (se durmió) y **107** (despertó) lo confirman sin adivinar, y el paso 0
+  del blindaje ahora los guarda junto con `powercfg /a` y `powercfg /lastwake`.
 - **Se perdía la evidencia.** El paso 0 guarda `sc.exe qc`, el estado del servicio, la cola del
   log y 7 días de errores del sistema en
   `C:\SistemaDual\watchdog\estado_antes_del_blindaje.txt` **antes** de cambiar nada. Es la

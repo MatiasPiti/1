@@ -41,6 +41,13 @@ $antes = "$carpeta\estado_antes_del_blindaje.txt"
 (Get-Service SistemaDualStockService -ErrorAction SilentlyContinue | Format-List * | Out-String) | Out-File $antes -Append
 "`n--- Ultimas 60 lineas del log del servicio ---" | Out-File $antes -Append
 (Get-Content C:\SistemaDual\logs\stock_daemon.log -Tail 60 -ErrorAction SilentlyContinue) | Out-File $antes -Append
+"`n--- Suspensiones y despertares (Kernel-Power: 42 = se durmio, 107 = desperto) ---" | Out-File $antes -Append
+(Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-Kernel-Power'} -MaxEvents 30 -ErrorAction SilentlyContinue |
+    Select-Object TimeCreated, Id | Format-Table -AutoSize | Out-String) | Out-File $antes -Append
+"`n--- Estados de suspension que soporta esta PC ---" | Out-File $antes -Append
+(powercfg /a 2>&1 | Out-String) | Out-File $antes -Append
+"`n--- Que la desperto la ultima vez ---" | Out-File $antes -Append
+(powercfg /lastwake 2>&1 | Out-String) | Out-File $antes -Append
 "`n--- Errores del sistema en los ultimos 7 dias (apagones, cuelgues) ---" | Out-File $antes -Append
 (Get-WinEvent -FilterHashtable @{LogName='System'; Level=1,2; StartTime=(Get-Date).AddDays(-7)} -MaxEvents 40 -ErrorAction SilentlyContinue |
     Select-Object TimeCreated, Id, ProviderName, Message | Format-List | Out-String) | Out-File $antes -Append
@@ -58,17 +65,77 @@ $svc = Get-Service SistemaDualStockService -ErrorAction SilentlyContinue
 Anotar "Servicio en Automatic" ($svc -and $svc.StartType -eq "Automatic") "StartType=$($svc.StartType)"
 
 # ===================================================================== #
-Write-Host "`n== 2/5  La PC no se duerme (ni enchufada ni a bateria) ==" -ForegroundColor Cyan
+Write-Host "`n== 2/5  La PC no se duerme, y la placa de red tampoco ==" -ForegroundColor Cyan
 # ===================================================================== #
-powercfg /change standby-timeout-ac 0
-powercfg /change hibernate-timeout-ac 0
+# 'powercfg /change' toca SOLO el plan de energia ACTIVO. Si Windows
+# cambia de plan -una actualizacion, el software del fabricante, o alguien
+# que toca el icono de la bateria- los tiempos vuelven y la PC se duerme
+# igual. Paso de verdad en El Galpon: se corrio este script, quedo bien, y
+# la PC se siguio suspendiendo. Por eso ahora se recorren TODOS los planes
+# uno por uno, no solo el que este activo hoy.
+$planes = @()
+try {
+    $planes = (powercfg /L) |
+        Select-String -Pattern '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})' -AllMatches |
+        ForEach-Object { $_.Matches.Value } | Select-Object -Unique
+} catch { }
+
+foreach ($plan in $planes) {
+    # STANDBYIDLE = suspender; HIBERNATEIDLE = hibernar. AC = enchufado,
+    # DC = a bateria (una notebook sin esto se duerme apenas se corta la
+    # luz, que es justo cuando mas importa que siga viva).
+    powercfg /setacvalueindex $plan SUB_SLEEP STANDBYIDLE 0    2>&1 | Out-Null
+    powercfg /setdcvalueindex $plan SUB_SLEEP STANDBYIDLE 0    2>&1 | Out-Null
+    powercfg /setacvalueindex $plan SUB_SLEEP HIBERNATEIDLE 0  2>&1 | Out-Null
+    powercfg /setdcvalueindex $plan SUB_SLEEP HIBERNATEIDLE 0  2>&1 | Out-Null
+}
+# La pantalla SI se apaga (10 min): no tiene nada que ver con la red y
+# ahorra el monitor. Que la pantalla este negra NO es que la PC duerma.
 powercfg /change monitor-timeout-ac 10
-# Tambien a bateria: si es una notebook, sin esto se duerme igual apenas
-# se corta la luz, que es justo cuando mas importa que siga viva.
-powercfg /change standby-timeout-dc 0
-powercfg /change hibernate-timeout-dc 0
 powercfg /change monitor-timeout-dc 10
-Anotar "PC sin suspension" $true "AC y DC en 0"
+# Sin hibernacion: es la otra forma en que la PC desaparece de la red.
+powercfg /hibernate off 2>&1 | Out-Null
+powercfg /setactive SCHEME_CURRENT 2>&1 | Out-Null
+
+# Se verifica leyendo la config de vuelta, no se da por hecho.
+$sinSuspension = $false
+try {
+    $indices = @(powercfg /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE | Select-String 'Index')
+    $sinSuspension = ($indices.Count -gt 0) -and -not ($indices | Where-Object { $_ -notmatch '0x00000000' })
+} catch { }
+Anotar "PC sin suspension" $sinSuspension "$($planes.Count) plan(es) de energia en 0, hibernacion apagada"
+
+# ---------------------------------------------------------------- #
+# La placa de red se apaga sola "para ahorrar energia": la PC sigue
+# despierta pero desaparecio de la red. Es exactamente el sintoma
+# "esta prendida y no responde", y NO se ve en powercfg ni en la app de
+# Tailscale del lado del local. Se apaga esa opcion en cada placa fisica.
+$placas = 0
+$vistas = 0
+$seEnumero = $false
+try {
+    $adaptadores = @(Get-NetAdapter -Physical -ErrorAction Stop | Where-Object { $_.Status -ne 'Not Present' })
+    $seEnumero = $true
+    if ($adaptadores.Count -gt 0) {
+        Write-Host "Ajustando $($adaptadores.Count) placa(s) de red. La red se corta un instante." -ForegroundColor Yellow
+    }
+    foreach ($ad in $adaptadores) {
+        $vistas++
+        try {
+            Disable-NetAdapterPowerManagement -Name $ad.Name -ErrorAction Stop -Confirm:$false
+            $placas++
+        } catch {
+            # Hay placas que directamente no exponen esa opcion. No es un
+            # problema: si no la exponen, tampoco se apagan solas.
+        }
+    }
+} catch {
+    # Sin el modulo NetAdapter (Windows viejo) no se puede hacer desde aca.
+}
+$detalleRed = if (-not $seEnumero) { "no se pudieron leer las placas de red" }
+              elseif ($vistas -eq 0) { "no hay placas fisicas activas" }
+              else { "$placas de $vistas ajustada(s); el resto no expone la opcion" }
+Anotar "Placa de red siempre despierta" $seEnumero $detalleRed
 
 # ===================================================================== #
 Write-Host "`n== 3/5  Watchdog cada 5 minutos ==" -ForegroundColor Cyan
