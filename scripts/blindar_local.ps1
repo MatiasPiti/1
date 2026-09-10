@@ -89,6 +89,22 @@ foreach ($plan in $planes) {
     powercfg /setacvalueindex $plan SUB_SLEEP HIBERNATEIDLE 0  2>&1 | Out-Null
     powercfg /setdcvalueindex $plan SUB_SLEEP HIBERNATEIDLE 0  2>&1 | Out-Null
 }
+foreach ($plan in $planes) {
+    # Los BOTONES y la TAPA. Windows suele traer el boton de encendido en
+    # "Suspender": el cajero lo aprieta para "apagar" al cerrar el negocio,
+    # la PC se duerme, y para la red es lo mismo que apagada. En notebook,
+    # cerrar la tapa hace exactamente lo mismo.
+    #   0 = no hacer nada | 1 = suspender | 2 = hibernar | 3 = apagar
+    # El boton de encendido queda en APAGAR y no en "nada": tiene que
+    # seguir sirviendo para apagar de verdad cuando alguien quiera.
+    powercfg /setacvalueindex $plan SUB_BUTTONS PBUTTONACTION 3 2>&1 | Out-Null
+    powercfg /setdcvalueindex $plan SUB_BUTTONS PBUTTONACTION 3 2>&1 | Out-Null
+    powercfg /setacvalueindex $plan SUB_BUTTONS SBUTTONACTION 0 2>&1 | Out-Null
+    powercfg /setdcvalueindex $plan SUB_BUTTONS SBUTTONACTION 0 2>&1 | Out-Null
+    powercfg /setacvalueindex $plan SUB_BUTTONS LIDACTION 0     2>&1 | Out-Null
+    powercfg /setdcvalueindex $plan SUB_BUTTONS LIDACTION 0     2>&1 | Out-Null
+}
+
 # La pantalla SI se apaga (10 min): no tiene nada que ver con la red y
 # ahorra el monitor. Que la pantalla este negra NO es que la PC duerma.
 powercfg /change monitor-timeout-ac 10
@@ -103,7 +119,7 @@ try {
     $indices = @(powercfg /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE | Select-String 'Index')
     $sinSuspension = ($indices.Count -gt 0) -and -not ($indices | Where-Object { $_ -notmatch '0x00000000' })
 } catch { }
-Anotar "PC sin suspension" $sinSuspension "$($planes.Count) plan(es) de energia en 0, hibernacion apagada"
+Anotar "PC sin suspension" $sinSuspension "$($planes.Count) plan(es): sin suspender, sin hibernar, boton y tapa no duermen"
 
 # ---------------------------------------------------------------- #
 # La placa de red se apaga sola "para ahorrar energia": la PC sigue
