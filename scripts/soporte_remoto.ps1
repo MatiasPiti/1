@@ -109,6 +109,22 @@ try {
 }
 Anotar "SSH corriendo y en Automatic" $sshOk "Status=$((Get-Service sshd -ErrorAction SilentlyContinue).Status)"
 
+# ---------------------------------------------------------------- #
+# Que shell abrir al entrar. Sin esto, la conexion AUTENTICA bien y
+# despues muere con "shell request failed on channel 0": parece un
+# problema de contrasena o de red y no es ninguno de los dos. Paso en la
+# PC del local y costo un rato entender que ya estaba adentro.
+try {
+    New-Item -Path "HKLM:\SOFTWARE\OpenSSH" -Force -ErrorAction Stop | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell `
+        -Value "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" `
+        -PropertyType String -Force -ErrorAction Stop | Out-Null
+    Restart-Service sshd -ErrorAction SilentlyContinue
+    Write-Host "Al entrar por SSH se abre PowerShell."
+} catch {
+    Write-Host "No se pudo fijar el shell por defecto: $_" -ForegroundColor Yellow
+}
+
 # ===================================================================== #
 Write-Host "`n== 3/4  Solo alcanzable por la VPN ==" -ForegroundColor Cyan
 # ===================================================================== #

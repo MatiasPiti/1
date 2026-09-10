@@ -53,6 +53,12 @@ print(f"COBERTURA DEL BLINDAJE: {len(COBERTURA) - len([f for f in fallos if 'ya 
 
 # El SSH tiene que quedar SOLO por la VPN: si esa línea desaparece, el
 # puerto 22 queda abierto a lo que sea que alcance la máquina.
+# Sin DefaultShell, la conexión autentica bien y muere con "shell request
+# failed on channel 0": parece un problema de contraseña o de red, y no es
+# ninguno de los dos.
+if "DefaultShell" not in soporte:
+    fallos.append("soporte_remoto.ps1 no fija el shell por defecto: el SSH va a "
+                   "autenticar y morir con 'shell request failed on channel 0'")
 if "100.64.0.0/10" not in soporte:
     fallos.append("¡el soporte remoto ya no limita el SSH al rango de Tailscale!")
 if "-Password" not in soporte:

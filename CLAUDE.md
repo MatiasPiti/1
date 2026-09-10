@@ -210,6 +210,10 @@ el blindaje otra vez, todo desde casa o desde el celular.
   de soporte además se oculta de la pantalla de inicio de sesión.
 - **El servicio `sshd` va en `Automatic` con reintentos**, por la misma razón que el
   `StockService`: un soporte remoto que no levanta tras un reinicio no sirve para nada.
+- **Hay que fijarle el shell a OpenSSH (`HKLM:\SOFTWARE\OpenSSH\DefaultShell`).** Sin eso la
+  conexión **autentica bien** y después muere con `shell request failed on channel 0`: parece un
+  problema de contraseña o de red y no es ninguno de los dos — ya estás adentro, lo que falta es
+  qué consola abrir. Pasó en la PC del local y costó un rato entenderlo.
 - **Probarlo con datos móviles antes de irse del local.** Si no entra estando ahí, tampoco va a
   entrar desde casa.
 - **Es una decisión de Matías con su cliente**, no algo que se instale sin avisar: Leo tiene que
