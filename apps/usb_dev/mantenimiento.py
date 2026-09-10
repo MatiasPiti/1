@@ -377,27 +377,72 @@ def verificar_respaldos(carpeta_instalacion: str, log: list) -> None:
         log.append(f"[RESPALDO] Copias al día: {detalle}.")
 
 
+def _verificar_arranque_automatico(log: list) -> None:
+    """¿El servicio arranca solo con Windows, o solo cuando alguien lo pide?
+
+    Esto es lo que rompió a El Galpón tres veces y costó dos visitas: el
+    servicio estaba en Manual (DEMAND_START) porque pywin32 instala así por
+    defecto. No se nota NUNCA en el momento —recién instalado queda
+    corriendo porque uno lo arranca a mano— y se nota al primer reinicio de
+    la PC, cuando el Dueño Remoto deja de conectar sin que nadie haya
+    tocado nada. Se corrige solo, acá, porque no hay ningún motivo para que
+    esté en Manual.
+    """
+    try:
+        cfg = subprocess.run(["sc.exe", "qc", NOMBRE_SERVICIO_WINDOWS],
+                              capture_output=True, text=True, timeout=10)
+    except Exception as e:
+        log.append(f"[SERVICIO] No se pudo leer el tipo de arranque: {e}")
+        return
+
+    salida = cfg.stdout.upper()
+    if "AUTO_START" in salida:
+        log.append("[SERVICIO] Arranque automático: OK (levanta solo con Windows).")
+        return
+    if "DEMAND_START" not in salida:
+        return   # no está registrado; de eso se ocupa el paso siguiente
+
+    log.append("[SERVICIO] ¡PROBLEMA! El servicio está en arranque MANUAL: no levanta solo "
+                "cuando se reinicia la PC, y ahí el Dueño Remoto deja de conectar sin que "
+                "nadie haya tocado nada. Corrigiéndolo a automático...")
+    try:
+        r = subprocess.run(["sc.exe", "config", NOMBRE_SERVICIO_WINDOWS, "start=", "auto"],
+                            capture_output=True, text=True, timeout=15)
+        if r.returncode == 0:
+            log.append("[SERVICIO] Corregido: ahora arranca solo con Windows.")
+            subprocess.run(["sc.exe", "failure", NOMBRE_SERVICIO_WINDOWS, "reset=", "86400",
+                             "actions=", "restart/60000/restart/60000/restart/60000"],
+                            capture_output=True, text=True, timeout=15)
+        else:
+            log.append(f"[SERVICIO] NO se pudo corregir (¿falta ejecutar como administrador?): "
+                        f"{r.stdout.strip()} {r.stderr.strip()}")
+    except Exception as e:
+        log.append(f"[SERVICIO] NO se pudo corregir el tipo de arranque: {e}")
+
+
 def verificar_servicio_windows(carpeta_instalacion: str, log: list) -> None:
     if os.name != "nt":
         log.append("[SERVICIO] Este paso solo aplica en Windows; se omite en este entorno.")
         return
     try:
-        estado = subprocess.run(["sc", "query", NOMBRE_SERVICIO_WINDOWS],
+        _verificar_arranque_automatico(log)
+        estado = subprocess.run(["sc.exe", "query", NOMBRE_SERVICIO_WINDOWS],
                                  capture_output=True, text=True, timeout=10)
         if "RUNNING" in estado.stdout:
             log.append("[SERVICIO] Estado actual: corriendo. OK.")
             return
         if "STOPPED" in estado.stdout:
             log.append("[SERVICIO] Estado actual: DETENIDO. Reiniciando...")
-            subprocess.run(["sc", "start", NOMBRE_SERVICIO_WINDOWS], capture_output=True, text=True, timeout=15)
-            log.append("[SERVICIO] Se envió comando de reinicio ('sc start').")
+            subprocess.run(["sc.exe", "start", NOMBRE_SERVICIO_WINDOWS], capture_output=True, text=True, timeout=15)
+            log.append("[SERVICIO] Se envió comando de reinicio ('sc.exe start').")
             return
         exe_servicio = os.path.join(carpeta_instalacion, "StockService", "StockService.exe")
         if os.path.isfile(exe_servicio):
             log.append("[SERVICIO] No está registrado en Windows. Instalándolo desde cero...")
-            subprocess.run([exe_servicio, "install"], capture_output=True, text=True, timeout=30)
+            subprocess.run([exe_servicio, "--startup", "auto", "install"],
+                            capture_output=True, text=True, timeout=30)
             subprocess.run([exe_servicio, "start"], capture_output=True, text=True, timeout=15)
-            log.append("[SERVICIO] Instalado y arrancado.")
+            log.append("[SERVICIO] Instalado (arranque automático) y arrancado.")
         else:
             log.append("[SERVICIO] No está registrado y no se encontró StockService.exe en esta "
                         "instalación; se omite (esperable si esto no es el Maestro).")

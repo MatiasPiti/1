@@ -117,9 +117,24 @@ local encendida. Pasó dos veces el mismo día. Lo que se aprendió:
   tiempo que se pierde mirando IPs y tokens es tiempo perdido: el problema está más arriba.
 - **"La PC está encendida" no alcanza.** Suspendida, hibernada o con la sesión cerrada es, para la
   red, lo mismo que apagada.
-- **La causa de las dos veces fue la misma:** el `StockService` parado. La primera, porque para
-  recompilar hay que pararlo y nadie lo relanza (el `.bat` no lo hace, el `OtterActualizador`
-  tampoco). Es el gotcha ya documentado arriba, ahora confirmado en producción dos veces.
+- **La causa de fondo, confirmada el 9/9/2026 leyendo `sc.exe qc` en la PC del local: el servicio
+  estaba en `DEMAND_START` (Manual), no en `Automatic`.** No hacía falta que nadie lo parara: **cada
+  vez que se reiniciaba la PC, el servicio no volvía**. En los eventos de esa misma máquina se ven
+  reinicios el 8/9 a las 00:44, el 8/9 a las 16:18 y el 9/9 a las 08:15 — cada uno dejó a Leo sin
+  conexión. Cuando se corrió el blindaje, el servicio estaba parado otra vez (tercera vez).
+- **Es un bug del instalador, no de esa máquina.** `win32serviceutil.HandleCommandLine` con
+  `install` y sin `--startup auto` registra el servicio en Manual: es el default de pywin32. **No
+  se nota nunca el día de la instalación**, porque uno lo arranca a mano y queda corriendo; se nota
+  al primer reinicio, cuando ya no hay nadie mirando. Le habría pasado igual a todos los clientes
+  siguientes. Arreglado en tres lugares: el instalador pasa `--startup auto` y configura los
+  reintentos de Windows, el propio `StockService.exe install` fuerza `--startup auto` si no se lo
+  dan, y el USB de Mantenimiento **detecta el arranque Manual y lo corrige solo**
+  (`_verificar_arranque_automatico`). El instalador además ahora verifica el TIPO DE ARRANQUE y no
+  solo que el servicio esté corriendo: que corra hoy no dice nada de mañana, y "mañana" era
+  justamente cuando fallaba.
+- **Pararlo para recompilar y no relanzarlo es una causa REAL pero secundaria** (el `.bat` no lo
+  relanza, y el `OtterActualizador` solo lo hace si estaba corriendo antes). Sigue valiendo el
+  gotcha documentado arriba.
 
 **El diagnóstico que separa las causas en dos pasos** (se puede hacer entero desde el celular):
 
@@ -306,9 +321,18 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
 ## Lo que falta hacer
 
 **Pendiente:**
-- [ ] **Correr `scripts/blindar_local.ps1` en la PC del local** (como administrador) y verificar
-      con la prueba real: cerrar sesión —no apagar— y confirmar desde el celular que el `/health`
-      sigue contestando. Nunca se ejecutó en Windows todavía.
+- [x] **Correr `scripts/blindar_local.ps1` en la PC del local.** HECHO el 9/9/2026: las 7 filas
+      en SI (servicio en Automatic, watchdog Ready, Tailscale unattended por CLI, servicio
+      corriendo, puerto 8765 respondiendo). Encontró el servicio parado por tercera vez y lo
+      levantó. **Falta la prueba final**: cerrar sesión —no apagar— y confirmar desde el celular
+      que el `/health` sigue contestando (hay que hacerlo con el negocio cerrado, porque cerrar
+      sesión cierra la caja).
+- [ ] **Hacer el inventario físico, en serio.** El log del servicio está lleno de
+      `StockInsuficienteError: disponible 0, se pidió descontar 1`: el catálogo entró con stock 0,
+      así que **ninguna venta descuenta stock**. La plata se cobra bien (sale de `self.carrito` y
+      `cerrar_ticket` graba la venta), pero el control de stock no está funcionando en la práctica
+      y las alertas de Telegram nunca van a servir. Es el pendiente que hace que media mitad del
+      sistema no rinda.
 - [ ] **Rotar los dos tokens del cliente**: el de `[remoto]` y el del bot de Telegram quedaron
       visibles en una captura de pantalla mandada por chat. El de Telegram se revoca con `/revoke`
       en @BotFather; el de `[remoto]` se cambia en `C:\SistemaDual\config.ini`, se reinicia el

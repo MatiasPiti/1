@@ -390,16 +390,43 @@ class Instalador(tk.Tk):
         subprocess.run([exe, "stop"], capture_output=True, text=True, timeout=60)
         subprocess.run([exe, "remove"], capture_output=True, text=True, timeout=60)
 
-        r = subprocess.run([exe, "install"], capture_output=True, text=True, timeout=120)
+        # "--startup auto" NO es opcional: pywin32 instala en Manual por
+        # defecto, y eso no se nota el día de la instalación (el servicio
+        # queda corriendo porque lo arrancamos acá abajo). Se nota al PRIMER
+        # REINICIO, cuando ya no arranca solo y nadie está mirando. Le pasó
+        # a El Galpón: la PC se reiniciaba y el Dueño Remoto quedaba sin
+        # conexión sin que nadie hubiera tocado nada.
+        r = subprocess.run([exe, "--startup", "auto", "install"],
+                            capture_output=True, text=True, timeout=120)
         if r.returncode != 0:
             raise RuntimeError(f"No se pudo instalar el servicio:\n{r.stdout}\n{r.stderr}")
+
+        # Si el servicio se CAE, que Windows lo reintente solo tres veces
+        # antes de darse por vencido. Es la red de contención de abajo de
+        # todo: acá no hay nadie que lo mire.
+        subprocess.run(["sc.exe", "failure", NOMBRE_SERVICIO, "reset=", "86400",
+                         "actions=", "restart/60000/restart/60000/restart/60000"],
+                        capture_output=True, text=True, timeout=30)
+
         r = subprocess.run([exe, "start"], capture_output=True, text=True, timeout=120)
         if r.returncode != 0:
             raise RuntimeError(f"El servicio se instaló pero no arrancó:\n{r.stdout}\n{r.stderr}")
 
-        estado = subprocess.run(["sc", "query", NOMBRE_SERVICIO], capture_output=True, text=True, timeout=30)
-        if "RUNNING" in estado.stdout.upper():
-            self._log("   Servicio instalado y corriendo.\n")
+        estado = subprocess.run(["sc.exe", "query", NOMBRE_SERVICIO],
+                                 capture_output=True, text=True, timeout=30)
+        arranque = subprocess.run(["sc.exe", "qc", NOMBRE_SERVICIO],
+                                   capture_output=True, text=True, timeout=30)
+        # Se verifica el TIPO DE ARRANQUE y no solo que esté corriendo: que
+        # corra ahora no dice nada sobre mañana, y "mañana" es justamente
+        # cuando fallaba.
+        automatico = "AUTO_START" in arranque.stdout.upper()
+        if "RUNNING" in estado.stdout.upper() and automatico:
+            self._log("   Servicio instalado, corriendo y en arranque automático.\n")
+        elif "RUNNING" in estado.stdout.upper():
+            self._log("   ATENCIÓN: el servicio corre pero NO quedó en arranque automático.\n"
+                       "   Al primer reinicio de la PC no va a levantar y el Dueño Remoto\n"
+                       "   se queda sin conexión. Corregirlo con:\n"
+                       f"      sc.exe config {NOMBRE_SERVICIO} start= auto\n")
         else:
             self._log(f"   ATENCIÓN: el servicio quedó instalado pero no figura como corriendo.\n"
                        f"   {estado.stdout.strip()}\n")

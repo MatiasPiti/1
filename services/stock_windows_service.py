@@ -115,4 +115,18 @@ if __name__ == "__main__":
     else:
         # Con argumentos = lo está llamando una persona desde la consola:
         # install / start / stop / remove.
-        win32serviceutil.HandleCommandLine(StockService)
+        #
+        # A "install" se le fuerza el arranque automático si no vino
+        # especificado. pywin32 instala en DEMAND_START (Manual) por
+        # defecto, y eso NO se nota nunca en el momento: el servicio queda
+        # corriendo porque uno lo arranca a mano recién instalado. Se nota
+        # al PRIMER REINICIO de la PC, cuando ya no arranca y nadie está
+        # mirando. Fue exactamente lo que le pasó a El Galpón: el servicio
+        # figuraba Manual, la PC se reiniciaba (Windows Update, corte de
+        # luz, apagado nocturno) y el Dueño Remoto quedaba sin conexión sin
+        # que nadie hubiera tocado nada. Se confirmó leyendo `sc.exe qc` en
+        # producción: TIPO_INICIO 3 = DEMAND_START.
+        argumentos = sys.argv[1:]
+        if "install" in argumentos and not any(a.startswith("--startup") for a in argumentos):
+            argumentos = ["--startup", "auto"] + argumentos
+        win32serviceutil.HandleCommandLine(StockService, argv=[sys.argv[0]] + argumentos)
