@@ -104,6 +104,24 @@ for archivo, contenido in (("blindar_local.ps1", blindar), ("soporte_remoto.ps1"
 print("SIN CHEQUEOS QUE DEPENDAN DEL IDIOMA: ok")
 
 # ---------------------------------------------------------------- #
+# 4c. Cada fila de la tabla se gana el SI comprobando algo
+# ---------------------------------------------------------------- #
+# En la PC del local la fila "Usuario de soporte" dijo SI con el usuario
+# INEXISTENTE: se marcaba OK apenas terminaba el bloque sin error, no
+# porque el usuario estuviera. Un OK que no comprueba nada es peor que no
+# tener la fila, porque hace dar por resuelto algo que no lo está.
+if "Get-LocalUser" not in soporte or "net user" not in soporte:
+    fallos.append("soporte_remoto.ps1 no comprueba que el usuario exista de verdad "
+                   "después de crearlo")
+for marca, que_cuida in (("$sinSuspension", "que la PC no se suspenda"),
+                          ("$existe", "que el usuario de soporte exista"),
+                          ("$puerto", "que el puerto 8765 escuche")):
+    fuente = blindar if marca in blindar else soporte
+    if marca not in fuente:
+        fallos.append(f"no hay verificación real de: {que_cuida}")
+print("CADA 'SI' DE LA TABLA COMPRUEBA ALGO: ok")
+
+# ---------------------------------------------------------------- #
 # 5. La ventana abre de verdad, y el log es seguro entre hilos
 # ---------------------------------------------------------------- #
 # Que el .exe compile no dice nada: si _armar_ui explota, el usuario hace

@@ -164,7 +164,32 @@ try {
 } catch {
     Write-Host "No se pudo crear el usuario: $_" -ForegroundColor Yellow
 }
-Anotar "Usuario de soporte" $usuarioOk $USUARIO
+
+# Se comprueba que el usuario EXISTA de verdad, en vez de confiar en que
+# los comandos de arriba no tiraron error. La primera version marcaba OK
+# apenas terminaba el bloque, y en la PC del local la tabla dijo SI con el
+# usuario inexistente: Matias se entero recien al querer entrar por SSH.
+# Una verificacion que no verifica es peor que ninguna, porque da por
+# resuelto algo que no lo esta.
+$existe = $false
+try {
+    $existe = $null -ne (Get-LocalUser -Name $USUARIO -ErrorAction SilentlyContinue)
+    if (-not $existe) {
+        # Get-LocalUser depende del modulo LocalAccounts, que no siempre
+        # esta disponible. 'net user' lo dice igual y esta desde siempre.
+        $existe = ((net user 2>&1) -join " ") -match [regex]::Escape($USUARIO)
+    }
+} catch { }
+
+$detalleUsuario = if ($existe) { $USUARIO } else { "$USUARIO NO quedo creado" }
+Anotar "Usuario de soporte" ($usuarioOk -and $existe) $detalleUsuario
+if (-not $existe) {
+    Write-Host ""
+    Write-Host "El usuario $USUARIO no quedo creado. Crealo a mano asi:" -ForegroundColor Yellow
+    Write-Host "    net user $USUARIO `"TuContrasena`" /add" -ForegroundColor Yellow
+    Write-Host "    Add-LocalGroupMember -SID `"S-1-5-32-544`" -Member $USUARIO" -ForegroundColor Yellow
+    Write-Host "(el SID es el grupo de administradores: su nombre cambia con el idioma)" -ForegroundColor Yellow
+}
 
 # ===================================================================== #
 Write-Host "`n== Resultado ==" -ForegroundColor Cyan

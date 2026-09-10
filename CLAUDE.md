@@ -225,6 +225,12 @@ el blindaje otra vez, todo desde casa o desde el celular.
   **aunque los cambios hubieran entrado perfecto**. Ahora se buscan los valores hexadecimales, que
   son iguales en cualquier idioma. `tests/test_blindaje.py` falla si vuelve a aparecer un
   `Select-String 'Index'` (o 'Running', 'Enabled'…) sobre la salida de un comando de Windows.
+- **Una verificación que no verifica es peor que ninguna.** La fila "Usuario de soporte" de la
+  tabla dijo **SI** con el usuario `otter_soporte` **inexistente**: se marcaba OK apenas terminaba
+  el bloque sin tirar error, no porque el usuario estuviera creado. Matías se enteró recién al
+  querer entrar por SSH, ya con el blindaje "terminado". Ahora se comprueba con `Get-LocalUser` y,
+  si el módulo `LocalAccounts` no está, con `net user` — que está en Windows desde siempre. El
+  test falla si alguna fila de la tabla se gana el SI sin comprobar nada.
 - **`Add-WindowsCapability` baja OpenSSH de Windows Update**, no lo saca del disco. En la PC del
   local el servicio de Windows Update estaba deshabilitado (común en máquinas donde alguien "apagó
   las actualizaciones") y la instalación moría con `0x8024001e` sin que se entendiera por qué.
