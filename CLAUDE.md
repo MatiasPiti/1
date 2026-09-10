@@ -359,10 +359,13 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
 - [ ] Configurar la impresora térmica POS-58 en la PC del local.
 - [ ] Escribir las ACLs de Tailscale antes de sumar un segundo cliente.
 - [ ] Cargar el token y el chat_id del bot de Telegram del cliente.
-- [ ] **Recompilar y actualizar la PC del local con el respaldo diario y el cartel de arranque.**
-      Nada de eso está andando en el local hasta que Matías recompile (`build\build_all.bat`) y
-      pase el `OtterActualizador`. Después, confirmar que a las 24 hs exista
-      `C:\SistemaDual\backups\stock_<fecha>.db`.
+- [x] **Recompilar y actualizar la PC del local con el respaldo diario y el cartel de arranque.**
+      HECHO el 10/9/2026. Se compiló en la laptop de Matías con Python 3.12.10 (tenía 3.14
+      instalada; se puso 3.12 al lado con `py -3.12`), se pasó `dist\` por pendrive y se corrió el
+      `OtterActualizador` en el local. Confirmado en la máquina real:
+      `C:\SistemaDual\backups\stock_2026-09-10.db` (2,7 MB) y en el log
+      `[RESPALDO] Copia diaria OK`. **No hace falta esperar 24 hs para verificarlo**: el respaldo
+      se intenta apenas arranca el servicio, así que la copia aparece a los segundos.
 - [ ] **Decidir dónde va una copia FUERA de la PC.** Las copias diarias protegen contra la base
       dañada, un borrado o un bug, pero **están en el mismo disco**: no cubren que el disco muera
       ni que se roben la máquina. Las dos opciones sensatas son un pendrive que quede puesto
