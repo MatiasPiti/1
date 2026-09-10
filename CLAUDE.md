@@ -324,9 +324,12 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
 - [x] **Correr `scripts/blindar_local.ps1` en la PC del local.** HECHO el 9/9/2026: las 7 filas
       en SI (servicio en Automatic, watchdog Ready, Tailscale unattended por CLI, servicio
       corriendo, puerto 8765 respondiendo). Encontró el servicio parado por tercera vez y lo
-      levantó. **Falta la prueba final**: cerrar sesión —no apagar— y confirmar desde el celular
-      que el `/health` sigue contestando (hay que hacerlo con el negocio cerrado, porque cerrar
-      sesión cierra la caja).
+      levantó. **La prueba final también está hecha y PASÓ** (9/9/2026): se reinició la PC, se
+      dejó en la pantalla de bloqueo SIN iniciar sesión, y desde el celular `/health` contestó
+      `{"ok": false, "error": "token inválido"}` — que rechace el token es la prueba de que está
+      vivo, porque el navegador no lo manda. Queda confirmado en producción que el servicio
+      arranca solo con Windows y que Tailscale sigue conectado sin sesión iniciada.
+      **Reiniciar es mejor prueba que cerrar sesión**: prueba las dos cosas de una.
 - [ ] **Hacer el inventario físico, en serio.** El log del servicio está lleno de
       `StockInsuficienteError: disponible 0, se pidió descontar 1`: el catálogo entró con stock 0,
       así que **ninguna venta descuenta stock**. La plata se cobra bien (sale de `self.carrito` y

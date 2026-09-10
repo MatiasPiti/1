@@ -85,7 +85,7 @@ alcanza):
   1. CERRAR SESION en la PC del local.
      Cerrar sesion, NO apagar.
   2. Desde el celular (con Tailscale conectado), abrir:
-        http://100.91.59.19:8765/health
+        http://IP-DEL-LOCAL:8765/health
      o mirar el semaforo en la app.
 
   Si contesta algo (aunque diga "token invalido"), el
