@@ -217,6 +217,21 @@ el blindaje otra vez, todo desde casa o desde el celular.
 - Para ver la pantalla (la GUI de la Caja) SSH no alcanza. Si algún día hace falta, RustDesk
   apuntado a la IP de Tailscale, nunca a sus servidores.
 
+**Dos cosas que se aprendieron corriéndolo en la PC del local (10/9/2026):**
+
+- **Un chequeo que depende del idioma de Windows no es un chequeo.** La verificación de que la PC
+  no se suspende buscaba la palabra `Index` en la salida de `powercfg`; el Windows del local está
+  en español y dice `Índice`, así que daba **siempre** cero coincidencias y la tabla marcaba NO
+  **aunque los cambios hubieran entrado perfecto**. Ahora se buscan los valores hexadecimales, que
+  son iguales en cualquier idioma. `tests/test_blindaje.py` falla si vuelve a aparecer un
+  `Select-String 'Index'` (o 'Running', 'Enabled'…) sobre la salida de un comando de Windows.
+- **`Add-WindowsCapability` baja OpenSSH de Windows Update**, no lo saca del disco. En la PC del
+  local el servicio de Windows Update estaba deshabilitado (común en máquinas donde alguien "apagó
+  las actualizaciones") y la instalación moría con `0x8024001e` sin que se entendiera por qué.
+  Ahora el script lo prende, reintenta, y **lo vuelve a dejar como estaba**: si el dueño lo
+  deshabilitó a propósito, no somos quién para cambiárselo. Si aun así falla, el `.msi` oficial de
+  `github.com/PowerShell/Win32-OpenSSH/releases` (es de Microsoft) no depende de Windows Update.
+
 **`OtterBlindaje.exe` es la forma cómoda de correr todo esto**: un botón que ejecuta
 `blindar_local.ps1` y, si se tilda, `soporte_remoto.ps1`. **Ejecuta los `.ps1`, no los
 reimplementa** — duplicar esa lógica sería garantizar que en tres meses una mitad esté arreglada

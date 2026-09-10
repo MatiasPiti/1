@@ -114,10 +114,24 @@ powercfg /hibernate off 2>&1 | Out-Null
 powercfg /setactive SCHEME_CURRENT 2>&1 | Out-Null
 
 # Se verifica leyendo la config de vuelta, no se da por hecho.
+#
+# Se buscan las lineas con un valor hexadecimal y NO la palabra "Index":
+# powercfg habla el idioma de Windows, y en la PC del local (Windows en
+# espanol) dice "Indice de configuracion actual de CA". Buscar "Index"
+# daba SIEMPRE cero coincidencias y la fila salia NO aunque los cambios
+# hubieran entrado perfecto. Un chequeo que depende del idioma no es un
+# chequeo: es un susto garantizado.
 $sinSuspension = $false
 try {
-    $indices = @(powercfg /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE | Select-String 'Index')
-    $sinSuspension = ($indices.Count -gt 0) -and -not ($indices | Where-Object { $_ -notmatch '0x00000000' })
+    $valores = @(powercfg /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE |
+                 Select-String -Pattern '0x[0-9a-fA-F]{8}' -AllMatches |
+                 ForEach-Object { $_.Matches } | ForEach-Object { $_.Value })
+    # Los dos primeros hexadecimales de esa salida son el GUID del subgrupo
+    # y el del ajuste; los que interesan son los indices de CA y CC, que
+    # son los ultimos dos.
+    $indices = @($valores | Select-Object -Last 2)
+    $sinSuspension = ($indices.Count -eq 2) -and
+                     -not ($indices | Where-Object { $_ -ne '0x00000000' })
 } catch { }
 Anotar "PC sin suspension" $sinSuspension "$($planes.Count) plan(es): sin suspender, sin hibernar, boton y tapa no duermen"
 

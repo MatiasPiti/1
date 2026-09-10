@@ -88,6 +88,22 @@ for crudo, espera in ((b"Servicio en Automatic", "Servicio en Automatic"),
 print("DECODIFICACIÓN: ok (utf-8 y cp1252)")
 
 # ---------------------------------------------------------------- #
+# 4b. Nada que dependa del IDIOMA de Windows
+# ---------------------------------------------------------------- #
+# powercfg, sc.exe y compania hablan el idioma del sistema. Buscar "Index"
+# en la salida de powercfg funcionaba en inglés y daba SIEMPRE cero
+# coincidencias en la PC del cliente (Windows en español dice "Índice"):
+# la tabla marcaba NO aunque los cambios hubieran entrado bien. Un chequeo
+# que depende del idioma no es un chequeo.
+PALABRAS_EN_INGLES = ("'Index'", '"Index"', "'Running'", "'Enabled'", "'Success'")
+for archivo, contenido in (("blindar_local.ps1", blindar), ("soporte_remoto.ps1", soporte)):
+    for palabra in PALABRAS_EN_INGLES:
+        if f"Select-String {palabra}" in contenido or f"-Pattern {palabra}" in contenido:
+            fallos.append(f"{archivo} busca {palabra} en la salida de un comando: "
+                           f"eso depende del idioma de Windows y falla en español")
+print("SIN CHEQUEOS QUE DEPENDAN DEL IDIOMA: ok")
+
+# ---------------------------------------------------------------- #
 # 5. La ventana abre de verdad, y el log es seguro entre hilos
 # ---------------------------------------------------------------- #
 # Que el .exe compile no dice nada: si _armar_ui explota, el usuario hace

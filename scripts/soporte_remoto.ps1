@@ -41,14 +41,54 @@ $instalado = $false
 try {
     $cap = Get-WindowsCapability -Online -Name OpenSSH.Server* -ErrorAction Stop |
            Select-Object -First 1
-    if ($cap.State -ne "Installed") {
+    if ($cap.State -eq "Installed") {
+        $instalado = $true
+    } else {
         Write-Host "Descargando e instalando (puede tardar unos minutos)..."
-        Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null
+        try {
+            Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null
+            $instalado = $true
+        } catch {
+            # 0x8024001e y familia son errores de Windows Update: OpenSSH no
+            # viene en el disco, se BAJA de ahi. En la PC del local el
+            # servicio estaba deshabilitado -es comun en maquinas donde
+            # alguien "apago las actualizaciones"- y la instalacion moria
+            # sin que se entendiera por que. Se prende, se reintenta, y se
+            # deja como estaba.
+            Write-Host "Fallo por Windows Update ($($_.Exception.Message))." -ForegroundColor Yellow
+            Write-Host "Prendiendo el servicio de Windows Update y reintentando..." -ForegroundColor Yellow
+            $arranqueOriginal = (Get-Service wuauserv -ErrorAction SilentlyContinue).StartType
+            try {
+                if ($arranqueOriginal -eq "Disabled") {
+                    Set-Service wuauserv -StartupType Manual -ErrorAction Stop
+                }
+                Start-Service wuauserv -ErrorAction Stop
+                Start-Sleep -Seconds 3
+                Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null
+                $instalado = $true
+                Write-Host "Ahora si: OpenSSH instalado." -ForegroundColor Green
+            } catch {
+                Write-Host "Tampoco: $($_.Exception.Message)" -ForegroundColor Yellow
+            } finally {
+                # Se deja Windows Update como estaba: si el dueno lo tenia
+                # deshabilitado a proposito, no somos quien para cambiarlo.
+                if ($arranqueOriginal -eq "Disabled") {
+                    Set-Service wuauserv -StartupType Disabled -ErrorAction SilentlyContinue
+                }
+            }
+        }
     }
-    $instalado = $true
 } catch {
-    Write-Host "No se pudo instalar OpenSSH: $_" -ForegroundColor Yellow
-    Write-Host "Probar a mano: Configuracion -> Aplicaciones -> Caracteristicas opcionales" -ForegroundColor Yellow
+    Write-Host "No se pudo consultar OpenSSH: $_" -ForegroundColor Yellow
+}
+if (-not $instalado) {
+    Write-Host ""
+    Write-Host "OpenSSH no quedo instalado. Dos caminos:" -ForegroundColor Yellow
+    Write-Host "  1) Configuracion -> Aplicaciones -> Caracteristicas opcionales" -ForegroundColor Yellow
+    Write-Host "     -> Agregar caracteristica -> 'Servidor de OpenSSH'" -ForegroundColor Yellow
+    Write-Host "  2) Si esa PC no puede usar Windows Update, bajar el .msi oficial" -ForegroundColor Yellow
+    Write-Host "     de github.com/PowerShell/Win32-OpenSSH/releases (es de Microsoft)" -ForegroundColor Yellow
+    Write-Host "     y despues volver a correr este script." -ForegroundColor Yellow
 }
 Anotar "Servidor SSH instalado" $instalado ""
 
