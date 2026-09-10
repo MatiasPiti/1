@@ -13,3 +13,12 @@ dist/
 config.ini
 .venv/
 venv/
+
+# Listas de precios y catálogos del cliente. Traen COSTOS y MÁRGENES DE
+# GANANCIA: son los números con los que el negocio compite, y este repo es
+# público. Se generan cuando hacen falta y se pasan por fuera de git.
+Lista_Precios*.xlsx
+*_para_claude/
+dbf_para_claude/
+*.DBF
+*.FPT
