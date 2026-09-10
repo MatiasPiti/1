@@ -17,7 +17,7 @@ elegí lo que falla menos, no lo que es más elegante.
 
 ## Qué es Otter
 
-POS + control de stock en Python/Tkinter/SQLite que compila a **9 ejecutables Windows portables**
+POS + control de stock en Python/Tkinter/SQLite que compila a **10 ejecutables Windows portables**
 (PyInstaller `--onedir`). Ver `README.md` para el detalle. En una línea cada uno:
 
 | Ejecutable | Dónde va | Para qué |
@@ -31,6 +31,7 @@ POS + control de stock en Python/Tkinter/SQLite que compila a **9 ejecutables Wi
 | `USB_Mantenimiento` | Pendrive de Matías | Diagnóstico y reparación en el local. |
 | `OtterInstalador` | Pendrive de instalación | Hace toda la instalación en un botón. |
 | `OtterActualizador` | Pendrive | Pone al día una instalación que ya anda, sin tocar datos ni config. |
+| `OtterBlindaje` | Pendrive de Matías | Un botón: deja la PC del local a prueba de las caídas conocidas (energía, servicio, red, watchdog, Tailscale) y opcionalmente el soporte remoto por SSH. |
 
 **Build:** `build\build_all.bat` desde la raíz, en Windows. Genera todo en `dist\`.
 
@@ -215,6 +216,14 @@ el blindaje otra vez, todo desde casa o desde el celular.
   saber que su proveedor puede entrar a esa PC a reparar.
 - Para ver la pantalla (la GUI de la Caja) SSH no alcanza. Si algún día hace falta, RustDesk
   apuntado a la IP de Tailscale, nunca a sus servidores.
+
+**`OtterBlindaje.exe` es la forma cómoda de correr todo esto**: un botón que ejecuta
+`blindar_local.ps1` y, si se tilda, `soporte_remoto.ps1`. **Ejecuta los `.ps1`, no los
+reimplementa** — duplicar esa lógica sería garantizar que en tres meses una mitad esté arreglada
+y la otra no. Los `.ps1` siguen sirviendo solos (se bajan de GitHub y se corren en una consola);
+el `.exe` es para no tener que pegar comandos con el negocio esperando. Guarda una copia de la
+pantalla en el Escritorio, para poder mandarla. Lo cuida `tests/test_blindaje.py`, que además
+falla si alguien copia los comandos de PowerShell adentro del `.py`.
 
 ### El riesgo más grande no era ese: no había NINGÚN respaldo (septiembre 2026)
 

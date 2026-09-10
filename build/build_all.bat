@@ -1,6 +1,6 @@
 @echo off
 REM =====================================================================
-REM Compilacion de los 8 ejecutables portables de Otter + el servicio
+REM Compilacion de los 9 ejecutables portables de Otter + el servicio
 REM oculto de stock (7 en total).
 REM Ejecutar desde la raiz del repo: build\build_all.bat
 REM Requiere: pip install -r requirements.txt
@@ -71,6 +71,16 @@ REM config.ini. Busca las apps nuevas al lado suyo, igual que el instalador.
     apps\actualizador\main.py
 
 echo.
+echo === 9/9 Blindaje de la PC del local ===
+REM Un boton que deja la PC del local a prueba de las caidas conocidas.
+REM Se le meten adentro los .ps1 de scripts\: la app NO reimplementa esos
+REM comandos, los EJECUTA. Duplicar la logica seria garantizar que dentro
+REM de tres meses una mitad este arreglada y la otra no.
+%PYI% %DATA% %ICON% --name OtterBlindaje --paths . ^
+    --add-data "scripts;scripts" ^
+    apps\blindaje\main.py
+
+echo.
 echo === Servicio oculto de stock (Windows Service) ===
 REM OJO: este es el UNICO ejecutable que NO lleva --noconsole, y es a
 REM proposito. Con --noconsole el .exe se queda sin stdout, y lo primero
@@ -115,7 +125,7 @@ REM database\, sus logs y sus tickets de prueba, y el xcopy de arriba se
 REM los lleva puestos: el USB de Mantenimiento terminaria copiandolos
 REM sobre la instalacion del cliente. Se limpian del espejo (no de dist\,
 REM que queda como esta para seguir probando).
-for %%A in (MaestroCaja MaestroDueno USB_Caja USB_Dueno StockService) do (
+for %%A in (MaestroCaja MaestroDueno USB_Caja USB_Dueno StockService OtterBlindaje) do (
     if exist dist\USB_Mantenimiento\espejo_apps\%%A\config.ini del /Q dist\USB_Mantenimiento\espejo_apps\%%A\config.ini
     if exist dist\USB_Mantenimiento\espejo_apps\%%A\database rmdir /S /Q dist\USB_Mantenimiento\espejo_apps\%%A\database
     if exist dist\USB_Mantenimiento\espejo_apps\%%A\logs rmdir /S /Q dist\USB_Mantenimiento\espejo_apps\%%A\logs

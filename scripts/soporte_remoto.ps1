@@ -20,6 +20,12 @@
 #
 # Se corre UNA vez, como administrador, en la PC del local.
 
+# -Password: la contrasena del usuario de soporte, para cuando esto lo
+# llama OtterBlindaje.exe (que no tiene consola donde tipearla). Corriendo
+# el script a mano se deja vacio y la pide por pantalla, que es mas seguro:
+# asi no queda en el historial de PowerShell.
+param([string]$Password = "")
+
 $ErrorActionPreference = "Continue"
 $resultados = @()
 function Anotar($paso, $ok, $detalle) {
@@ -96,9 +102,13 @@ try {
         Write-Host "El usuario $USUARIO ya existe; se deja como esta."
         $usuarioOk = $true
     } else {
-        Write-Host "Elegi una contrasena para $USUARIO."
-        Write-Host "SIN caracteres confundibles (nada de l I 1 O 0): la vas a tipear en el celular." -ForegroundColor Yellow
-        $pass = Read-Host "Contrasena" -AsSecureString
+        if ($Password) {
+            $pass = ConvertTo-SecureString $Password -AsPlainText -Force
+        } else {
+            Write-Host "Elegi una contrasena para $USUARIO."
+            Write-Host "SIN caracteres confundibles (nada de l I 1 O 0): la vas a tipear en el celular." -ForegroundColor Yellow
+            $pass = Read-Host "Contrasena" -AsSecureString
+        }
         New-LocalUser -Name $USUARIO -Password $pass -FullName "Soporte Otter" `
             -Description "Acceso remoto de mantenimiento por Tailscale" `
             -PasswordNeverExpires -AccountNeverExpires -ErrorAction Stop | Out-Null
