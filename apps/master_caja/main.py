@@ -188,8 +188,11 @@ class AppCaja(CarritoTecladoMixin, tk.Tk):
         # un importe distinto (dos caramelos de precio distinto, etc.).
         # Cada artículo suelto es su propia línea, con su propio id: nunca
         # se fusiona con otro, porque cada uno tiene su importe.
-        self.carrito.append(self._nueva_linea(CODIGO_SIN_BARRA, NOMBRE_SIN_BARRA, importe))
-        self._refrescar_grilla_carrito()
+        linea = self._nueva_linea(CODIGO_SIN_BARRA, NOMBRE_SIN_BARRA, importe)
+        self.carrito.append(linea)
+        # Igual que al escanear: la línea nueva va abajo del todo, así que se
+        # pide mostrarla para que el cajero vea el importe que acaba de cargar.
+        self._refrescar_grilla_carrito(mostrar_linea_id=linea.get("_id"))
 
     def _cobrar_sin_facturar(self):
         # Si el cajero dejó abierto el campo de cantidad y fue directo a

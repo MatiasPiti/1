@@ -173,7 +173,10 @@ class CarritoTecladoMixin:
             widgets.append(celda)
         return widgets
 
-    def _refrescar_grilla_carrito(self):
+    def _refrescar_grilla_carrito(self, mostrar_linea_id=None):
+        """Redibuja el carrito. `mostrar_linea_id` es la línea que hay que
+        dejar A LA VISTA aunque no sea la seleccionada: es el caso del
+        escaneo, que agrega abajo del todo sin mover la selección."""
         self._asegurar_ids()
         if self._editor_cantidad is not None:
             # Se está editando una cantidad: redibujar ahora destruiría el
@@ -193,6 +196,7 @@ class CarritoTecladoMixin:
 
         total = 0.0
         celda_de_la_seleccionada = None
+        celda_a_mostrar = None
         for fila, item in enumerate(self.carrito, start=1):
             subtotal = item["cantidad"] * item["precio_unitario"]
             total += subtotal
@@ -226,10 +230,17 @@ class CarritoTecladoMixin:
 
             if seleccionada:
                 celda_de_la_seleccionada = estado["widgets"][0]
+            if item.get("_id") == mostrar_linea_id:
+                celda_a_mostrar = estado["widgets"][0]
 
         self.lbl_total.config(text=f"${total:.2f}")
-        if celda_de_la_seleccionada is not None:
-            self._asegurar_linea_visible(celda_de_la_seleccionada)
+        # La línea pedida manda sobre la seleccionada: si el cajero acaba de
+        # escanear, lo que tiene que ver es lo que acaba de agregar. Se elige
+        # una sola y se desplaza una sola vez, para no mover la pantalla dos
+        # veces en el mismo refresco.
+        objetivo = celda_a_mostrar if celda_a_mostrar is not None else celda_de_la_seleccionada
+        if objetivo is not None:
+            self._asegurar_linea_visible(objetivo)
         return total
 
     def _asegurar_linea_visible(self, celda):
@@ -246,6 +257,12 @@ class CarritoTecladoMixin:
             if not (canvas.winfo_exists() and celda.winfo_exists()):
                 return
             canvas.update_idletasks()
+            # La región desplazable la actualiza el <Configure> de la grilla,
+            # que llega por la cola de eventos. Al agregar una línea puede no
+            # haber llegado todavía: con la región vieja (más corta que el
+            # contenido) el desplazamiento se queda corto y la línea nueva
+            # sigue sin verse. Se recalcula acá, que es cuando hace falta.
+            canvas.configure(scrollregion=canvas.bbox("all"))
             alto_total = max(self.carrito_grid.winfo_height(), 1)
             arriba = celda.winfo_y()
             abajo = arriba + celda.winfo_height()
@@ -549,12 +566,19 @@ class CarritoTecladoMixin:
             for item in self.carrito:
                 if item["codigo"] == codigo:
                     item["cantidad"] += 1
+                    linea = item
                     break
             else:
-                self.carrito.append(self._nueva_linea(codigo, nombre, precio))
+                linea = self._nueva_linea(codigo, nombre, precio)
+                self.carrito.append(linea)
         else:
-            self.carrito.append(self._nueva_linea(codigo, nombre, precio))
-        self._refrescar_grilla_carrito()
+            linea = self._nueva_linea(codigo, nombre, precio)
+            self.carrito.append(linea)
+        # Se pide mostrar la línea tocada: la nueva queda abajo del todo y
+        # en un ticket largo el cajero no la veía; y si se le sumó cantidad
+        # a una línea que quedó arriba fuera de vista, tampoco veía subir
+        # la cantidad — escaneaba a ciegas creyendo que no había leído.
+        self._refrescar_grilla_carrito(mostrar_linea_id=linea.get("_id"))
         # Un clic (doble clic en resultados, clic en una celda del carrito)
         # le saca el foco del teclado al buscador; si no se lo devolvemos,
         # el próximo código escaneado no llega a ningún lado.

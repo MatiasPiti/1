@@ -390,6 +390,17 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
     el cajero vendía sin ver el ticket, lo cual no es aceptable igual.
   - **Al testear el carrito, no uses `celda.cget("text")`** (siempre da `""` en un `Entry`) — leé
     `celda.get()`.
+- **Al agregar una línea, el carrito baja solo a mostrarla; la selección NO se mueve.** El
+  desplazamiento automático ya existía, pero solo seguía a la línea *seleccionada*, y escanear no
+  mueve la selección: con el ticket lleno el cajero escaneaba el producto 30, el total subía y la
+  pantalla seguía mostrando del 1 al 12 — vendía a ciegas, sin manera de saber si el lector leyó.
+  Ahora `_refrescar_grilla_carrito(mostrar_linea_id=...)` recibe qué línea hay que dejar a la vista
+  y esa manda sobre la seleccionada (una sola pasada, para no mover la pantalla dos veces).
+  **La selección se deja como estaba a propósito: es la línea que borra `Supr`**, y que escanear la
+  moviera haría que el cajero borre una línea distinta de la que está mirando. Vale igual cuando se
+  re-escanea un producto cuya línea quedó arriba fuera de vista (hay que ver la cantidad subir) y
+  para el artículo sin código. Lo cuida `tests/test_carrito_visible.py`, que le pregunta al canvas
+  dónde está mirando en vez de mirar una bandera interna.
 - **Ninguna ventana se pide más grande que el área útil del escritorio** (`ajustar_ventana`
   en `apps/theme.py`, que le pregunta a Windows por el work area). En la PC del cliente
   (1366x768) el Panel del Dueño quedaba tapado por la barra de tareas. Las pestañas van
