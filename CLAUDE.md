@@ -401,6 +401,30 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
   re-escanea un producto cuya línea quedó arriba fuera de vista (hay que ver la cantidad subir) y
   para el artículo sin código. Lo cuida `tests/test_carrito_visible.py`, que le pregunta al canvas
   dónde está mirando en vez de mirar una bandera interna.
+- **El código de un producto se copia solo, sin la fila entera.** Un `ttk.Treeview` no deja pintar
+  texto con el mouse, así que en el Panel (y por lo tanto en el Dueño Remoto) lo único que había era
+  "copiar la fila": pegar el código en otro lado obligaba a borrarle a mano el nombre y el precio.
+  `habilitar_copiar_treeview` en `apps/theme.py` ahora da tres cosas sobre cualquier grilla —
+  **Ctrl+C** y "Copiar código" (el código solo, uno por línea si hay varias filas elegidas),
+  "Copiar solo «<columna>»" (la celda exacta donde se hizo clic derecho) y la de antes, "Copiar
+  fila(s)". Cae solo en todas las grillas porque cada ventana ya llama a
+  `habilitar_copiar_pegar_global(self)` después de armar las pestañas — si alguna pantalla nueva se
+  arma DESPUÉS de esa llamada, no lo va a tener.
+  - **La columna del código se busca por el id (`codigo`) y, si no, por el título que se ve.** El
+    título es texto nuestro, no de Windows, así que esto no es el error de buscar `Index` en la
+    salida de `powercfg`: no depende del idioma del sistema.
+  - **En Auditoría el código no es la primera columna** (la primera es la fecha). Copiar "la primera
+    columna" habría estado mal justo ahí; el test lo cubre.
+  - Una grilla sin código (métodos de pago, ARCA) **no se queda muda**: `Ctrl+C` copia la fila.
+  - Ofertas no tiene código para copiar porque **no muestra ninguno** (solo el nombre del producto).
+  - Copiar al portapapeles no tiene señal en pantalla, así que aparece un cartelito junto al puntero
+    con lo que se copió (`avisar_copiado`). Sin eso no hay manera de saber si agarró el código, la
+    fila o nada.
+  - Lo cuida `tests/test_copiar_codigo.py`, que **lee el portapapeles** en vez de mirar banderas.
+    Ojo al escribir pruebas de teclado: bajo xvfb no hay gestor de ventanas y en el Panel el foco se
+    lo queda el canvas del gráfico del Dashboard, así que la tecla no llega a la grilla — la tecla
+    se prueba sobre una grilla suelta (con `root.focus_force()`, y verificando que el foco llegó
+    antes de dar el resultado por bueno) y en el Panel se invoca la opción del menú.
 - **Ninguna ventana se pide más grande que el área útil del escritorio** (`ajustar_ventana`
   en `apps/theme.py`, que le pregunta a Windows por el work area). En la PC del cliente
   (1366x768) el Panel del Dueño quedaba tapado por la barra de tareas. Las pestañas van

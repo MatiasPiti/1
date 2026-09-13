@@ -7,6 +7,7 @@ primera línea del __init__ de la ventana principal.
 """
 
 import os
+import unicodedata
 import tkinter as tk
 from tkinter import ttk
 
@@ -167,32 +168,199 @@ def habilitar_menu_contextual(widget) -> None:
     widget.bind("<Button-3>", _mostrar)
 
 
+def _sin_acentos(texto: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", str(texto))
+                   if unicodedata.category(c) != "Mn").lower().strip()
+
+
+def _columnas_de(tree: ttk.Treeview) -> list:
+    try:
+        return [str(c) for c in tree.tk.splitlist(tree.cget("columns"))]
+    except Exception:
+        return []
+
+
+def _titulo_de_columna(tree: ttk.Treeview, columna: str) -> str:
+    try:
+        return str(tree.heading(columna).get("text", "") or columna)
+    except Exception:
+        return columna
+
+
+def columna_de_codigo(tree: ttk.Treeview):
+    """(índice, título) de la columna que tiene el código del producto, o
+    (None, None) si esta grilla no muestra ninguno.
+
+    Se busca por el id de la columna y, si no, por el título que se ve en
+    pantalla. El título es texto NUESTRO (no de Windows), así que esto no
+    es el mismo error que buscar "Index" en la salida de powercfg: acá no
+    depende del idioma del sistema. El fallback existe para que una grilla
+    nueva con otro id ("cod_producto", "barra") siga funcionando sola.
+    """
+    for indice, columna in enumerate(_columnas_de(tree)):
+        if _sin_acentos(columna) in ("codigo", "cod", "cod_producto", "barra"):
+            return indice, _titulo_de_columna(tree, columna)
+    for indice, columna in enumerate(_columnas_de(tree)):
+        if _sin_acentos(_titulo_de_columna(tree, columna)).startswith("codigo"):
+            return indice, _titulo_de_columna(tree, columna)
+    return None, None
+
+
+def avisar_copiado(widget: tk.Misc, texto: str, ms: int = 1200) -> None:
+    """Cartelito junto al puntero que dice QUÉ se copió y se va solo.
+
+    Copiar al portapapeles no tiene ninguna señal en pantalla: sin esto
+    uno no sabe si agarró el código, si agarró la fila entera o si no
+    agarró nada, y lo termina pegando en otro lado para averiguarlo.
+    """
+    try:
+        globo = tk.Toplevel(widget)
+        globo.overrideredirect(True)
+        try:
+            globo.attributes("-topmost", True)
+        except tk.TclError:
+            pass   # en algunos entornos no existe; el cartel sirve igual
+        tk.Label(globo, text=texto, bg=COLORS["accent"], fg="white",
+                 font=("Segoe UI", 10, "bold"), padx=10, pady=5).pack()
+        globo.geometry(f"+{widget.winfo_pointerx() + 14}+{widget.winfo_pointery() + 14}")
+
+        def _cerrar():
+            try:
+                if globo.winfo_exists():
+                    globo.destroy()
+            except tk.TclError:
+                pass   # la ventana madre se cerró antes: no hay nada que hacer
+
+        globo.after(ms, _cerrar)
+    except Exception:
+        pass   # un cartel que no se puede dibujar nunca puede romper la app
+
+
 def habilitar_copiar_treeview(tree: ttk.Treeview) -> None:
-    """Clic derecho sobre una grilla (Treeview) con "Copiar fila(s)" —
-    ttk.Treeview no permite seleccionar texto letra por letra, así que
-    esta es la forma de poder copiar lo que se ve en una lista."""
-    menu = tk.Menu(tree, tearoff=0)
+    """Clic derecho sobre una grilla (Treeview) para copiar lo que se ve.
 
-    def _copiar():
-        sel = tree.selection()
-        if not sel:
+    Un ttk.Treeview no deja seleccionar texto letra por letra: no se puede
+    pintar el código de un producto con el mouse y hacer Ctrl+C como en
+    cualquier otro lado. Antes lo único que había era "copiar la fila
+    entera", y pegar `7790001<TAB>YERBA PLAYADITO<TAB>$3500.00` donde hacía
+    falta SOLO el código obliga a limpiarlo a mano cada vez.
+
+    Ahora hay tres cosas, de lo más usado a lo menos:
+      - Copiar código (también con Ctrl+C): el código solo, de todas las
+        filas seleccionadas, una por línea.
+      - Copiar esta celda: el valor exacto de la celda donde se hizo clic
+        derecho, sirva para el nombre, el precio o lo que sea.
+      - Copiar fila(s): lo que hacía antes, separado por tabulaciones para
+        pegar en Excel.
+    """
+    ultimo_clic = {"columna": None}
+
+    def _filas_elegidas():
+        sel = list(tree.selection())
+        if sel:
+            return sel
+        actual = tree.focus()
+        return [actual] if actual else []
+
+    def _valor(fila, indice):
+        try:
+            valores = tree.item(fila, "values")
+        except tk.TclError:
+            return None
+        if indice is None or indice < 0 or indice >= len(valores):
+            return None
+        return str(valores[indice]).strip() or None
+
+    def _al_portapapeles(texto: str, aviso: str):
+        try:
+            tree.clipboard_clear()
+            tree.clipboard_append(texto)
+        except tk.TclError:
             return
-        filas = ["\t".join(str(v) for v in tree.item(i, "values")) for i in sel]
-        tree.clipboard_clear()
-        tree.clipboard_append("\n".join(filas))
+        avisar_copiado(tree, aviso)
 
-    menu.add_command(label="Copiar fila(s) seleccionada(s)", command=_copiar)
+    def _copiar_filas(event=None):
+        filas = _filas_elegidas()
+        if not filas:
+            return "break"
+        lineas = ["\t".join(str(v) for v in tree.item(f, "values")) for f in filas]
+        _al_portapapeles("\n".join(lineas),
+                          "Copiada la fila entera" if len(filas) == 1
+                          else f"Copiadas {len(filas)} filas")
+        return "break"
+
+    def _copiar_codigo(event=None):
+        indice, _titulo = columna_de_codigo(tree)
+        filas = _filas_elegidas()
+        if indice is None or not filas:
+            # Esta grilla no muestra código (o no hay nada elegido): antes
+            # que no hacer nada al apretar Ctrl+C, se copia la fila.
+            return _copiar_filas()
+        codigos = [c for c in (_valor(f, indice) for f in filas) if c]
+        if not codigos:
+            return "break"
+        _al_portapapeles("\n".join(codigos),
+                          f"Copiado: {codigos[0]}" if len(codigos) == 1
+                          else f"Copiados {len(codigos)} códigos")
+        return "break"
+
+    def _copiar_celda():
+        filas = _filas_elegidas()
+        indice = ultimo_clic["columna"]
+        if not filas or indice is None:
+            return
+        valor = _valor(filas[0], indice)
+        if valor:
+            _al_portapapeles(valor, f"Copiado: {valor}")
+
+    menu = tk.Menu(tree, tearoff=0)
+    menu.add_command(label="Copiar código        Ctrl+C", command=_copiar_codigo)
+    menu.add_command(label="Copiar esta celda", command=_copiar_celda)
+    menu.add_separator()
+    menu.add_command(label="Copiar fila(s) seleccionada(s)", command=_copiar_filas)
+    ITEM_CODIGO, ITEM_CELDA = 0, 1
 
     def _mostrar(event):
         fila = tree.identify_row(event.y)
         if fila and fila not in tree.selection():
             tree.selection_set(fila)
+            tree.focus(fila)
+
+        # Qué columna se clickeó: identify_column devuelve "#1", "#2"...
+        # sobre las columnas de datos, y "#0" sobre la del árbol (que estas
+        # grillas no usan, van con show="headings").
+        ultimo_clic["columna"] = None
+        try:
+            cual = tree.identify_column(event.x)
+            if cual and cual.startswith("#") and int(cual[1:]) > 0:
+                ultimo_clic["columna"] = int(cual[1:]) - 1
+        except (ValueError, tk.TclError):
+            pass
+
+        indice_codigo, _ = columna_de_codigo(tree)
+        try:
+            menu.entryconfig(ITEM_CODIGO,
+                             state="normal" if (indice_codigo is not None and fila) else "disabled")
+            columnas = _columnas_de(tree)
+            if ultimo_clic["columna"] is not None and fila and ultimo_clic["columna"] < len(columnas):
+                titulo = _titulo_de_columna(tree, columnas[ultimo_clic["columna"]])
+                menu.entryconfig(ITEM_CELDA, state="normal",
+                                 label=f"Copiar solo «{titulo}»")
+            else:
+                menu.entryconfig(ITEM_CELDA, state="disabled", label="Copiar esta celda")
+        except tk.TclError:
+            pass
+
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
 
     tree.bind("<Button-3>", _mostrar)
+    # Ctrl+C con la grilla enfocada: el atajo que uno ya tiene en los dedos.
+    # Mayúscula incluida porque con Bloq Mayús Tk manda <Control-C>.
+    tree.bind("<Control-c>", _copiar_codigo)
+    tree.bind("<Control-C>", _copiar_codigo)
 
 
 def habilitar_copiar_pegar_global(root: tk.Misc) -> None:
