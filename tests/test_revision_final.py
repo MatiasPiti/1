@@ -13,6 +13,7 @@ Lo que se prueba es lo que va a pasar en el local:
     único que el próximo blindaje pisa.
   - Deja el informe escrito para poder mandarlo sin tipearlo.
 """
+import atexit
 import os
 import sys
 import tempfile
@@ -23,6 +24,44 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from apps.actualizador import main as act
 
 fallos = []
+
+# ---------------------------------------------------------------- #
+# Aislar la carpeta del usuario ANTES de correr nada.
+#
+# Esta prueba escribe archivos en el Escritorio (la evidencia del blindaje
+# y el informe). Sin esto los deja en el Escritorio REAL de quien corre las
+# pruebas y, peor, le pisa el estado_antes_del_blindaje.txt de verdad si lo
+# tenía ahí — que es justo el archivo que no se puede perder.
+#
+# En Windows expanduser("~") NO mira HOME: mira USERPROFILE, y si no está,
+# HOMEDRIVE+HOMEPATH. Aislar solo con HOME funcionaba en Linux y en Windows
+# escribía en el Escritorio de verdad mientras la prueba buscaba el archivo
+# en la carpeta temporal: dos fallos que parecían del programa y eran de
+# la prueba.
+# ---------------------------------------------------------------- #
+_CLAVES_CASA = ("HOME", "USERPROFILE", "HOMEPATH", "HOMEDRIVE", "OneDrive", "OneDriveConsumer")
+_casa_original = {k: os.environ.get(k) for k in _CLAVES_CASA}
+escritorio = tempfile.mkdtemp(prefix="escritorio_")
+os.makedirs(os.path.join(escritorio, "Desktop"))
+for _k in _CLAVES_CASA:
+    os.environ.pop(_k, None)
+os.environ["HOME"] = escritorio
+os.environ["USERPROFILE"] = escritorio
+
+
+@atexit.register
+def _devolver_la_casa():
+    for k, v in _casa_original.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+if os.path.expanduser("~") != escritorio:
+    fallos.append(f"no se pudo aislar la carpeta del usuario: expanduser da "
+                   f"{os.path.expanduser('~')!r} — la prueba estaría escribiendo en el "
+                   f"Escritorio real de quien la corre")
 
 
 class ActualizadorDePrueba:
@@ -110,14 +149,22 @@ ok, detalle = app._estado_de_los_respaldos(instalacion(con_backup_dias=0))
 if not ok:
     fallos.append(f"con una copia de hoy dijo que NO hay respaldo reciente: {detalle}")
 
+import re
 app = ActualizadorDePrueba()
-ok, detalle = app._estado_de_los_respaldos(instalacion(con_backup_dias=20))
+ok, detalle = app._estado_de_los_respaldos(instalacion(con_backup_dias=60))
+# Se extraen los días del texto en vez de buscar "60" adentro: el nombre del
+# archivo es stock_2026-..., así que buscar "20" para una copia de 20 días
+# daba por buena la fila por el "20" de "2026" — una comprobación con
+# dientes falsos.
+dias = re.search(r"hace (\d+) d", detalle)
 if ok:
-    fallos.append("una copia de hace 20 días se marcó como respaldo reciente")
-elif "20" not in detalle:
+    fallos.append("una copia de hace 60 días se marcó como respaldo reciente")
+elif not dias:
     fallos.append(f"no dice de cuántos días es la copia vieja: {detalle!r}")
+elif not (59 <= int(dias.group(1)) <= 61):
+    fallos.append(f"dice {dias.group(1)} días para una copia de hace 60: {detalle!r}")
 else:
-    print(f"OK: copia de hace 20 días -> NO ({detalle})")
+    print(f"OK: copia de hace 60 días -> NO, y dice {dias.group(1)} días")
 
 app = ActualizadorDePrueba()
 ok, detalle = app._estado_de_los_respaldos(instalacion())
@@ -131,45 +178,35 @@ else:
 # ---------------------------------------------------------------- #
 app = ActualizadorDePrueba()
 destino = instalacion(con_evidencia=True)
-inicio = os.environ.get("HOME")
-escritorio = tempfile.mkdtemp(prefix="escritorio_")
-os.makedirs(os.path.join(escritorio, "Desktop"))
-os.environ["HOME"] = escritorio
-try:
-    ok, ruta = app._rescatar_evidencia(destino)
-    copiado = os.path.join(escritorio, "Desktop", "estado_antes_del_blindaje.txt")
-    if not ok or not os.path.isfile(copiado):
-        fallos.append(f"no se copió la evidencia al Escritorio (ok={ok}, ruta={ruta})")
-    elif "DEMAND_START" not in open(copiado, encoding="utf-8").read():
-        fallos.append("la evidencia copiada no tiene el contenido original")
-    else:
-        print("OK: la evidencia del blindaje llega sola al Escritorio")
+ok, ruta = app._rescatar_evidencia(destino)
+copiado = os.path.join(escritorio, "Desktop", "estado_antes_del_blindaje.txt")
+if not ok or not os.path.isfile(copiado):
+    fallos.append(f"no se copió la evidencia al Escritorio (ok={ok}, ruta={ruta})")
+elif "DEMAND_START" not in open(copiado, encoding="utf-8").read():
+    fallos.append("la evidencia copiada no tiene el contenido original")
+else:
+    print("OK: la evidencia del blindaje llega sola al Escritorio")
 
-    # Sin blindaje corrido en esa PC no es un pendiente: no debe salir NO.
-    app2 = ActualizadorDePrueba()
-    ok2, detalle2 = app2._rescatar_evidencia(instalacion())
-    if not ok2 or detalle2:
-        fallos.append(f"sin evidencia lo trató como pendiente: ok={ok2} detalle={detalle2!r}")
-    else:
-        print("OK: si esa PC nunca se blindó, no aparece como pendiente")
+# Sin blindaje corrido en esa PC no es un pendiente: no debe salir NO.
+app2 = ActualizadorDePrueba()
+ok2, detalle2 = app2._rescatar_evidencia(instalacion())
+if not ok2 or detalle2:
+    fallos.append(f"sin evidencia lo trató como pendiente: ok={ok2} detalle={detalle2!r}")
+else:
+    print("OK: si esa PC nunca se blindó, no aparece como pendiente")
 
-    # El informe queda escrito para poder mandarlo
-    app3 = ActualizadorDePrueba()
-    app3._guardar_informe([("Una cosa", True, "salió bien"), ("Otra cosa", False, "falta esto")])
-    informe = os.path.join(escritorio, "Desktop", "otter_revision_final.txt")
-    if not os.path.isfile(informe):
-        fallos.append("no se escribió el informe de la revisión final")
+# El informe queda escrito para poder mandarlo
+app3 = ActualizadorDePrueba()
+app3._guardar_informe([("Una cosa", True, "salió bien"), ("Otra cosa", False, "falta esto")])
+informe = os.path.join(escritorio, "Desktop", "otter_revision_final.txt")
+if not os.path.isfile(informe):
+    fallos.append("no se escribió el informe de la revisión final")
+else:
+    texto = open(informe, encoding="utf-8").read()
+    if "[SI] Una cosa" not in texto or "[NO] Otra cosa" not in texto or "falta esto" not in texto:
+        fallos.append(f"el informe no refleja la tabla:\n{texto}")
     else:
-        texto = open(informe, encoding="utf-8").read()
-        if "[SI] Una cosa" not in texto or "[NO] Otra cosa" not in texto or "falta esto" not in texto:
-            fallos.append(f"el informe no refleja la tabla:\n{texto}")
-        else:
-            print("OK: el informe queda en el Escritorio con las filas y el detalle")
-finally:
-    if inicio is None:
-        os.environ.pop("HOME", None)
-    else:
-        os.environ["HOME"] = inicio
+        print("OK: el informe queda en el Escritorio con las filas y el detalle")
 
 # ---------------------------------------------------------------- #
 # 4. El puerto sale del config del cliente, no de una suposición

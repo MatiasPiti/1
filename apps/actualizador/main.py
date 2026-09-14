@@ -92,6 +92,34 @@ def _devolver_datos_del_cliente(anterior: str, destino_app: str, log) -> None:
             log(f"    ATENCIÓN: no se pudo conservar {nombre}: {e}")
 
 
+def _escritorio() -> str:
+    """Dónde dejar los archivos que Matías se lleva o fotografía.
+
+    No alcanza con "~/Desktop": si la PC tiene OneDrive, Windows redirige
+    el Escritorio adentro de OneDrive y ahí la carpeta puede llamarse
+    Escritorio en castellano. Un informe que queda en un lugar que nadie
+    mira es lo mismo que no haberlo escrito, así que se prueban las
+    variantes conocidas y, si ninguna existe, se cae a la carpeta del
+    usuario — que siempre existe.
+
+    Ojo: en Windows `expanduser("~")` NO mira HOME, mira USERPROFILE.
+    """
+    casa = os.path.expanduser("~")
+    candidatos = [
+        os.path.join(casa, "Desktop"),
+        os.path.join(casa, "Escritorio"),
+        os.path.join(casa, "OneDrive", "Desktop"),
+        os.path.join(casa, "OneDrive", "Escritorio"),
+    ]
+    entorno = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
+    if entorno:
+        candidatos += [os.path.join(entorno, "Desktop"), os.path.join(entorno, "Escritorio")]
+    for c in candidatos:
+        if os.path.isdir(c):
+            return c
+    return casa
+
+
 def es_administrador() -> bool:
     try:
         import ctypes
@@ -486,20 +514,14 @@ class Actualizador(tk.Tk):
         origen = os.path.join(destino, "watchdog", "estado_antes_del_blindaje.txt")
         if not os.path.isfile(origen):
             return True, ""    # no hubo blindaje en esta PC: no es un pendiente
-        escritorio = os.path.join(os.path.expanduser("~"), "Desktop")
-        if not os.path.isdir(escritorio):
-            escritorio = os.path.expanduser("~")
-        destino_archivo = os.path.join(escritorio, "estado_antes_del_blindaje.txt")
+        destino_archivo = os.path.join(_escritorio(), "estado_antes_del_blindaje.txt")
         shutil.copy2(origen, destino_archivo)
         return True, destino_archivo
 
     def _guardar_informe(self, filas):
         """Deja la tabla en el Escritorio para poder mandarla sin tipearla."""
         try:
-            escritorio = os.path.join(os.path.expanduser("~"), "Desktop")
-            if not os.path.isdir(escritorio):
-                escritorio = os.path.expanduser("~")
-            ruta = os.path.join(escritorio, "otter_revision_final.txt")
+            ruta = os.path.join(_escritorio(), "otter_revision_final.txt")
             with open(ruta, "w", encoding="utf-8") as f:
                 f.write(f"REVISION FINAL DE OTTER — {datetime.now():%Y-%m-%d %H:%M}\n\n")
                 for que, ok, detalle in filas:
