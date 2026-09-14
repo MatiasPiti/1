@@ -425,6 +425,35 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
     lo queda el canvas del gráfico del Dashboard, así que la tecla no llega a la grilla — la tecla
     se prueba sobre una grilla suelta (con `root.focus_force()`, y verificando que el foco llegó
     antes de dar el resultado por bueno) y en el Panel se invoca la opción del menú.
+- **Lo que hay que correr en la PC del local lo hace el Actualizador, no Matías.** Cada visita
+  terminaba tipeando los mismos comandos en una consola con el negocio esperando, y el que se
+  olvidaba era el que costaba el viaje siguiente. Al terminar de actualizar **la PC del local**
+  (nunca la laptop de Leo) corre una **revisión final** que deja la instalación lista y muestra una
+  tabla SI/NO, y la guarda en `Escritorio\otter_revision_final.txt` para poder mandarla sin tipearla:
+  servicio en `Automatic` (se corrige si está en Manual), servicio corriendo (se arranca si está
+  parado), **el puerto** contestando —que no es lo mismo que "el servicio dice Running"—, la carpeta
+  excluida del antivirus, el respaldo diario al día, y la evidencia del blindaje copiada al
+  Escritorio antes de que el próximo blindaje la pise.
+  - **La revisión corre DESPUÉS de que la actualización terminó bien y va entera adentro de un
+    `try`**: que algo de ahí falle no puede convertir en fracaso una actualización correcta
+    (regla 6). Cada fila también va aislada: una que falle no se lleva a las demás.
+  - **La exclusión del antivirus vive acá y no en el blindaje a propósito**: el momento en que hace
+    falta es justo este, cuando se acaban de reemplazar TODOS los `.exe` sin firmar. Si algún día el
+    blindaje toma ese paso, sacarlo de acá — no dejar los dos.
+  - **El servicio ahora se arranca aunque no estuviera corriendo antes.** El paso 5 solo lo relanza
+    si estaba corriendo; en la PC del local el servicio tiene que correr siempre, y quedar `Stopped`
+    después de actualizar es exactamente lo que dejó a Leo sin panel.
+  - **`pos_core/servicio_windows.py` es el único lugar donde se le pregunta a Windows por el
+    servicio** (estado, tipo de arranque, ponerlo en automático, arrancarlo, y si el puerto
+    escucha). Lo usan el USB de Mantenimiento y el Actualizador: tenerlo copiado en cada uno
+    garantizaba que en tres meses una mitad estuviera arreglada y la otra no. Ninguna función de
+    ese módulo lanza excepciones.
+  - `arrancar()` **espera y confirma** que el servicio quedó corriendo: mandar `sc start` y darlo
+    por hecho es una verificación que no verifica (sc vuelve enseguida y el servicio puede morir un
+    segundo después).
+  - `pos_core.servicio_windows` se importa adentro de una función, así que va declarado como
+    `--hidden-import` del `OtterActualizador` en `build_all.bat` — si no lo agarra el análisis
+    automático, el `.exe` compila igual y falla recién en el local.
 - **Ninguna ventana se pide más grande que el área útil del escritorio** (`ajustar_ventana`
   en `apps/theme.py`, que le pregunta a Windows por el work area). En la PC del cliente
   (1366x768) el Panel del Dueño quedaba tapado por la barra de tareas. Las pestañas van

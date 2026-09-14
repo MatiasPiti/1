@@ -296,8 +296,219 @@ class Actualizador(tk.Tk):
         if modo == "local" and servicio_estaba:
             self._arrancar_servicio(destino)
 
+        # 6) Revisión final: todo lo que, si no, hay que ir a tipear a mano en
+        #    una consola de la PC del local. Nada de esto puede voltear una
+        #    actualización que ya terminó bien, así que va entero adentro de
+        #    un try (ver _revision_final).
+        if modo == "local":
+            try:
+                self._revision_final(destino)
+            except Exception as e:
+                # Regla 6: la actualización YA terminó bien. Que la revisión
+                # no se pueda completar no puede convertirla en un fracaso ni
+                # dejar la pantalla en rojo con todo correcto abajo.
+                self._log(f"\n(la revisión final no se pudo completar: {e})")
+                self._log("La actualización SÍ terminó bien. Revisá a mano que el servicio "
+                           "esté corriendo antes de irte.")
+
         self._log("=== ACTUALIZACIÓN TERMINADA ===")
         self._log("Abrí la Caja y hacé una venta de prueba para confirmar que quedó todo bien.")
+
+    # ------------------------------------------------------------------ #
+    # Revisión final: lo que antes había que tipear a mano en el local
+    # ------------------------------------------------------------------ #
+    def _revision_final(self, destino):
+        """Deja la instalación lista Y DICE si quedó lista, fila por fila.
+
+        Cada cosa de acá es un comando que antes había que acordarse de
+        correr en una consola de la PC del local, con el negocio esperando.
+        Ninguna es opcional en la práctica:
+
+          - El servicio en Automatic: estar en Manual es lo que dejó a Leo
+            sin Dueño Remoto tres veces. Recién instalado no se nota.
+          - El servicio corriendo: el Actualizador lo para para poder
+            reemplazar el .exe, y solo lo relanza si estaba corriendo antes.
+          - El PUERTO escuchando: no es lo mismo que "el servicio dice
+            Running". Es lo único que le importa al Dueño Remoto.
+          - El antivirus: los .exe de PyInstaller no están firmados, y este
+            paso acaba de reemplazarlos TODOS. Es justo el momento en que
+            Defender puede poner uno en cuarentena y dejar el negocio sin
+            caja sin decir por qué.
+          - El respaldo diario: si la copia más nueva es de hace días, lo
+            más probable es que el servicio estuviera parado.
+
+        Regla 6: esto corre DESPUÉS de que la actualización terminó bien.
+        Que algo de acá falle no puede deshacerla ni esconderla — se anota
+        NO en la tabla y se sigue.
+        """
+        self._log("\n=== REVISIÓN FINAL ===")
+        filas = []
+
+        def anotar(que, ok, detalle=""):
+            filas.append((que, ok, detalle))
+            self._log(f"   [{'SI' if ok else 'NO'}] {que}" + (f" — {detalle}" if detalle else ""))
+
+        from pos_core import servicio_windows
+
+        # --- el servicio arranca solo con Windows ---
+        try:
+            arranque = servicio_windows.tipo_de_arranque()
+            if arranque == "auto":
+                anotar("El servicio arranca solo con Windows", True)
+            elif arranque in ("manual", "deshabilitado"):
+                ok, detalle = servicio_windows.poner_en_automatico()
+                anotar("El servicio arranca solo con Windows", ok,
+                       "estaba en MANUAL, corregido" if ok else f"estaba en MANUAL y no se pudo corregir: {detalle}")
+            else:
+                anotar("El servicio arranca solo con Windows", False,
+                       f"no se pudo leer el tipo de arranque ({arranque})")
+        except Exception as e:
+            anotar("El servicio arranca solo con Windows", False, str(e))
+
+        # --- el servicio está corriendo AHORA ---
+        try:
+            estado = servicio_windows.estado()
+            if estado == "corriendo":
+                anotar("El servicio de stock está corriendo", True)
+            elif estado == "parado":
+                ok, detalle = servicio_windows.arrancar()
+                anotar("El servicio de stock está corriendo", ok,
+                       "estaba parado, arrancado" if ok else f"estaba parado y no arrancó: {detalle}")
+            else:
+                anotar("El servicio de stock está corriendo", False, f"estado: {estado}")
+        except Exception as e:
+            anotar("El servicio de stock está corriendo", False, str(e))
+
+        # --- el puerto de la API remota contesta ---
+        try:
+            puerto = self._puerto_remoto(destino)
+            escucha = servicio_windows.puerto_escuchando(puerto)
+            anotar(f"El puerto {puerto} contesta (es lo que usa Leo)", escucha,
+                   "" if escucha else "el servicio puede decir Running igual: la API se levanta "
+                                      "adentro y si falla solo lo anota en el log")
+        except Exception as e:
+            anotar("El puerto de la API remota contesta", False, str(e))
+
+        # --- antivirus ---
+        try:
+            ok, detalle = self._excluir_del_antivirus(destino)
+            anotar(f"«{destino}» excluido del antivirus", ok, detalle)
+        except Exception as e:
+            anotar(f"«{destino}» excluido del antivirus", False, str(e))
+
+        # --- respaldo diario al día ---
+        try:
+            ok, detalle = self._estado_de_los_respaldos(destino)
+            anotar("Hay una copia de la base reciente", ok, detalle)
+        except Exception as e:
+            anotar("Hay una copia de la base reciente", False, str(e))
+
+        # --- llevarse la evidencia del blindaje ---
+        try:
+            ok, detalle = self._rescatar_evidencia(destino)
+            if detalle:
+                anotar("Evidencia del blindaje copiada al Escritorio", ok, detalle)
+        except Exception as e:
+            anotar("Evidencia del blindaje copiada al Escritorio", False, str(e))
+
+        pendientes = [q for q, ok, _ in filas if not ok]
+        if pendientes:
+            self._log("\n   QUEDA PENDIENTE: " + "; ".join(pendientes))
+            self._log("   Sacale una foto a esta pantalla antes de irte del local.")
+        else:
+            self._log("\n   Todo en SI. La instalación quedó lista.")
+        self._guardar_informe(filas)
+
+    def _puerto_remoto(self, destino) -> int:
+        """El puerto que el cliente tiene configurado, no el que suponemos."""
+        from pos_core import servicio_windows
+        ruta = os.path.join(destino, "config.ini")
+        try:
+            import configparser
+            cfg = configparser.ConfigParser()
+            cfg.read(ruta, encoding="utf-8")
+            return int(cfg.get("remoto", "puerto",
+                                fallback=str(servicio_windows.PUERTO_POR_DEFECTO)))
+        except Exception:
+            return servicio_windows.PUERTO_POR_DEFECTO
+
+    def _excluir_del_antivirus(self, destino) -> tuple:
+        """Saca la carpeta de Otter del análisis de Windows Defender.
+
+        Va acá y no en el blindaje porque el momento en que hace falta es
+        EXACTAMENTE este: acabamos de reemplazar todos los .exe, no están
+        firmados, y un antivirus que ponga uno en cuarentena deja el
+        negocio sin caja sin avisar. Si algún día el blindaje toma este
+        paso, sacarlo de acá y llamarlo desde allá — no dejar los dos.
+        """
+        if os.name != "nt":
+            return False, "solo aplica en Windows"
+        if not es_administrador():
+            return False, "hace falta ejecutar como administrador"
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        # Se agrega y después se LEE LA LISTA de vuelta: dar por buena una
+        # exclusión porque el comando no tiró error es una verificación que
+        # no verifica.
+        subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                        f"Add-MpPreference -ExclusionPath '{destino}'"],
+                       capture_output=True, text=True, timeout=60, creationflags=creationflags)
+        r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                            "(Get-MpPreference).ExclusionPath -join ';'"],
+                           capture_output=True, text=True, timeout=60, creationflags=creationflags)
+        listado = (r.stdout or "")
+        if destino.lower() in listado.lower():
+            return True, "confirmado en la lista de exclusiones"
+        if "Get-MpPreference" in (r.stderr or "") or not listado.strip():
+            return False, "no parece haber Windows Defender: revisá a mano el antivirus que usen"
+        return False, "el comando corrió pero la carpeta no quedó en la lista"
+
+    def _estado_de_los_respaldos(self, destino) -> tuple:
+        """¿Hay copia reciente? Una copia de hace tres semanas es casi lo
+        mismo que ninguna, y si está atrasada lo más probable es que el
+        servicio haya estado parado."""
+        import glob
+        carpeta = os.path.join(destino, "backups")
+        copias = sorted(glob.glob(os.path.join(carpeta, "stock_*.db")),
+                        key=os.path.getmtime, reverse=True)
+        if not copias:
+            return False, ("no hay ninguna copia diaria todavía; aparece a los segundos de "
+                           "arrancar el servicio, así que si el servicio quedó en SI, esperá y mirá de nuevo")
+        dias = (datetime.now() - datetime.fromtimestamp(os.path.getmtime(copias[0]))).days
+        nombre = os.path.basename(copias[0])
+        if dias <= 1:
+            return True, f"{nombre} ({len(copias)} copias guardadas)"
+        return False, f"la más nueva es {nombre}, de hace {dias} días: ¿estuvo parado el servicio?"
+
+    def _rescatar_evidencia(self, destino) -> tuple:
+        """Copia al Escritorio el estado que guardó el blindaje antes de
+        tocar nada. Es un archivo único: el próximo blindaje lo pisa, y es
+        la última pista de por qué se paró el servicio."""
+        origen = os.path.join(destino, "watchdog", "estado_antes_del_blindaje.txt")
+        if not os.path.isfile(origen):
+            return True, ""    # no hubo blindaje en esta PC: no es un pendiente
+        escritorio = os.path.join(os.path.expanduser("~"), "Desktop")
+        if not os.path.isdir(escritorio):
+            escritorio = os.path.expanduser("~")
+        destino_archivo = os.path.join(escritorio, "estado_antes_del_blindaje.txt")
+        shutil.copy2(origen, destino_archivo)
+        return True, destino_archivo
+
+    def _guardar_informe(self, filas):
+        """Deja la tabla en el Escritorio para poder mandarla sin tipearla."""
+        try:
+            escritorio = os.path.join(os.path.expanduser("~"), "Desktop")
+            if not os.path.isdir(escritorio):
+                escritorio = os.path.expanduser("~")
+            ruta = os.path.join(escritorio, "otter_revision_final.txt")
+            with open(ruta, "w", encoding="utf-8") as f:
+                f.write(f"REVISION FINAL DE OTTER — {datetime.now():%Y-%m-%d %H:%M}\n\n")
+                for que, ok, detalle in filas:
+                    f.write(f"[{'SI' if ok else 'NO'}] {que}\n")
+                    if detalle:
+                        f.write(f"     {detalle}\n")
+            self._log(f"   Informe guardado en: {ruta}")
+        except Exception as e:
+            self._log(f"   (no se pudo guardar el informe: {e})")
 
     # ------------------------------------------------------------------ #
     def _respaldar_base(self, destino):

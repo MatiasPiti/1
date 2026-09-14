@@ -67,7 +67,12 @@ echo.
 echo === 8/8 Actualizador ===
 REM Pone al dia una instalacion que ya funciona, sin tocar la base ni el
 REM config.ini. Busca las apps nuevas al lado suyo, igual que el instalador.
+REM pos_core.servicio_windows se importa adentro de la revision final. Se
+REM declara a mano por la misma razon que instancia_unica: si el analisis
+REM automatico no lo agarra, el .exe compila igual y falla recien en el
+REM local, con el negocio esperando.
 %PYI% %DATA% %ICON% --name OtterActualizador --paths . ^
+    --hidden-import pos_core.servicio_windows ^
     apps\actualizador\main.py
 
 echo.

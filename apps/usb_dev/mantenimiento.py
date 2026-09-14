@@ -388,36 +388,30 @@ def _verificar_arranque_automatico(log: list) -> None:
     tocado nada. Se corrige solo, acá, porque no hay ningún motivo para que
     esté en Manual.
     """
-    try:
-        cfg = subprocess.run(["sc.exe", "qc", NOMBRE_SERVICIO_WINDOWS],
-                              capture_output=True, text=True, timeout=10)
-    except Exception as e:
-        log.append(f"[SERVICIO] No se pudo leer el tipo de arranque: {e}")
-        return
+    # El cómo vive en pos_core/servicio_windows.py: la misma pregunta la
+    # hacen también el Actualizador y lo que venga después, y tenerla
+    # copiada en cada uno garantiza que en tres meses una mitad esté
+    # arreglada y la otra no.
+    from pos_core import servicio_windows
 
-    salida = cfg.stdout.upper()
-    if "AUTO_START" in salida:
+    arranque = servicio_windows.tipo_de_arranque(NOMBRE_SERVICIO_WINDOWS)
+    if arranque == "auto":
         log.append("[SERVICIO] Arranque automático: OK (levanta solo con Windows).")
         return
-    if "DEMAND_START" not in salida:
+    if arranque == "desconocido":
+        log.append("[SERVICIO] No se pudo leer el tipo de arranque.")
+        return
+    if arranque not in ("manual", "deshabilitado"):
         return   # no está registrado; de eso se ocupa el paso siguiente
 
     log.append("[SERVICIO] ¡PROBLEMA! El servicio está en arranque MANUAL: no levanta solo "
                 "cuando se reinicia la PC, y ahí el Dueño Remoto deja de conectar sin que "
                 "nadie haya tocado nada. Corrigiéndolo a automático...")
-    try:
-        r = subprocess.run(["sc.exe", "config", NOMBRE_SERVICIO_WINDOWS, "start=", "auto"],
-                            capture_output=True, text=True, timeout=15)
-        if r.returncode == 0:
-            log.append("[SERVICIO] Corregido: ahora arranca solo con Windows.")
-            subprocess.run(["sc.exe", "failure", NOMBRE_SERVICIO_WINDOWS, "reset=", "86400",
-                             "actions=", "restart/60000/restart/60000/restart/60000"],
-                            capture_output=True, text=True, timeout=15)
-        else:
-            log.append(f"[SERVICIO] NO se pudo corregir (¿falta ejecutar como administrador?): "
-                        f"{r.stdout.strip()} {r.stderr.strip()}")
-    except Exception as e:
-        log.append(f"[SERVICIO] NO se pudo corregir el tipo de arranque: {e}")
+    ok, detalle = servicio_windows.poner_en_automatico(NOMBRE_SERVICIO_WINDOWS)
+    if ok:
+        log.append("[SERVICIO] Corregido: ahora arranca solo con Windows.")
+    else:
+        log.append(f"[SERVICIO] NO se pudo corregir: {detalle}")
 
 
 def verificar_servicio_windows(carpeta_instalacion: str, log: list) -> None:
