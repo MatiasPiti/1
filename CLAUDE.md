@@ -104,6 +104,14 @@ nuevo — documentados para no perder tiempo re-descubriéndolos:
 - **PyInstaller puede fallar con `PermissionError` al recompilar un ejecutable que sigue corriendo**
   (o cuyo `.exe` quedó bloqueado por un proceso colgado/servicio activo). Antes de recompilar:
   cerrar la app y, si es un servicio, pararlo (`Get-Service` / `Start-Service` / `sc.exe`).
+- **Copiar `dist\` entera a un pendrive con `Copy-Item` tarda más de una hora.** Son decenas de
+  miles de archivos chicos (10 apps en `--onedir`) y `Copy-Item` los manda de a uno, sin mostrar
+  progreso: en el local se perdió una hora mirando una consola quieta. Dos cosas: **el Actualizador
+  solo mira 5 de las 10 carpetas** (`OtterActualizador`, `MaestroCaja`, `MaestroDueno`,
+  `StockService`, `DuenoRemoto` — ver `buscar_origen` y `APPS_LOCAL`/`APPS_REMOTO`), así que la
+  mitad de los bytes se copiaban al pedo; y **`robocopy /E /MT:16` es varias veces más rápido** con
+  archivos chicos y va diciendo en cuál va. Ojo: `robocopy` devuelve 1, 2 o 3 cuando salió todo
+  bien — el error recién empieza en 8.
 - **`OtterActualizador` frena limpio ante un archivo bloqueado** (`PermissionError`) sin borrar la
   instalación anterior — es el comportamiento correcto, ante la duda no rompe nada. Solución:
   cerrar el `.exe` que está bloqueando (Task Manager si hace falta) y volver a apretar
@@ -481,6 +489,14 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
       vivo, porque el navegador no lo manda. Queda confirmado en producción que el servicio
       arranca solo con Windows y que Tailscale sigue conectado sin sesión iniciada.
       **Reiniciar es mejor prueba que cerrar sesión**: prueba las dos cosas de una.
+- [x] **Desplegar el carrito que baja solo + copiar el código de un producto.** HECHO el
+      15/9/2026 en la PC del local, con el `OtterActualizador` corrido como administrador.
+      **Matías reportó la revisión final entera en SI** (servicio en Automatic, servicio corriendo,
+      puerto contestando, antivirus excluido, respaldo al día). La lista de precios ya se había
+      importado unos días antes.
+- [ ] **Actualizar `DuenoRemoto` en la laptop de Leo** con esas dos mejoras — sin esto Leo NO tiene
+      el `Ctrl+C` para copiar códigos, que es justo lo que pidió. Es el mismo `.exe` y son 5
+      minutos, pero hace falta tener su laptop a mano. Aprovechar el viaje de la rotación de tokens.
 - [ ] **Hacer el inventario físico, en serio.** El log del servicio está lleno de
       `StockInsuficienteError: disponible 0, se pidió descontar 1`: el catálogo entró con stock 0,
       así que **ninguna venta descuenta stock**. La plata se cobra bien (sale de `self.carrito` y
@@ -513,8 +529,9 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
       no hay copia" ni "el disco está lleno": todo queda escrito en logs que nadie lee. La app
       Semáforo Clientes tapa una parte, pero solo mientras Matías la mire. Cuando esté el token de
       Telegram, lo barato es mandar por ahí lo que hoy va al `watchdog.log`.
-- [ ] Excluir `C:\SistemaDual` del antivirus: los `.exe` de PyInstaller no están firmados y un
-      antivirus que ponga uno en cuarentena deja el negocio sin caja sin decir por qué.
+- [x] **Excluir `C:\SistemaDual` del antivirus.** Ya no es un paso a mano: lo hace la revisión
+      final del `OtterActualizador` (y lo confirma releyendo la lista de exclusiones). Reportado en
+      SI el 15/9/2026.
 - [x] Traer al repo un test que arme el carrito, agregue una línea y lea `celda.get()` de cada
       columna (no solo el dato en `self.carrito`) — el bug del carrito en blanco pasó screening
       precisamente porque ningún test anterior releía el texto real dibujado en pantalla.
