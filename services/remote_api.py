@@ -102,8 +102,6 @@ def _construir_allowlist() -> dict:
         "alerts.listar_umbrales_por_producto": alerts.listar_umbrales_por_producto,
         "alerts.set_umbral_producto": alerts.set_umbral_producto,
         "alerts.quitar_umbral_producto": alerts.quitar_umbral_producto,
-        "alerts.resumen_umbrales_propios": alerts.resumen_umbrales_propios,
-        "alerts.quitar_umbrales_propios_con": alerts.quitar_umbrales_propios_con,
         "alerts.quitar_todos_los_umbrales_propios": alerts.quitar_todos_los_umbrales_propios,
         "alerts.set_umbral_global": alerts.set_umbral_global,
         "telegram_bot.probar_envio": telegram_bot.probar_envio,

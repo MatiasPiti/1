@@ -343,58 +343,6 @@ else:
 
 app.destroy()
 
-# ---------------------------------------------------------------- #
-# 13. Limpiar SOLO los que se crearon solos, sin tocar los puestos a mano
-# ---------------------------------------------------------------- #
-# El escenario de Leo: muchísimos productos con el mismo valor heredado del
-# global (se los creó el bug), y unos pocos que él puso a mano con otro
-# valor. Borrarlos todos de un saque se llevaría puestos los suyos.
-# El bloque anterior dejó puesto el stub que RECHAZA los envíos (para probar
-# el 401 de Telegram). Si no se devuelve el que acepta, acá no saldría
-# ninguna alerta y parecería un problema de los umbrales.
-tb.requests = type("R", (), {"post": staticmethod(_post_simulado),
-                              "RequestException": Exception})()
-
-alerts.quitar_todos_los_umbrales_propios()
-for n in range(6):
-    alerts.set_umbral_producto(f"P{n}", 20, 20)      # los que "se crearon solos"
-alerts.set_umbral_producto("P0", 3, 0)               # uno puesto a mano, con otro valor
-alerts.set_umbral_producto("P1", 7, 99)              # otro puesto a mano
-
-grupos = alerts.resumen_umbrales_propios()
-print("GRUPOS:", [(g["stock_minimo"], g["stock_maximo"], g["cantidad"]) for g in grupos])
-if not grupos or (grupos[0]["stock_minimo"], grupos[0]["stock_maximo"]) != (20, 20):
-    fallos.append(f"el grupo más grande no es el heredado 20/20: {grupos}")
-elif grupos[0]["cantidad"] != 4:
-    fallos.append(f"el grupo 20/20 dice {grupos[0]['cantidad']} y quedaron 4 con ese valor")
-else:
-    print("OK: los grupos salen ordenados, el heredado primero por ser el más grande")
-
-quitados = alerts.quitar_umbrales_propios_con(20, 20)
-quedan = {u["codigo"]: (u["stock_minimo"], u["stock_maximo"])
-          for u in alerts.listar_umbrales_por_producto()}
-if quitados != 4:
-    fallos.append(f"quitar el grupo 20/20 sacó {quitados}, esperaba 4")
-elif quedan != {"P0": (3, 0), "P1": (7, 99)}:
-    fallos.append(f"quitar el grupo 20/20 se llevó puestos los puestos a mano: quedaron {quedan}")
-else:
-    print("OK: se fueron los 4 heredados y quedaron intactos los 2 puestos a mano")
-
-# y el umbral global no se puede tocar en el camino
-if alerts.obtener_umbral_global() != {"stock_minimo": 0, "stock_maximo": 0}:
-    fallos.append(f"limpiar por grupo tocó el umbral global: {alerts.obtener_umbral_global()}")
-else:
-    print("OK: el umbral global quedó donde estaba")
-
-# los que quedaron a mano SIGUEN mandando (no se los apagó de rebote)
-salieron = vuelta_de_alertas()
-if salieron != 2:
-    fallos.append(f"tras la limpieza salieron {salieron} alertas, esperaba 2 (los dos a mano)")
-else:
-    print("OK: los umbrales puestos a mano siguen avisando después de la limpieza")
-
-alerts.quitar_todos_los_umbrales_propios()
-
 print()
 if fallos:
     print("=== FALLOS UMBRAL GLOBAL ===")

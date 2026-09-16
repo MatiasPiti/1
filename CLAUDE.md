@@ -476,14 +476,8 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
     actualizar) pero **no borra** los umbrales propios que ya existían: este código no puede
     distinguir los que se crearon solos de los que el dueño puso a mano, y borrar configuración del
     cliente en silencio no se hace.
-  - Para limpiarlos está el botón **"Limpiar umbrales propios…"** del Panel, que abre una
-    ventana con los umbrales **agrupados por su valor** y la cantidad de cada grupo. **No borra
-    todos de un saque a propósito**: los que se crearon solos son muchos y TODOS con el mismo
-    valor (el que tenía el global cuando salieron las alertas), mientras que los que el dueño puso
-    a mano son pocos y con otros valores. Nada en la base los distingue, así que el código no
-    elige: muestra los números y decide una persona — quitar el grupo de 2529 es evidente, quitar
-    el de 3 no. `quitar_todos_los_umbrales_propios()` sigue existiendo para el caso de que no haya
-    ninguno puesto a mano.
+  - Para limpiarlos está el botón **"Quitar TODOS los umbrales propios"** del Panel, con
+    confirmación y diciendo cuántos son — de a uno no es viable con miles.
   - **`0` significa "no avisar"** (el chequeo es `if row["stock_minimo"] and ...`, y 0 es falso), y
     ahora la pantalla lo dice: *"Poné 0 para no recibir ese aviso. Con 0 y 0 no llega ninguna
     alerta."* Antes había que saberlo.
