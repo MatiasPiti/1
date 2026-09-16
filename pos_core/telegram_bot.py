@@ -63,9 +63,10 @@ def _productos_fuera_de_umbral():
                COALESCE(a.stock_minimo, (SELECT stock_minimo FROM global), 0) AS stock_minimo,
                COALESCE(a.stock_maximo, (SELECT stock_maximo FROM global), 0) AS stock_maximo,
                COALESCE(a.telegram_chat_id, (SELECT telegram_chat_id FROM global)) AS chat_id,
-               a.ultima_alerta_enviada
+               e.ultima_alerta_enviada
         FROM Productos p
         LEFT JOIN Configuracion_Alertas a ON a.producto_codigo = p.codigo AND a.activo = 1
+        LEFT JOIN Alertas_Enviadas e ON e.producto_codigo = p.codigo
         WHERE p.activo = 1
         """
     ).fetchall()
@@ -97,23 +98,22 @@ def revisar_umbrales_y_alertar():
 
         if enviar_mensaje(alerta, chat_id=row["chat_id"]):
             with transaction() as conn:
-                # Si este producto todavía no tiene fila propia en
-                # Configuracion_Alertas (está usando el umbral GLOBAL vía
-                # el COALESCE de _productos_fuera_de_umbral), el INSERT de
-                # acá abajo crea una. Hay que pasarle explícitamente el
-                # umbral efectivo (row['stock_minimo']/['stock_maximo'],
-                # ya resuelto con COALESCE) — si no, la fila nueva cae en
-                # los defaults de la columna (5 / 0) y ese producto queda
-                # "pegado" a un umbral distinto del global para siempre,
-                # como efecto secundario de solo registrar el cooldown.
+                # Solo se anota CUÁNDO se mandó, en su tabla propia.
+                #
+                # Antes esto escribía en Configuracion_Alertas, y para un
+                # producto que usaba el umbral global le creaba una fila
+                # propia con el valor del global CONGELADO adentro. Desde
+                # ese momento el global dejaba de aplicarle: al dueño le
+                # pasó exactamente eso — puso 20/20, salieron las alertas,
+                # y después poner 0/0 no apagó nada, porque 0/0 cambiaba un
+                # número que ya nadie miraba. Anotar el cooldown no puede
+                # configurar nada.
                 conn.execute(
-                    """INSERT INTO Configuracion_Alertas
-                       (producto_codigo, stock_minimo, stock_maximo, ultima_alerta_enviada, activo)
-                       VALUES (?, ?, ?, ?, 1)
+                    """INSERT INTO Alertas_Enviadas (producto_codigo, ultima_alerta_enviada)
+                       VALUES (?, ?)
                        ON CONFLICT(producto_codigo) DO UPDATE SET
                            ultima_alerta_enviada = excluded.ultima_alerta_enviada""",
-                    (row["codigo"], row["stock_minimo"], row["stock_maximo"],
-                     ahora.isoformat(timespec="milliseconds")),
+                    (row["codigo"], ahora.isoformat(timespec="milliseconds")),
                 )
 
 

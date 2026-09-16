@@ -122,6 +122,24 @@ CREATE TABLE IF NOT EXISTS Configuracion_Alertas (
 );
 
 -- ---------------------------------------------------------------------
+-- Alertas_Enviadas (cuándo se mandó la última alerta de cada producto)
+--
+-- Vive aparte de Configuracion_Alertas a propósito. Antes el "no repetir
+-- la misma alerta por 4 horas" se anotaba EN la fila de umbrales, y para
+-- un producto que usaba el umbral global eso obligaba a crearle una fila
+-- propia: a partir de ese momento el producto quedaba pegado al número
+-- que el global tenía ESE día, y cambiar el global no le hacía nada. Al
+-- dueño le pasó exactamente eso — puso 20/20, salieron las alertas, y
+-- después no hubo forma de apagarlas poniendo 0/0.
+--
+-- Acá el cooldown es solo cooldown: no configura nada.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS Alertas_Enviadas (
+    producto_codigo       TEXT PRIMARY KEY,
+    ultima_alerta_enviada TEXT NOT NULL
+);
+
+-- ---------------------------------------------------------------------
 -- Filtros_Guardados (filtros anidados reutilizables del panel del dueño)
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS Filtros_Guardados (

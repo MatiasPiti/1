@@ -64,6 +64,24 @@ def quitar_umbral_producto(codigo: str) -> None:
         conn.execute("DELETE FROM Configuracion_Alertas WHERE producto_codigo = ?", (codigo,))
 
 
+def quitar_todos_los_umbrales_propios() -> int:
+    """Borra TODOS los umbrales por producto y deja mandando al global.
+
+    Existe por un problema real: mandar una alerta le creaba al producto un
+    umbral propio con el valor que el global tenía ese día, así que después
+    de una sola vuelta de alertas el catálogo entero quedaba "pegado" a ese
+    número y cambiar el global no hacía nada. Eso ya está arreglado, pero
+    las bases que pasaron por ahí se quedaron con miles de filas que nadie
+    puso a mano, y sacarlas de a una desde la pantalla no es viable.
+
+    No toca el umbral global (producto_codigo IS NULL) ni el cooldown: solo
+    saca los umbrales propios. Devuelve cuántos sacó, para poder decirlo.
+    """
+    with transaction() as conn:
+        return conn.execute(
+            "DELETE FROM Configuracion_Alertas WHERE producto_codigo IS NOT NULL").rowcount
+
+
 def listar_umbrales_por_producto() -> list:
     conn = get_connection()
     rows = conn.execute(

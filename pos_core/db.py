@@ -253,7 +253,42 @@ def aplicar_migraciones(path: str = None) -> list:
                                     f"la tabla; las filas existentes quedan con NULL ahí)")
                 except sqlite3.OperationalError as e2:
                     cambios.append(f"{tabla}.{nombre_col}: no se pudo agregar automáticamente ({e2})")
+
+    _mudar_cooldown_de_alertas(conn, cambios)
     return cambios
+
+
+def _mudar_cooldown_de_alertas(conn, cambios: list) -> None:
+    """Pasa el "última alerta enviada" a su tabla propia.
+
+    Antes vivía en Configuracion_Alertas, mezclado con los umbrales, y por
+    eso mandar una alerta le creaba al producto un umbral propio que tapaba
+    al global para siempre. Se copia el dato para no perder el cooldown y
+    que al actualizar no salga una tanda de alertas repetidas.
+
+    Las filas de umbrales NO se borran acá: algunas pueden ser umbrales que
+    el dueño puso a propósito, y este código no tiene forma de distinguir
+    unas de otras. Para limpiar las que se crearon solas está el botón
+    "Quitar TODOS los umbrales propios" del Panel, que es una decisión de
+    una persona y no un efecto secundario de actualizar.
+    """
+    try:
+        columnas = {row[1] for row in conn.execute("PRAGMA table_info(Configuracion_Alertas)")}
+        if "ultima_alerta_enviada" not in columnas:
+            return
+        movidas = conn.execute(
+            """INSERT OR IGNORE INTO Alertas_Enviadas (producto_codigo, ultima_alerta_enviada)
+               SELECT producto_codigo, ultima_alerta_enviada
+               FROM Configuracion_Alertas
+               WHERE producto_codigo IS NOT NULL AND ultima_alerta_enviada IS NOT NULL"""
+        ).rowcount
+        if movidas:
+            cambios.append(f"Alertas_Enviadas: se mudaron {movidas} marcas de última alerta "
+                            f"(antes vivían mezcladas con los umbrales)")
+        conn.commit()
+    except sqlite3.Error as e:
+        # Regla 6: una base que no se puede migrar tiene que poder abrir igual.
+        cambios.append(f"Alertas_Enviadas: no se pudo mudar el cooldown ({e})")
 
 
 def preparar_base(path: str = None) -> list:

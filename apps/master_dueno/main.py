@@ -1328,6 +1328,8 @@ class AppDueno(tk.Tk):
         umbrales = ttk.LabelFrame(frame, text="Umbral global por defecto (aplica a todo producto sin umbral propio)",
                                    padding=12)
         umbrales.pack(fill="x", pady=(0, 10))
+        ttk.Label(umbrales, text="Poné 0 para no recibir ese aviso. Con 0 y 0 no llega ninguna alerta.",
+                  style="Muted.TLabel").grid(row=1, column=0, columnspan=5, sticky="w", pady=(6, 0))
         ttk.Label(umbrales, text="Stock mínimo (stoploss):").grid(row=0, column=0)
         self.um_min = ttk.Entry(umbrales, width=8)
         self.um_min.grid(row=0, column=1, padx=4)
@@ -1355,6 +1357,12 @@ class AppDueno(tk.Tk):
                    command=self._guardar_umbral_producto).pack(side="left", padx=10)
         ttk.Button(fila, text="Quitar umbral propio", style="Danger.TButton",
                    command=self._quitar_umbral_producto).pack(side="left")
+        # Sacarlos de a uno no es viable cuando hay miles: las versiones
+        # anteriores le creaban un umbral propio a cada producto que
+        # disparaba una alerta, y con el catálogo en stock 0 eso es el
+        # catálogo entero.
+        ttk.Button(fila, text="Quitar TODOS los umbrales propios", style="Danger.TButton",
+                   command=self._quitar_todos_los_umbrales).pack(side="left", padx=10)
 
         self.tree_umbrales = ttk.Treeview(personalizado, columns=("codigo", "nombre", "min", "max"),
                                            show="headings", height=8)
@@ -1383,6 +1391,36 @@ class AppDueno(tk.Tk):
             messagebox.showinfo("Guardado", "Umbrales globales guardados.")
         except Exception as e:
             messagebox.showerror("Error", str(e))
+
+    def _quitar_todos_los_umbrales(self):
+        """Deja a TODOS los productos siguiendo el umbral global.
+
+        Se pregunta antes y se dice cuántos son: esto borra configuración
+        del cliente, y aunque casi siempre sean filas que se crearon solas,
+        alguna pudo haberla puesto el dueño a mano.
+        """
+        cuantos = len(self.backend.alerts.listar_umbrales_por_producto())
+        if not cuantos:
+            messagebox.showinfo("No hay nada que quitar",
+                                 "Ningún producto tiene umbral propio: todos ya siguen el umbral global.")
+            return
+        if not messagebox.askyesno(
+                "Quitar todos los umbrales propios",
+                f"Hay {cuantos} producto(s) con umbral propio, y ese umbral le gana al global.\n\n"
+                f"¿Quitarlos todos para que pasen a seguir el umbral global?\n\n"
+                f"Esto no borra productos ni stock. Solo saca los umbrales."):
+            return
+        try:
+            quitados = self.backend.alerts.quitar_todos_los_umbrales_propios()
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+            return
+        self._refrescar_umbrales_producto()
+        messagebox.showinfo(
+            "Listo",
+            f"Se quitaron {quitados} umbral(es) propio(s).\n\n"
+            f"Ahora todos los productos siguen el umbral global de arriba. "
+            f"Si ahí está en 0 y 0, no va a llegar ninguna alerta.")
 
     def _refrescar_umbrales_producto(self):
         for row in self.tree_umbrales.get_children():

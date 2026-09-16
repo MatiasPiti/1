@@ -462,6 +462,31 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
   - `pos_core.servicio_windows` se importa adentro de una función, así que va declarado como
     `--hidden-import` del `OtterActualizador` en `build_all.bat` — si no lo agarra el análisis
     automático, el `.exe` compila igual y falla recién en el local.
+- **Anotar el cooldown de una alerta NO puede configurar un umbral.** Le pasó a Leo en producción
+  (16/9/2026): puso el umbral global en **20/20**, salieron las alertas, y después puso **0/0** para
+  apagarlas y le siguieron llegando. No era culpa suya. `revisar_umbrales_y_alertar` anotaba el "no
+  repetir por 4 horas" EN la fila de `Configuracion_Alertas`, y para un producto que usaba el umbral
+  global eso obligaba a **crearle una fila propia con el valor del global congelado adentro**: desde
+  ese momento el global dejaba de aplicarle y 0/0 cambiaba un número que ya nadie miraba. Con el
+  catálogo real es peor: **entró entero con stock 0**, así que con mínimo 20 califican los 2529
+  productos y quedaban 2529 umbrales propios que nadie puso.
+  - El cooldown vive ahora en **`Alertas_Enviadas`**, su propia tabla. Anotar cuándo se mandó una
+    alerta no configura nada.
+  - La migración **muda** el dato viejo (para no disparar una tanda de alertas repetidas al
+    actualizar) pero **no borra** los umbrales propios que ya existían: este código no puede
+    distinguir los que se crearon solos de los que el dueño puso a mano, y borrar configuración del
+    cliente en silencio no se hace.
+  - Para limpiarlos está el botón **"Quitar TODOS los umbrales propios"** del Panel, con
+    confirmación y diciendo cuántos son — de a uno no es viable con miles.
+  - **`0` significa "no avisar"** (el chequeo es `if row["stock_minimo"] and ...`, y 0 es falso), y
+    ahora la pantalla lo dice: *"Poné 0 para no recibir ese aviso. Con 0 y 0 no llega ninguna
+    alerta."* Antes había que saberlo.
+  - **Apagar el bot entero** (destildar "Habilitado" en la sección de Telegram) es el corte de
+    emergencia: no depende de ningún umbral, se relee en la vuelta siguiente sin reiniciar el
+    servicio, y no borra el token ni el chat_id porque los campos se reescriben con lo que ya
+    tenían.
+  - Lo cuida `tests/test_umbral_global.py`, que corre el bot de verdad con el envío simulado y mira
+    lo único que le importa al negocio: si siguen llegando alertas.
 - **Ninguna ventana se pide más grande que el área útil del escritorio** (`ajustar_ventana`
   en `apps/theme.py`, que le pregunta a Windows por el work area). En la PC del cliente
   (1366x768) el Panel del Dueño quedaba tapado por la barra de tareas. Las pestañas van
@@ -512,7 +537,12 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
       → "Preparar sincronización" → conciliar en el Maestro con `Ctrl+Shift+M`.
 - [ ] Configurar la impresora térmica POS-58 en la PC del local.
 - [ ] Escribir las ACLs de Tailscale antes de sumar un segundo cliente.
-- [ ] Cargar el token y el chat_id del bot de Telegram del cliente.
+- [x] Cargar el token y el chat_id del bot de Telegram del cliente. HECHO — y en cuanto se
+      empezó a usar apareció el bug del umbral que no se podía apagar (ver arriba).
+- [ ] **Actualizar la PC del local con el arreglo del umbral.** Hasta que se haga, Leo tiene el bot
+      DESTILDADO como parche: si alguien lo vuelve a tildar, le llegan 2529 alertas otra vez. Al
+      actualizar, entrar al Panel y apretar **"Quitar TODOS los umbrales propios"** — la migración a
+      propósito no los borra sola.
 - [x] **Recompilar y actualizar la PC del local con el respaldo diario y el cartel de arranque.**
       HECHO el 10/9/2026. Se compiló en la laptop de Matías con Python 3.12.10 (tenía 3.14
       instalada; se puso 3.12 al lado con `py -3.12`), se pasó `dist\` por pendrive y se corrió el

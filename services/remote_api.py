@@ -101,6 +101,7 @@ def _construir_allowlist() -> dict:
         "alerts.listar_umbrales_por_producto": alerts.listar_umbrales_por_producto,
         "alerts.set_umbral_producto": alerts.set_umbral_producto,
         "alerts.quitar_umbral_producto": alerts.quitar_umbral_producto,
+        "alerts.quitar_todos_los_umbrales_propios": alerts.quitar_todos_los_umbrales_propios,
         "alerts.set_umbral_global": alerts.set_umbral_global,
         "ofertas.crear_oferta": ofertas.crear_oferta,
         "ofertas.listar_ofertas": ofertas.listar_ofertas,
