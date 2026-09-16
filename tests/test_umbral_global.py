@@ -343,6 +343,52 @@ else:
 
 app.destroy()
 
+# ---------------------------------------------------------------- #
+# 13. Quitar el umbral GLOBAL conserva todos los personalizados
+# ---------------------------------------------------------------- #
+# Lo que pidió Matías: que se borre el global y que NINGÚN umbral por
+# producto se pierda. Los que tienen el suyo siguen avisando (su umbral
+# nunca dependió del global); los que no, dejan de avisar.
+tb.requests = type("R", (), {"post": staticmethod(_post_simulado),
+                              "RequestException": Exception})()
+alerts.quitar_todos_los_umbrales_propios()
+alerts.set_umbral_global(20, 20)
+alerts.set_umbral_producto("P1", 3, 0)
+alerts.set_umbral_producto("P2", 7, 0)
+
+antes = vuelta_de_alertas()
+if antes != 6:
+    fallos.append(f"con global 20/20 y 2 propios salieron {antes} alertas, esperaba 6")
+
+quitados = alerts.quitar_umbral_global()
+propios = {u["codigo"]: (u["stock_minimo"], u["stock_maximo"])
+           for u in alerts.listar_umbrales_por_producto()}
+if quitados < 1:
+    fallos.append("quitar el umbral global no borró ninguna fila")
+elif propios != {"P1": (3, 0), "P2": (7, 0)}:
+    fallos.append(f"quitar el umbral global se llevó puestos los personalizados: {propios}")
+else:
+    print(f"OK: se borró el umbral global ({quitados} fila) y los 2 personalizados quedaron intactos")
+
+if alerts.obtener_umbral_global() != {"stock_minimo": 0, "stock_maximo": 0}:
+    fallos.append(f"tras borrarlo, el global se lee como {alerts.obtener_umbral_global()}")
+
+despues = vuelta_de_alertas()
+if despues != 2:
+    fallos.append(f"tras quitar el global salieron {despues} alertas, esperaba 2 "
+                   f"(solo los que tienen umbral propio)")
+else:
+    print("OK: sin global avisan SOLO los 2 con umbral propio, los otros 4 se callaron")
+
+# y poner uno nuevo tiene que volver a funcionar (no quedó la base en un estado raro)
+alerts.set_umbral_global(20, 20)
+if vuelta_de_alertas() != 6:
+    fallos.append("después de borrar el global, volver a ponerlo no reactivó las alertas")
+else:
+    print("OK: volver a poner un global después de borrarlo funciona")
+alerts.quitar_umbral_global()
+alerts.quitar_todos_los_umbrales_propios()
+
 print()
 if fallos:
     print("=== FALLOS UMBRAL GLOBAL ===")

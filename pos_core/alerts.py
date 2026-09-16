@@ -59,6 +59,24 @@ def obtener_umbral_global() -> dict:
     return {"stock_minimo": fila["stock_minimo"], "stock_maximo": fila["stock_maximo"]}
 
 
+def quitar_umbral_global() -> int:
+    """Borra el umbral global. Los umbrales POR PRODUCTO no se tocan.
+
+    Qué cambia después: los productos que no tienen umbral propio dejan de
+    avisar (el COALESCE de telegram_bot._productos_fuera_de_umbral cae a 0,
+    y 0 significa "no controlar"). Los que SÍ tienen umbral propio siguen
+    avisando exactamente igual — el suyo nunca dependió del global.
+
+    Borra TODAS las filas globales, en plural a propósito: el UNIQUE de
+    producto_codigo no impide que haya varias, porque en SQLite cada NULL
+    cuenta como distinto de cualquier otro NULL. Si alguna vez quedaron dos,
+    esto las deja en cero y no en una.
+    """
+    with transaction() as conn:
+        return conn.execute(
+            "DELETE FROM Configuracion_Alertas WHERE producto_codigo IS NULL").rowcount
+
+
 def set_umbral_producto(codigo: str, stock_minimo: int, stock_maximo: int) -> None:
     codigo = (codigo or "").strip()
     if not codigo:

@@ -1361,6 +1361,11 @@ class AppDueno(tk.Tk):
         self._cargar_umbral_global()
         ttk.Button(umbrales, text="Guardar umbrales globales", command=self._guardar_umbrales
                    ).grid(row=0, column=4, padx=8)
+        # Sacar el global de la base, sin tocar NINGÚN umbral por producto.
+        # Los que tienen umbral propio siguen avisando igual: el suyo nunca
+        # dependió del global.
+        ttk.Button(umbrales, text="Quitar el umbral global", style="Danger.TButton",
+                   command=self._quitar_umbral_global).grid(row=0, column=5, padx=4)
 
         # El título lleva el contador: con miles de filas (lo que dejaban las
         # versiones anteriores) hay que poder ver el número de un vistazo,
@@ -1476,6 +1481,33 @@ class AppDueno(tk.Tk):
                        f"y cuando llegue a {maximo} o más.")
         messagebox.showinfo("Umbral global guardado",
                              f"Mínimo: {minimo}    Máximo: {maximo}\n\n{detalle}")
+
+    def _quitar_umbral_global(self):
+        """Borra el umbral global y deja intactos todos los personalizados."""
+        propios = len(self.backend.alerts.listar_umbrales_por_producto())
+        actual = self.backend.alerts.obtener_umbral_global()
+        detalle = (f"El umbral global de hoy (mínimo {actual['stock_minimo']}, "
+                   f"máximo {actual['stock_maximo']}) se va a borrar.\n\n"
+                   f"Los productos SIN umbral propio dejan de avisar.\n")
+        if propios:
+            detalle += (f"Los {propios} producto(s) CON umbral propio siguen avisando igual: "
+                        f"no se les toca nada.\n")
+        else:
+            detalle += "Ningún producto tiene umbral propio, así que no va a avisar ninguno.\n"
+        if not messagebox.askyesno("Quitar el umbral global", detalle + "\n¿Seguimos?"):
+            return
+        try:
+            quitados = self.backend.alerts.quitar_umbral_global()
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+            return
+        self._cargar_umbral_global()
+        self._refrescar_umbrales_producto()
+        messagebox.showinfo(
+            "Umbral global quitado",
+            f"Listo ({quitados} fila(s)).\n\n"
+            + (f"Siguen avisando los {propios} producto(s) con umbral propio."
+               if propios else "No va a llegar ninguna alerta de stock."))
 
     def _quitar_todos_los_umbrales(self):
         """Deja a TODOS los productos siguiendo el umbral global.

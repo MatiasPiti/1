@@ -106,6 +106,7 @@ def _construir_allowlist() -> dict:
         "alerts.set_umbral_global": alerts.set_umbral_global,
         "telegram_bot.probar_envio": telegram_bot.probar_envio,
         "alerts.obtener_umbral_global": alerts.obtener_umbral_global,
+        "alerts.quitar_umbral_global": alerts.quitar_umbral_global,
         "ofertas.crear_oferta": ofertas.crear_oferta,
         "ofertas.listar_ofertas": ofertas.listar_ofertas,
         "ofertas.cancelar_oferta": ofertas.cancelar_oferta,
