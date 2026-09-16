@@ -40,6 +40,60 @@ def enviar_mensaje(texto: str, *, chat_id: str = None, timeout: int = 10) -> boo
         return False  # sin internet: no debe romper el resto del sistema
 
 
+def probar_envio() -> dict:
+    """Manda un mensaje de prueba y explica en castellano QUÉ pasó.
+
+    Hasta ahora la única forma de saber si el bot estaba bien configurado
+    era esperar a que un producto cruzara un umbral. Si no llegaba nada, no
+    había manera de distinguir "el token está mal" de "no hay internet" o
+    de "todavía ningún producto califica".
+
+    OJO (regla 4): el token va en la URL de Telegram. Nada de lo que se
+    devuelve acá puede incluir esa URL ni el token — este texto termina en
+    un cartel del Panel, y una captura de ese cartel es un chat igual.
+    """
+    cfg = cargar_config()
+    if cfg.get("telegram", "habilitado", fallback="false").lower() != "true":
+        return {"ok": False, "detalle": "El bot está DESTILDADO: con 'Habilitado' sin tildar "
+                                         "no se manda ninguna alerta. Tildalo y guardá."}
+    token = cfg.get("telegram", "bot_token", fallback="").strip()
+    chat_id = cfg.get("telegram", "chat_id_default", fallback="").strip()
+    if not token:
+        return {"ok": False, "detalle": "Falta el Bot Token (lo da @BotFather en Telegram)."}
+    if not chat_id:
+        return {"ok": False, "detalle": "Falta el Chat ID: es a quién se le manda el aviso."}
+
+    try:
+        resp = requests.post(
+            API_BASE.format(token=token, method="sendMessage"),
+            json={"chat_id": chat_id,
+                  "text": "✅ Otter: prueba de alertas. Si ves este mensaje, el bot está bien configurado."},
+            timeout=10,
+        )
+    except requests.RequestException as e:
+        return {"ok": False, "detalle": f"No se pudo llegar a Telegram. ¿La PC tiene internet? "
+                                         f"({type(e).__name__})"}
+
+    if resp.ok:
+        return {"ok": True, "detalle": "Mensaje enviado. Fijate en el Telegram del chat configurado: "
+                                        "si llegó, las alertas van a llegar igual."}
+
+    # Los dos errores que se dan de verdad, traducidos. El cuerpo crudo de
+    # Telegram se recorta y NUNCA se arma con la URL, que lleva el token.
+    detalle = ""
+    try:
+        detalle = str(resp.json().get("description", ""))[:200]
+    except Exception:
+        detalle = ""
+    if resp.status_code == 401:
+        return {"ok": False, "detalle": "Telegram rechazó el Bot Token: está mal o fue revocado. "
+                                         "Pedile uno nuevo a @BotFather."}
+    if resp.status_code == 400 and "chat not found" in detalle.lower():
+        return {"ok": False, "detalle": "El Chat ID no existe, o el bot todavía no habló nunca con "
+                                         "ese chat. Abrí el chat con el bot y mandale un /start primero."}
+    return {"ok": False, "detalle": f"Telegram rechazó el envío (código {resp.status_code}). {detalle}".strip()}
+
+
 def _productos_fuera_de_umbral():
     """Un renglón por producto activo, con su umbral efectivo ya resuelto
     (el propio si tiene, si no el global).

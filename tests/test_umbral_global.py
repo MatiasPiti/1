@@ -264,6 +264,85 @@ finally:
     except Exception:
         pass
 
+# ---------------------------------------------------------------- #
+# 11. El Bot Token no puede quedar a la vista en la pantalla
+# ---------------------------------------------------------------- #
+# Regla 4: el bot_token del cliente YA se filtró una vez por una captura de
+# pantalla de esta misma pestaña. El valor tiene que seguir adentro del
+# campo (si no, guardar lo borraría), pero no dibujarse.
+paths.set_base_override(base)
+db.cerrar_conexion()
+config.actualizar_config_dict({"telegram": {"bot_token": "123456:SECRETO-DE-PRUEBA",
+                                            "chat_id_default": "999", "habilitado": "true"}})
+app = AppDueno()
+app.update()
+if app.tg_token.cget("show") in ("", None):
+    fallos.append("el Bot Token se dibuja en claro en la pantalla de Alertas: una captura de esa "
+                   "pantalla lo filtra, que es exactamente como ya se filtró una vez")
+elif app.tg_token.get() != "123456:SECRETO-DE-PRUEBA":
+    fallos.append(f"tapar el token rompió su valor: el campo tiene {app.tg_token.get()!r}, "
+                   f"así que guardar lo perdería")
+else:
+    print("OK: el Bot Token está tapado en pantalla pero entero adentro del campo")
+
+# y el guardado no puede perderlo
+app._guardar_config_telegram()
+app.update()
+if config.cargar_config().get("telegram", "bot_token") != "123456:SECRETO-DE-PRUEBA":
+    fallos.append("guardar la config de Telegram con el token tapado lo borró")
+else:
+    print("OK: guardar con el token tapado no lo pierde")
+
+# ---------------------------------------------------------------- #
+# 12. El botón de probar dice QUÉ pasó, y nunca filtra el token
+# ---------------------------------------------------------------- #
+casos = [
+    ({"habilitado": "false"}, "destildado", "destild"),
+    ({"habilitado": "true", "bot_token": ""}, "sin token", "token"),
+    ({"habilitado": "true", "bot_token": "123456:SECRETO-DE-PRUEBA", "chat_id_default": ""},
+     "sin chat id", "chat id"),
+]
+for cambios, etiqueta, esperado in casos:
+    base_cfg = {"bot_token": "123456:SECRETO-DE-PRUEBA", "chat_id_default": "999",
+                "habilitado": "true"}
+    base_cfg.update(cambios)
+    config.actualizar_config_dict({"telegram": base_cfg})
+    r = tb.probar_envio()
+    if r["ok"] or esperado not in r["detalle"].lower():
+        fallos.append(f"probar con el bot {etiqueta} dijo {r!r}; esperaba un aviso sobre {esperado!r}")
+    if "SECRETO-DE-PRUEBA" in r["detalle"]:
+        fallos.append(f"¡el mensaje de la prueba con el bot {etiqueta} incluye el TOKEN!: {r['detalle']}")
+else:
+    print("OK: probar el bot explica cada caso (destildado / sin token / sin chat) sin filtrar el token")
+
+# el caso en que Telegram rechaza: tampoco puede filtrar el token
+config.actualizar_config_dict({"telegram": {"bot_token": "123456:SECRETO-DE-PRUEBA",
+                                            "chat_id_default": "999", "habilitado": "true"}})
+
+
+class _Rechazo:
+    ok = False
+    status_code = 401
+
+    @staticmethod
+    def json():
+        return {"description": "Unauthorized"}
+
+
+tb.requests = type("R", (), {"post": staticmethod(lambda *a, **k: _Rechazo()),
+                              "RequestException": Exception})()
+r = tb.probar_envio()
+if r["ok"]:
+    fallos.append("un 401 de Telegram se reportó como envío exitoso")
+elif "SECRETO-DE-PRUEBA" in r["detalle"]:
+    fallos.append(f"¡el mensaje de error incluye el TOKEN!: {r['detalle']}")
+elif "token" not in r["detalle"].lower():
+    fallos.append(f"un 401 no explica que el problema es el token: {r['detalle']}")
+else:
+    print("OK: si Telegram rechaza el token, lo dice — y no lo escribe en el cartel")
+
+app.destroy()
+
 print()
 if fallos:
     print("=== FALLOS UMBRAL GLOBAL ===")

@@ -73,7 +73,8 @@ def _json_default(valor):
 # ---------------------------------------------------------------------- #
 def _construir_allowlist() -> dict:
     from pos_core import (stock_service, bulk_edit, pdf_import, excel_import, filters, config,
-                           alerts, audit, products, ofertas, reports, sales, precios)
+                           alerts, audit, products, ofertas, reports, sales, precios,
+                           telegram_bot)
 
     return {
         "reports.resumen_dashboard": reports.resumen_dashboard,
@@ -103,6 +104,7 @@ def _construir_allowlist() -> dict:
         "alerts.quitar_umbral_producto": alerts.quitar_umbral_producto,
         "alerts.quitar_todos_los_umbrales_propios": alerts.quitar_todos_los_umbrales_propios,
         "alerts.set_umbral_global": alerts.set_umbral_global,
+        "telegram_bot.probar_envio": telegram_bot.probar_envio,
         "alerts.obtener_umbral_global": alerts.obtener_umbral_global,
         "ofertas.crear_oferta": ofertas.crear_oferta,
         "ofertas.listar_ofertas": ofertas.listar_ofertas,

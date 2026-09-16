@@ -491,6 +491,23 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
     a la vez. Ahora se llenan con `alerts.obtener_umbral_global()` al abrir y después de guardar,
     y el cartel de confirmación dice en castellano qué va a pasar ("No va a llegar ninguna alerta
     de stock", "Solo va a avisar por stock bajo…").
+  - **El Bot Token va TAPADO en la pantalla de Alertas** (`show="•"` + una casilla "Mostrar").
+    No es paranoia: el token del cliente **ya se filtró una vez por una captura de esa misma
+    pestaña** (regla 4), y el dueño abre el Panel con gente al lado del mostrador. `show` solo
+    cambia cómo se dibuja: el valor sigue entero adentro del campo, así que guardar no lo pierde —
+    el test lo comprueba, porque enmascarar rompiendo el valor sería peor que no enmascarar.
+  - **Botón "Probar (manda un mensaje)"** (`telegram_bot.probar_envio`). Antes, la única forma de
+    saber si el bot estaba bien configurado era esperar a que un producto cruzara un umbral, y si
+    no llegaba nada no se podía distinguir "el token está mal" de "no hay internet" o de "todavía
+    ningún producto califica". Ahora lo dice en castellano: destildado, falta el token, falta el
+    chat, Telegram rechazó el token (401), el chat no existe (hay que mandarle `/start` al bot
+    primero), o sin internet. **Nada de lo que devuelve puede incluir el token**: va en la URL de
+    Telegram, y ese texto termina en un cartel que se fotografía. El test lo verifica caso por caso.
+  - Guardar la config de Telegram **dice si el bot quedó encendido o apagado**, en vez de un
+    "Guardado" a secas que dejaba creer que iba a mandar aunque estuviera destildado o sin token.
+  - "Quitar umbral propio" ya no falla en silencio (con el campo vacío o un código sin umbral
+    propio no pasaba nada y no decía nada), y el título de la lista **muestra cuántos productos NO
+    siguen el global** — ese número es la explicación de por qué el global no aplica.
   - Lo cuida `tests/test_umbral_global.py`, que corre el bot de verdad con el envío simulado y mira
     lo único que le importa al negocio: si siguen llegando alertas. **Lo prueba por los tres
     caminos**: la función directo, la pantalla del Panel (escribiendo en los campos y apretando el

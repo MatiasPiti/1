@@ -1309,10 +1309,20 @@ class AppDueno(tk.Tk):
         form = ttk.LabelFrame(frame, text="Configuración del Bot de Telegram", padding=12)
         form.pack(fill="x", pady=(0, 10))
 
+        # El token va TAPADO. No es paranoia: el bot_token del cliente ya se
+        # filtró una vez por una captura de pantalla de esta misma pestaña
+        # (regla 4), y el dueño abre el Panel con gente al lado del
+        # mostrador. El valor real sigue adentro del campo —"show" solo
+        # cambia cómo se dibuja—, así que guardar no lo pierde.
         ttk.Label(form, text="Bot Token:").grid(row=0, column=0, sticky="w")
-        self.tg_token = ttk.Entry(form, width=50)
+        self.tg_token = ttk.Entry(form, width=50, show="•")
         self.tg_token.insert(0, cfg.get("bot_token", ""))
         self.tg_token.grid(row=0, column=1, padx=6)
+        self.tg_ver_token = tk.BooleanVar(value=False)
+        ttk.Checkbutton(form, text="Mostrar", variable=self.tg_ver_token,
+                        command=lambda: self.tg_token.config(
+                            show="" if self.tg_ver_token.get() else "•")
+                        ).grid(row=0, column=2, sticky="w")
 
         ttk.Label(form, text="Chat ID por defecto:").grid(row=1, column=0, sticky="w")
         self.tg_chat = ttk.Entry(form, width=30)
@@ -1322,8 +1332,16 @@ class AppDueno(tk.Tk):
         self.tg_habilitado = tk.BooleanVar(value=cfg.get("habilitado", "false") == "true")
         ttk.Checkbutton(form, text="Habilitado", variable=self.tg_habilitado).grid(row=2, column=1, sticky="w")
 
-        ttk.Button(form, text="Guardar", style="Accent.TButton", command=self._guardar_config_telegram
-                   ).grid(row=3, column=1, pady=(8, 0), sticky="w")
+        botones_tg = ttk.Frame(form)
+        botones_tg.grid(row=3, column=1, pady=(8, 0), sticky="w")
+        ttk.Button(botones_tg, text="Guardar", style="Accent.TButton",
+                   command=self._guardar_config_telegram).pack(side="left")
+        # Sin esto, la única forma de saber si el bot quedó bien configurado
+        # era esperar a que un producto cruzara un umbral — y si no llegaba
+        # nada, no había manera de distinguir "el token está mal" de "no hay
+        # internet" o de "todavía ningún producto califica".
+        ttk.Button(botones_tg, text="Probar (manda un mensaje)",
+                   command=self._probar_telegram).pack(side="left", padx=8)
 
         umbrales = ttk.LabelFrame(frame, text="Umbral global por defecto (aplica a todo producto sin umbral propio)",
                                    padding=12)
@@ -1344,7 +1362,12 @@ class AppDueno(tk.Tk):
         ttk.Button(umbrales, text="Guardar umbrales globales", command=self._guardar_umbrales
                    ).grid(row=0, column=4, padx=8)
 
-        personalizado = ttk.LabelFrame(frame, text="Umbral personalizado por producto (pisa el global)", padding=12)
+        # El título lleva el contador: con miles de filas (lo que dejaban las
+        # versiones anteriores) hay que poder ver el número de un vistazo,
+        # porque ese número es la explicación de por qué el global no aplica.
+        self.marco_umbrales_propios = ttk.LabelFrame(
+            frame, text="Umbral personalizado por producto (pisa el global)", padding=12)
+        personalizado = self.marco_umbrales_propios
         personalizado.pack(fill="both", expand=True)
         fila = ttk.Frame(personalizado)
         fila.pack(fill="x", pady=(0, 8))
@@ -1383,12 +1406,43 @@ class AppDueno(tk.Tk):
         self._refrescar_umbrales_producto()
 
     def _guardar_config_telegram(self):
+        habilitado = self.tg_habilitado.get()
+        token = self.tg_token.get().strip()
+        chat = self.tg_chat.get().strip()
+        self.backend.config.actualizar_config_dict({"telegram": {
+            "bot_token": token,
+            "chat_id_default": chat,
+            "habilitado": "true" if habilitado else "false",
+        }})
+        # Decir si va a mandar o no. "Guardado" a secas dejaba creer que el
+        # bot quedaba andando aunque estuviera destildado o sin token.
+        if not habilitado:
+            estado = "El bot quedó APAGADO: no se va a mandar ninguna alerta."
+        elif not token or not chat:
+            estado = ("El bot quedó tildado pero le falta el "
+                      + ("Bot Token" if not token else "Chat ID")
+                      + ": así no puede mandar nada.")
+        else:
+            estado = ("El bot quedó ENCENDIDO. Apretá 'Probar' para confirmar que llega "
+                      "el mensaje antes de confiar en las alertas.")
+        messagebox.showinfo("Configuración de Telegram guardada", estado)
+
+    def _probar_telegram(self):
+        """Guarda lo que está escrito y manda un mensaje de prueba de verdad."""
         self.backend.config.actualizar_config_dict({"telegram": {
             "bot_token": self.tg_token.get().strip(),
             "chat_id_default": self.tg_chat.get().strip(),
             "habilitado": "true" if self.tg_habilitado.get() else "false",
         }})
-        messagebox.showinfo("Guardado", "Configuración de Telegram guardada.")
+        try:
+            r = self.backend.telegram_bot.probar_envio()
+        except Exception as e:
+            messagebox.showerror("No se pudo probar", str(e))
+            return
+        if r.get("ok"):
+            messagebox.showinfo("Mensaje enviado", r.get("detalle", ""))
+        else:
+            messagebox.showwarning("No se pudo mandar", r.get("detalle", ""))
 
     def _cargar_umbral_global(self):
         """Pone en los campos el umbral que está configurado ahora."""
@@ -1456,9 +1510,16 @@ class AppDueno(tk.Tk):
     def _refrescar_umbrales_producto(self):
         for row in self.tree_umbrales.get_children():
             self.tree_umbrales.delete(row)
-        for i, u in enumerate(self.backend.alerts.listar_umbrales_por_producto()):
+        propios = self.backend.alerts.listar_umbrales_por_producto()
+        for i, u in enumerate(propios):
             self.tree_umbrales.insert("", "end", values=(u["codigo"], u["nombre"], u["stock_minimo"], u["stock_maximo"]),
                                        tags=(tag_fila(i),))
+        titulo = "Umbral personalizado por producto (pisa el global)"
+        if propios:
+            titulo += f" — {len(propios)} producto(s) NO siguen el umbral global"
+        else:
+            titulo += " — ninguno: todos siguen el umbral global"
+        self.marco_umbrales_propios.config(text=titulo)
 
     def _guardar_umbral_producto(self):
         codigo = self.um_prod_codigo.get().strip()
@@ -1480,11 +1541,22 @@ class AppDueno(tk.Tk):
         messagebox.showinfo("Guardado", f"Umbral propio de '{codigo}' guardado (mín. {minimo} / máx. {maximo}).")
 
     def _quitar_umbral_producto(self):
+        # Antes, con el campo vacío o con un código que no tenía umbral
+        # propio, esto no hacía nada Y no decía nada: el dueño apretaba y no
+        # pasaba nada en pantalla, sin saber si había funcionado.
         codigo = self.um_prod_codigo.get().strip()
         if not codigo:
+            messagebox.showwarning("Falta el código",
+                                    "Escribí el código, o hacé doble clic en una fila de la lista.")
+            return
+        antes = {u["codigo"] for u in self.backend.alerts.listar_umbrales_por_producto()}
+        if codigo not in antes:
+            messagebox.showinfo("No tenía umbral propio",
+                                 f"'{codigo}' ya sigue el umbral global: no hay nada que quitarle.")
             return
         self.backend.alerts.quitar_umbral_producto(codigo)
         self._refrescar_umbrales_producto()
+        messagebox.showinfo("Listo", f"'{codigo}' vuelve a seguir el umbral global.")
 
     def _cargar_umbral_seleccionado(self, event=None):
         sel = self.tree_umbrales.selection()
