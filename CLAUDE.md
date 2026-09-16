@@ -485,8 +485,17 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
     emergencia: no depende de ningún umbral, se relee en la vuelta siguiente sin reiniciar el
     servicio, y no borra el token ni el chat_id porque los campos se reescriben con lo que ya
     tenían.
+  - **Los campos del umbral global abrían VACÍOS**, así que el dueño no podía ver qué estaba
+    puesto, y apretar "Guardar umbrales globales" sin escribir nada lo dejaba en 0/0 —apagando
+    todas las alertas— sin decir una palabra. Un campo vacío no puede significar "no sé" y "cero"
+    a la vez. Ahora se llenan con `alerts.obtener_umbral_global()` al abrir y después de guardar,
+    y el cartel de confirmación dice en castellano qué va a pasar ("No va a llegar ninguna alerta
+    de stock", "Solo va a avisar por stock bajo…").
   - Lo cuida `tests/test_umbral_global.py`, que corre el bot de verdad con el envío simulado y mira
-    lo único que le importa al negocio: si siguen llegando alertas.
+    lo único que le importa al negocio: si siguen llegando alertas. **Lo prueba por los tres
+    caminos**: la función directo, la pantalla del Panel (escribiendo en los campos y apretando el
+    botón), y la **API remota levantada de verdad** — que es como lo hace Leo desde su laptop, y
+    donde un argumento posicional que no viaje bien daría el mismo síntoma por otra causa.
 - **Ninguna ventana se pide más grande que el área útil del escritorio** (`ajustar_ventana`
   en `apps/theme.py`, que le pregunta a Windows por el work area). En la PC del cliente
   (1366x768) el Panel del Dueño quedaba tapado por la barra de tareas. Las pestañas van

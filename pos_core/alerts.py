@@ -41,6 +41,24 @@ def set_umbral_global(stock_minimo: int, stock_maximo: int) -> None:
             )
 
 
+def obtener_umbral_global() -> dict:
+    """Lo que hay configurado hoy como umbral global.
+
+    Existe porque la pantalla del Panel abría los dos campos VACÍOS: el
+    dueño no tenía forma de ver qué estaba puesto, y apretar "Guardar" sin
+    escribir nada lo dejaba en 0/0 —o sea, apagaba todas las alertas— sin
+    decir una palabra. Un campo vacío no puede significar "no sé" y "cero"
+    a la vez.
+    """
+    conn = get_connection()
+    fila = conn.execute(
+        "SELECT stock_minimo, stock_maximo FROM Configuracion_Alertas "
+        "WHERE producto_codigo IS NULL AND activo = 1 ORDER BY id LIMIT 1").fetchone()
+    if not fila:
+        return {"stock_minimo": 0, "stock_maximo": 0}
+    return {"stock_minimo": fila["stock_minimo"], "stock_maximo": fila["stock_maximo"]}
+
+
 def set_umbral_producto(codigo: str, stock_minimo: int, stock_maximo: int) -> None:
     codigo = (codigo or "").strip()
     if not codigo:

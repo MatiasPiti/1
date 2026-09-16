@@ -1336,6 +1336,11 @@ class AppDueno(tk.Tk):
         ttk.Label(umbrales, text="Stock máximo (sobre-stock):").grid(row=0, column=2)
         self.um_max = ttk.Entry(umbrales, width=8)
         self.um_max.grid(row=0, column=3, padx=4)
+        # Los campos arrancan con lo que HAY configurado, no en blanco. En
+        # blanco el dueño no podía ver qué estaba puesto, y apretar Guardar
+        # sin escribir nada lo dejaba en 0/0 — apagaba todas las alertas —
+        # sin decir una palabra.
+        self._cargar_umbral_global()
         ttk.Button(umbrales, text="Guardar umbrales globales", command=self._guardar_umbrales
                    ).grid(row=0, column=4, padx=8)
 
@@ -1385,12 +1390,38 @@ class AppDueno(tk.Tk):
         }})
         messagebox.showinfo("Guardado", "Configuración de Telegram guardada.")
 
+    def _cargar_umbral_global(self):
+        """Pone en los campos el umbral que está configurado ahora."""
+        try:
+            actual = self.backend.alerts.obtener_umbral_global()
+        except Exception:
+            return   # sin conexión: mejor vacío que un número inventado
+        for campo, clave in ((self.um_min, "stock_minimo"), (self.um_max, "stock_maximo")):
+            campo.delete(0, "end")
+            campo.insert(0, str(actual.get(clave, 0)))
+
     def _guardar_umbrales(self):
         try:
-            self.backend.alerts.set_umbral_global(int(self.um_min.get() or 0), int(self.um_max.get() or 0))
-            messagebox.showinfo("Guardado", "Umbrales globales guardados.")
+            minimo = int(self.um_min.get() or 0)
+            maximo = int(self.um_max.get() or 0)
+            self.backend.alerts.set_umbral_global(minimo, maximo)
         except Exception as e:
             messagebox.showerror("Error", str(e))
+            return
+        self._cargar_umbral_global()
+        # Se dice QUÉ quedó guardado: apagar las alertas sin querer no puede
+        # pasar en silencio, y encenderlas tampoco.
+        if not minimo and not maximo:
+            detalle = "No va a llegar ninguna alerta de stock."
+        elif not minimo:
+            detalle = f"Solo va a avisar por sobre-stock (a partir de {maximo}). Por stock bajo, no."
+        elif not maximo:
+            detalle = f"Solo va a avisar por stock bajo (cuando quede en {minimo} o menos). Por sobre-stock, no."
+        else:
+            detalle = (f"Va a avisar cuando un producto quede en {minimo} o menos, "
+                       f"y cuando llegue a {maximo} o más.")
+        messagebox.showinfo("Umbral global guardado",
+                             f"Mínimo: {minimo}    Máximo: {maximo}\n\n{detalle}")
 
     def _quitar_todos_los_umbrales(self):
         """Deja a TODOS los productos siguiendo el umbral global.
