@@ -1388,9 +1388,11 @@ class AppDueno(tk.Tk):
         # Sacarlos de a uno no es viable cuando hay miles: las versiones
         # anteriores le creaban un umbral propio a cada producto que
         # disparaba una alerta, y con el catálogo en stock 0 eso es el
-        # catálogo entero.
-        ttk.Button(fila, text="Quitar TODOS los umbrales propios", style="Danger.TButton",
-                   command=self._quitar_todos_los_umbrales).pack(side="left", padx=10)
+        # catálogo entero. Pero borrarlos TODOS de un saque se llevaría
+        # puestos los que el dueño puso a mano, así que se abre una ventana
+        # con los grupos y elige una persona.
+        ttk.Button(fila, text="Limpiar umbrales propios...", style="Danger.TButton",
+                   command=self._abrir_limpieza_umbrales).pack(side="left", padx=10)
 
         self.tree_umbrales = ttk.Treeview(personalizado, columns=("codigo", "nombre", "min", "max"),
                                            show="headings", height=8)
@@ -1476,6 +1478,97 @@ class AppDueno(tk.Tk):
                        f"y cuando llegue a {maximo} o más.")
         messagebox.showinfo("Umbral global guardado",
                              f"Mínimo: {minimo}    Máximo: {maximo}\n\n{detalle}")
+
+    def _abrir_limpieza_umbrales(self):
+        """Ventana para sacar umbrales propios POR GRUPO, no todos de golpe.
+
+        Los que se crearon solos (por el bug del cooldown) son todos iguales
+        entre sí —llevan el valor que tenía el global el día que salieron
+        las alertas— y son muchos. Los que el dueño puso a mano son pocos y
+        con otros valores. Nada en la base los distingue, así que acá se
+        muestran los grupos con su cantidad y decide una persona mirando los
+        números: quitar el grupo de 2529 es evidente, quitar el de 3 no.
+        """
+        try:
+            grupos = self.backend.alerts.resumen_umbrales_propios()
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+            return
+        if not grupos:
+            messagebox.showinfo("No hay nada que limpiar",
+                                 "Ningún producto tiene umbral propio: todos ya siguen el umbral global.")
+            return
+
+        top = tk.Toplevel(self)
+        top.title("Limpiar umbrales propios")
+        aplicar_tema(top)
+        ajustar_ventana(top, 620, 420)
+        top.transient(self)
+
+        ttk.Label(top, text="Umbrales propios agrupados por su valor", style="Header.TLabel"
+                  ).pack(anchor="w", padx=14, pady=(14, 4))
+        ttk.Label(top, wraplength=580, justify="left", style="Muted.TLabel",
+                  text="Los que se crearon solos son MUCHOS y todos con el MISMO valor (el que "
+                       "tenía el umbral global cuando salieron las alertas). Los que se pusieron a "
+                       "mano son pocos y con otros valores.\n\n"
+                       "Elegí un grupo y quitalo: esos productos vuelven a seguir el umbral global."
+                  ).pack(anchor="w", padx=14, pady=(0, 10))
+
+        tabla = ttk.Treeview(top, columns=("min", "max", "cant"), show="headings", height=8)
+        for col, txt, ancho in (("min", "Mínimo", 120), ("max", "Máximo", 120),
+                                 ("cant", "Cuántos productos", 200)):
+            tabla.heading(col, text=txt)
+            tabla.column(col, width=ancho, anchor="center")
+        estriar_treeview(tabla)
+        tabla.pack(fill="both", expand=True, padx=14)
+        agregar_scroll_vertical(tabla)
+
+        def _cargar():
+            for f in tabla.get_children():
+                tabla.delete(f)
+            actuales = self.backend.alerts.resumen_umbrales_propios()
+            for i, g in enumerate(actuales):
+                tabla.insert("", "end", values=(g["stock_minimo"], g["stock_maximo"], g["cantidad"]),
+                             tags=(tag_fila(i),))
+            return actuales
+
+        grupos = _cargar()
+        if grupos:
+            tabla.selection_set(tabla.get_children()[0])   # el grupo más grande, que es el sospechoso
+
+        def _quitar_grupo():
+            sel = tabla.selection()
+            if not sel:
+                messagebox.showwarning("Elegí un grupo", "Tocá una fila de la lista.", parent=top)
+                return
+            minimo, maximo, cantidad = tabla.item(sel[0], "values")
+            if not messagebox.askyesno(
+                    "Quitar este grupo",
+                    f"Se les va a quitar el umbral propio a {cantidad} producto(s) que hoy tienen "
+                    f"mínimo {minimo} y máximo {maximo}.\n\n"
+                    f"Esos productos pasan a seguir el umbral global. No se borran productos ni stock.\n\n"
+                    f"¿Seguimos?", parent=top):
+                return
+            try:
+                quitados = self.backend.alerts.quitar_umbrales_propios_con(int(minimo), int(maximo))
+            except Exception as e:
+                messagebox.showerror("Error", str(e), parent=top)
+                return
+            self._refrescar_umbrales_producto()
+            if not _cargar():
+                messagebox.showinfo("Listo",
+                                     f"Se quitaron {quitados}. Ya no queda ningún umbral propio: "
+                                     f"todos los productos siguen el umbral global.", parent=top)
+                top.destroy()
+                return
+            messagebox.showinfo("Listo", f"Se quitaron {quitados} umbral(es) propio(s).", parent=top)
+
+        botones = ttk.Frame(top)
+        botones.pack(fill="x", padx=14, pady=12)
+        ttk.Button(botones, text="Quitar el grupo elegido", style="Danger.TButton",
+                   command=_quitar_grupo).pack(side="left")
+        ttk.Button(botones, text="Cerrar", command=top.destroy).pack(side="right")
+        habilitar_copiar_pegar_global(top)
 
     def _quitar_todos_los_umbrales(self):
         """Deja a TODOS los productos siguiendo el umbral global.

@@ -82,6 +82,46 @@ def quitar_umbral_producto(codigo: str) -> None:
         conn.execute("DELETE FROM Configuracion_Alertas WHERE producto_codigo = ?", (codigo,))
 
 
+def resumen_umbrales_propios() -> list:
+    """Los umbrales por producto AGRUPADOS por su valor, del grupo más
+    grande al más chico.
+
+    Sirve para separar los que se crearon solos de los que puso una persona.
+    Los que se crearon solos (por el bug del cooldown) son **todos iguales
+    entre sí**: llevan el valor que tenía el umbral global el día que
+    salieron las alertas, y son muchos. Los que el dueño puso a mano son
+    pocos y con valores variados.
+
+    El código NO puede saberlo con certeza —nada distingue una fila de la
+    otra— así que no elige: muestra los grupos con su cantidad y decide una
+    persona mirando los números. Borrar configuración del cliente
+    adivinando sería peor que no borrar nada.
+    """
+    conn = get_connection()
+    filas = conn.execute(
+        """SELECT stock_minimo, stock_maximo, COUNT(*) AS cantidad
+           FROM Configuracion_Alertas
+           WHERE producto_codigo IS NOT NULL
+           GROUP BY stock_minimo, stock_maximo
+           ORDER BY cantidad DESC, stock_minimo, stock_maximo"""
+    ).fetchall()
+    return [dict(f) for f in filas]
+
+
+def quitar_umbrales_propios_con(stock_minimo: int, stock_maximo: int) -> int:
+    """Saca los umbrales por producto que tengan EXACTAMENTE ese par.
+
+    Es el bisturí: deja intacto todo lo demás, incluido el umbral global y
+    los umbrales propios con cualquier otro valor.
+    """
+    with transaction() as conn:
+        return conn.execute(
+            "DELETE FROM Configuracion_Alertas "
+            "WHERE producto_codigo IS NOT NULL AND stock_minimo = ? AND stock_maximo = ?",
+            (int(stock_minimo), int(stock_maximo)),
+        ).rowcount
+
+
 def quitar_todos_los_umbrales_propios() -> int:
     """Borra TODOS los umbrales por producto y deja mandando al global.
 
