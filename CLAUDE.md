@@ -476,8 +476,18 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
     actualizar) pero **no borra** los umbrales propios que ya existían: este código no puede
     distinguir los que se crearon solos de los que el dueño puso a mano, y borrar configuración del
     cliente en silencio no se hace.
-  - Para limpiarlos está el botón **"Quitar TODOS los umbrales propios"** del Panel, con
-    confirmación y diciendo cuántos son — de a uno no es viable con miles.
+  - **Hay dos botones, y hacen cosas opuestas — no confundirlos:**
+    - **"Quitar el umbral global"** (`alerts.quitar_umbral_global`), al lado de los campos del
+      global: borra el global y **NO toca ningún umbral por producto**. Después, los productos sin
+      umbral propio dejan de avisar (el COALESCE cae a 0, y 0 es "no controlar") y los que tienen
+      el suyo siguen avisando igual — el suyo nunca dependió del global. Borra las filas globales
+      en plural a propósito: el UNIQUE no impide que haya varias, porque en SQLite cada NULL es
+      distinto de cualquier otro NULL. **Es el que pidió Matías.**
+    - **"Quitar TODOS los umbrales propios"** (`quitar_todos_los_umbrales_propios`), en la lista de
+      abajo: el caso opuesto, borra los personalizados y deja a todos siguiendo el global. Con
+      confirmación y diciendo cuántos son — de a uno no es viable con miles.
+  - **Se probó una ventana que agrupaba los umbrales propios por valor, para borrar solo los que
+    se habían creado solos, y Matías la descartó** (commit revertido). No re-proponerla.
   - **`0` significa "no avisar"** (el chequeo es `if row["stock_minimo"] and ...`, y 0 es falso), y
     ahora la pantalla lo dice: *"Poné 0 para no recibir ese aviso. Con 0 y 0 no llega ninguna
     alerta."* Antes había que saberlo.
@@ -566,9 +576,14 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
 - [x] Cargar el token y el chat_id del bot de Telegram del cliente. HECHO — y en cuanto se
       empezó a usar apareció el bug del umbral que no se podía apagar (ver arriba).
 - [ ] **Actualizar la PC del local con el arreglo del umbral.** Hasta que se haga, Leo tiene el bot
-      DESTILDADO como parche: si alguien lo vuelve a tildar, le llegan 2529 alertas otra vez. Al
-      actualizar, entrar al Panel y apretar **"Quitar TODOS los umbrales propios"** — la migración a
-      propósito no los borra sola.
+      DESTILDADO como parche: si alguien lo vuelve a tildar, le vuelven a llegar las alertas. Al
+      actualizar, entrar al Panel y apretar **"Quitar el umbral global"** — la migración a
+      propósito no borra nada de lo que quedó configurado.
+      **Ojo con el número: nunca se contaron los umbrales propios que hay de verdad en la base del
+      cliente.** Se venía diciendo "2529" por deducción (el catálogo entero con stock 0 califica
+      con mínimo 20), pero cada fila solo se creaba si Telegram ACEPTÓ el envío, y mandando miles
+      de mensajes seguidos Telegram empieza a rechazar. El número real lo dice el título de la
+      lista de umbrales propios en el Panel: mirarlo antes de decidir nada.
 - [x] **Recompilar y actualizar la PC del local con el respaldo diario y el cartel de arranque.**
       HECHO el 10/9/2026. Se compiló en la laptop de Matías con Python 3.12.10 (tenía 3.14
       instalada; se puso 3.12 al lado con `py -3.12`), se pasó `dist\` por pendrive y se corrió el
