@@ -523,6 +523,20 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
     caminos**: la función directo, la pantalla del Panel (escribiendo en los campos y apretando el
     botón), y la **API remota levantada de verdad** — que es como lo hace Leo desde su laptop, y
     donde un argumento posicional que no viaje bien daría el mismo síntoma por otra causa.
+- **Actualizar SOLO la laptop de Leo nunca alcanza para algo que use la API remota.** La lista de
+  funciones permitidas (`_construir_allowlist` en `services/remote_api.py`) vive adentro del
+  `StockService`, **en la PC del local**: el Dueño Remoto solo pide "ejecutá tal función" y el
+  local decide si existe. Con el local en una versión vieja, cualquier botón nuevo del Panel
+  contesta **"función no permitida: <nombre>"** aunque la laptop esté recién actualizada. Pasó el
+  16/9/2026 con los botones de alertas.
+  - **El orden correcto es: primero la PC del local, después la laptop.** Al revés, el Panel nuevo
+    queda pidiendo cosas que el local no conoce.
+  - **Cómo se reconoce sin apretar nada:** los campos del umbral global abren **vacíos**. La
+    pantalla le pide el valor actual al local al abrirse (`obtener_umbral_global`), y si el local
+    es viejo esa llamada falla y el campo queda en blanco. Es el mismo síntoma que el bug de los
+    campos vacíos, por una causa distinta — mirar la versión del local antes de perseguir otra cosa.
+  - Lo que NO depende del local sigue andando en la laptop igual: el `Ctrl+C` para copiar códigos
+    y el token tapado son puro dibujo, no llaman a ninguna función remota.
 - **Ninguna ventana se pide más grande que el área útil del escritorio** (`ajustar_ventana`
   en `apps/theme.py`, que le pregunta a Windows por el work area). En la PC del cliente
   (1366x768) el Panel del Dueño quedaba tapado por la barra de tareas. Las pestañas van
