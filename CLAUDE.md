@@ -569,9 +569,8 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
       **Matías reportó la revisión final entera en SI** (servicio en Automatic, servicio corriendo,
       puerto contestando, antivirus excluido, respaldo al día). La lista de precios ya se había
       importado unos días antes.
-- [ ] **Actualizar `DuenoRemoto` en la laptop de Leo** con esas dos mejoras — sin esto Leo NO tiene
-      el `Ctrl+C` para copiar códigos, que es justo lo que pidió. Es el mismo `.exe` y son 5
-      minutos, pero hace falta tener su laptop a mano. Aprovechar el viaje de la rotación de tokens.
+- [x] **Actualizar `DuenoRemoto` en la laptop de Leo.** HECHO el 21/9/2026, junto con la PC del
+      local. Leo ya tiene el `Ctrl+C` para copiar códigos.
 - [ ] **Hacer el inventario físico, en serio.** El log del servicio está lleno de
       `StockInsuficienteError: disponible 0, se pidió descontar 1`: el catálogo entró con stock 0,
       así que **ninguna venta descuenta stock**. La plata se cobra bien (sale de `self.carrito` y
@@ -589,15 +588,13 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
 - [ ] Escribir las ACLs de Tailscale antes de sumar un segundo cliente.
 - [x] Cargar el token y el chat_id del bot de Telegram del cliente. HECHO — y en cuanto se
       empezó a usar apareció el bug del umbral que no se podía apagar (ver arriba).
-- [ ] **Actualizar la PC del local con el arreglo del umbral.** Hasta que se haga, Leo tiene el bot
-      DESTILDADO como parche: si alguien lo vuelve a tildar, le vuelven a llegar las alertas. Al
-      actualizar, entrar al Panel y apretar **"Quitar el umbral global"** — la migración a
-      propósito no borra nada de lo que quedó configurado.
-      **Ojo con el número: nunca se contaron los umbrales propios que hay de verdad en la base del
-      cliente.** Se venía diciendo "2529" por deducción (el catálogo entero con stock 0 califica
-      con mínimo 20), pero cada fila solo se creaba si Telegram ACEPTÓ el envío, y mandando miles
-      de mensajes seguidos Telegram empieza a rechazar. El número real lo dice el título de la
-      lista de umbrales propios en el Panel: mirarlo antes de decidir nada.
+- [x] **Actualizar la PC del local con el arreglo del umbral.** HECHO el 21/9/2026. **Matías
+      reportó que quedó todo bien**: el cooldown mudado a su tabla, los botones nuevos de alertas
+      andando y el bot de Telegram de vuelta en funcionamiento.
+      **Quedó sin contar cuántos umbrales propios había de verdad en la base del cliente.** Se
+      venía diciendo "2529" por deducción y nunca se verificó — el número real lo muestra el
+      título de la lista de umbrales propios en el Panel. Si alguna vez vuelven alertas que nadie
+      configuró, mirar ahí primero.
 - [x] **Recompilar y actualizar la PC del local con el respaldo diario y el cartel de arranque.**
       HECHO el 10/9/2026. Se compiló en la laptop de Matías con Python 3.12.10 (tenía 3.14
       instalada; se puso 3.12 al lado con `py -3.12`), se pasó `dist\` por pendrive y se corrió el
