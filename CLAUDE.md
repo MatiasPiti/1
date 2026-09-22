@@ -350,6 +350,26 @@ tres cosas, las tres arregladas y con test que las cuida (ver `tests/`):
   `MaestroCaja\`, `MaestroDueno\` y `StockService\`. Ahora el tipo se deduce del contenido
   (`tipo_de_instalacion`).
 
+### El USB de Mantenimiento apuntado a mano a la laptop de Leo (21/9/2026)
+
+Después del mantenimiento en el local, Matías abrió el USB en la laptop de Leo y usó
+"reparar una única carpeta a mano" sobre `C:\Otter`. **`tipo_de_instalacion()` solo sabe
+distinguir USB de Maestro**: si no encuentra `USB_Caja.exe` ni `USB_Dueno.exe`, devuelve
+`MAESTRO` por descarte. Resultado: copió `MaestroCaja\`, `MaestroDueno\` y `StockService\`
+adentro de `C:\Otter` (2642 archivos) — o sea **`MaestroDueno.exe` en la laptop de Leo, que
+es exactamente la regla 2**. Se borraron las tres carpetas a mano y listo.
+
+- **`DuenoRemoto\` no se tocó** y su `config.ini` (token e IP reales) quedó intacto: no está
+  en `_MAPA_ESPEJO`, así que el espejo no tiene nada que copiarle.
+- Es el **mismo bug** que el del USB reusado, un escalón más arriba: ahí se arregló que una
+  carpeta de USB no se tratara como Maestro, pero cualquier otra carpeta sigue cayendo en
+  `MAESTRO` por descarte. **En la laptop no hay nada que correr con este USB**: se mantiene con
+  el `OtterActualizador`.
+- Arreglo pendiente (Matías lo postergó el 21/9): que `tipo_de_instalacion` reconozca una
+  instalación de Dueño Remoto —o directamente cualquier carpeta que no tenga las apps del
+  Maestro— y **no copie nada** en vez de asumir el Maestro. El default por descarte, acá, es el
+  error más caro posible.
+
 Además: **un USB de emergencia por pendrive, con el `.exe` en la raíz.** La detección
 automática busca `USB_Caja.exe` / `USB_Dueno.exe` en la raíz de cada unidad, no en subcarpetas,
 y dos apps en la misma raíz chocarían sus carpetas `_internal\` de PyInstaller. El README decía
@@ -577,6 +597,9 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
       `cerrar_ticket` graba la venta), pero el control de stock no está funcionando en la práctica
       y las alertas de Telegram nunca van a servir. Es el pendiente que hace que media mitad del
       sistema no rinda.
+- [ ] **Que el USB de Mantenimiento no asuma "Maestro" por descarte.** Apuntado a mano a
+      `C:\Otter` en la laptop de Leo le metió adentro `MaestroDueno.exe` (regla 2). Ver la
+      sección de arriba. Matías lo postergó el 21/9.
 - [ ] **Rotar los dos tokens del cliente**: el de `[remoto]` y el del bot de Telegram quedaron
       visibles en una captura de pantalla mandada por chat. El de Telegram se revoca con `/revoke`
       en @BotFather; el de `[remoto]` se cambia en `C:\SistemaDual\config.ini`, se reinicia el
