@@ -16,7 +16,10 @@ compila (con PyInstaller) a **5 ejecutables Windows portables**:
 - **USB_Dueno** (`apps/usb_dueno/`) — panel del dueño portátil (reutiliza `master_dueno` + banner).
 - **USB_Mantenimiento** (`apps/usb_dev/`) — herramienta de reparación/diagnóstico (del desarrollador).
 
-La UI es **tkinter**. No hay backend web ni red salvo el bot de Telegram (saliente, best-effort).
+La UI de escritorio es **tkinter**. Además hay una **app Android "Panel Dueño"** (`apps/movil_dueno/`,
+Flutter) que habla con **`services/api_dueno.py`** (FastAPI, también se compila como `ApiDueno.exe`)
+corriendo en la PC del local; el celular llega por Tailscale. Fuera de eso, la única red es el bot de
+Telegram (saliente, best-effort).
 
 ## Comandos
 
@@ -28,12 +31,22 @@ python apps/master_caja/main.py            # caja (cobrar)
 python apps/usb_caja/main.py               # caja portátil
 python apps/usb_dueno/main.py              # panel dueño portátil
 python apps/usb_dev/mantenimiento.py       # mantenimiento
-build\build_all.bat                        # compila los 5 .exe (requiere Windows + deps)
+python services/api_dueno.py --base apps/master_dueno   # API del celular (puerto 8765) sobre la base de dev del panel
+build\build_all.bat                        # compila los 5 .exe + StockService + ApiDueno (requiere Windows + deps)
+
+python -m pytest -q                        # tests de la API y de reglas de negocio (tests/)
+python -m pytest tests/test_api_dueno.py -k lector   # uno solo
+
+cd apps/movil_dueno                        # app Android (Flutter 3.47+)
+flutter analyze && flutter test            # análisis + tests
+flutter test test/sesion_test.dart --plain-name "bloquea"   # uno solo
+flutter build apk --release
 ```
 
-- **No hay suite de tests en el repo** (el README menciona una verificación de `bulk_edit`, pero no
-  hay `tests/` ni pytest configurado). Si agregás tests, no existe convención previa: usá `pytest` y
-  documentá el comando acá.
+- Los tests de Python usan una instalación aislada en `tmp_path` vía `SISTEMA_DUAL_BASE`
+  (`tests/conftest.py`); nunca tocan una `stock.db` real.
+- El APK lo compila GitHub Actions (`.github/workflows/panel-dueno.yml`, artefacto `panel-dueno-apk`);
+  acá no hay SDK de Android. Firma con los secrets `ANDROID_*` si existen (ver `apps/movil_dueno/README.md`).
 - Las apps necesitan un entorno gráfico (tkinter). En headless, importá y ejercitá `pos_core/*`
   directamente en vez de abrir las ventanas.
 - `database/`, `SYNC_DATA/`, `logs/`, `config.ini` y `*.db` están gitignored: son estado local/por-USB,
@@ -79,7 +92,7 @@ Invariantes que hay que respetar al tocar este código (romper uno corrompe dato
    offline. No introduzcas dependencias de red en el camino de cobro.
 9. **Edición masiva redondea a la centena superior** (`pos_core/bulk_edit.py::redondear_a_centena_superior`),
    cada producto en su propia transacción. Ej.: `calcular_nuevo_precio(2500, porcentaje=3)` → `2600`.
-10. **El `id` del PDF/Excel nunca se descarta en silencio.** `pdf_import.py` prueba tablas estructuradas
+10. **Ningún renglón de un PDF se descarta en silencio.** `pdf_import.py` prueba tablas estructuradas
     (`pdfplumber.extract_tables`) y cae a una batería de regex; lo que no matchea va a
     `lineas_no_reconocidas` para carga manual, y un PDF sin texto se marca `es_pdf_escaneado`.
 
@@ -98,9 +111,29 @@ En `MaestroDueno`, **Ctrl+Shift+M** abre `apps/master_dueno/panel_sync.py`: dete
 omitidos, conflictos de precio) en dry-run, y al aplicar escribe tanto en `Log_Sincronizacion` (DB)
 como en `sincronizacion_exitosa.txt` (dentro del propio USB).
 
-## Contexto de trabajo
+## App del dueño en el celular (API + Flutter)
 
-El **Panel del Dueño** (`apps/master_dueno/main.py`) es la superficie de funcionalidad del dueño
-—dashboard, stock, edición masiva, facturas, Excel, alertas— y es la referencia para cualquier app
-complementaria (p. ej. una app móvil del dueño). Cualquier cliente nuevo debe apoyarse en `pos_core/`
-y respetar los invariantes de arriba en vez de reimplementar lógica de stock/ventas.
+- **Una funcionalidad nueva atraviesa 3 capas:** lógica en `pos_core/` → endpoint en
+  `services/api_dueno.py` (capa fina, sin reglas de negocio) → `lib/api/cliente_api.dart` +
+  `lib/api/modelos.dart` en la app. El contrato JSON tiene que coincidir; hay un servidor falso que lo
+  imita en `apps/movil_dueno/test/servidor_falso.dart` y conviene actualizarlo junto con
+  `tests/test_api_dueno.py`.
+- **Base de datos de la API:** cada app resuelve `database/` relativo a **su propia carpeta**
+  (`get_base_path()`), así que MaestroCaja y MaestroDueno no comparten base solo por estar en
+  `C:\SistemaDual`. La API debe arrancar con `--base <carpeta de MaestroDueno>` (setea
+  `SISTEMA_DUAL_BASE`, que tiene prioridad en `paths.get_base_path()`).
+- **Sesión:** login con el PIN de un usuario `rol='DUEÑO'` (`pos_core/usuarios.py`, sha256); devuelve un
+  token HMAC de 30 días firmado con `config.ini [api] secreto` (se autogenera; borrarlo invalida todos los
+  celulares). 5 PIN fallidos por IP bloquean 5 min. Todo lo que escribe la app queda con
+  `usuario = "<nombre> (app)"` y `origen = 'MAESTRO'`.
+- **Umbrales de alerta:** el efectivo es la fila de `Configuracion_Alertas` del producto o, si no hay, la
+  global (`producto_codigo IS NULL`). Usá `pos_core/alertas.py` (no `ON CONFLICT(producto_codigo)`:
+  en SQLite cada NULL es distinto para el UNIQUE y eso duplicaba filas globales).
+- **Facturas desde la app:** dos pasos (`/api/facturas/analizar` → revisión en el celular →
+  `/api/facturas/aplicar`). El parser puede leer la misma línea por tabla y por texto: se marca
+  `posible_duplicado` y la app la deja destildada, pero no se descarta.
+- **Convenciones de la app:** todo campo donde se escribe un código usa `CampoCodigo`
+  (`lib/widgets/comunes.dart`), que trae el botón de cámara; la plata se formatea con
+  `formato.moneda()` (`$ 2.500`, símbolo adelante); las pestañas viven en un `IndexedStack` con
+  `TickerMode` para no animar lo que no se ve; colores en `lib/tema.dart` (paleta del logo, temas
+  claro/oscuro elegibles). Textos de UI en español rioplatense.

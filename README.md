@@ -3,6 +3,9 @@
 Monorepo Python que compila a 5 ejecutables Windows portables:
 **Maestro Caja**, **Maestro Dueño**, **USB Caja**, **USB Dueño**, **USB Mantenimiento (Dev)**.
 
+Además incluye la **app Android "Panel Dueño"** (`apps/movil_dueno/`, Flutter) y su **API**
+(`services/api_dueno.py`), para manejar el negocio desde el celular del dueño — ver sección 13.
+
 ---
 
 ## 1. Análisis de Riesgos (pre-codificación)
@@ -98,16 +101,22 @@ flowchart TB
 │   ├── sync_export.py              # export_caja() / export_dueno() (USBs)
 │   ├── reconciliation.py           # conciliación por UUID (solo Maestro)
 │   ├── telegram_bot.py             # alertas de stoploss/sobre-stock
+│   ├── alertas.py                  # umbrales efectivos + umbral global
+│   ├── panel_dueno.py              # consultas del dashboard/productos (lectura)
+│   ├── usuarios.py                 # verificación de PIN
 │   └── config.py                   # config.ini portable
 ├── apps/
 │   ├── master_caja/main.py
 │   ├── master_dueno/main.py + panel_sync.py   (oculto, Ctrl+Shift+M)
 │   ├── usb_caja/main.py
 │   ├── usb_dueno/main.py           # reutiliza master_dueno + banner + export
-│   └── usb_dev/mantenimiento.py
+│   ├── usb_dev/mantenimiento.py
+│   └── movil_dueno/                # app Android del dueño (Flutter) — ver su README
 ├── services/
 │   ├── stock_daemon_windows.py     # watchdog, corre con pythonw.exe
-│   └── stock_windows_service.py    # registro como Servicio de Windows (pywin32)
+│   ├── stock_windows_service.py    # registro como Servicio de Windows (pywin32)
+│   └── api_dueno.py                # API HTTP para la app del celular (FastAPI)
+├── tests/                          # pytest (API del dueño + reglas de negocio)
 ├── scripts/setup_inicial.py        # primer arranque de una DB
 └── build/build_all.bat             # PyInstaller x5
 ```
@@ -383,6 +392,29 @@ python apps/master_caja/main.py        # ya se puede cobrar
 3. "EJECUTAR MANTENIMIENTO": integrity check + reparación, reinicio del servicio de Windows,
    restauración de `config.ini`, limpieza de logs viejos, informe final en pantalla y en
    `reporte_mantenimiento.txt`.
+
+---
+
+## 13. App del Dueño en el celular (Android)
+
+`apps/movil_dueno/` es una app Flutter con las mismas funciones que el Panel del Dueño: dashboard
+de ventas, stock (con **lector de código de barras por cámara** en todos los campos de código y un
+modo lector continuo), precios individuales y masivos con vista previa, facturas PDF y alertas.
+Tema claro u oscuro elegido por el usuario, desbloqueo con huella/rostro.
+
+No tiene base propia: habla con **`services/api_dueno.py`** (FastAPI), que corre en la PC del local
+sobre la misma `stock.db` de MaestroDueno y reutiliza `pos_core` (stock con versionado optimista,
+redondeo a centena, parser de PDF, umbrales de Telegram). El celular llega a la PC por
+**Tailscale** (red privada cifrada, sin abrir puertos).
+
+```bash
+python services/api_dueno.py --base apps/master_dueno   # API en desarrollo (puerto 8765)
+python -m pytest -q                                      # tests de la API
+```
+
+El APK lo compila GitHub Actions (`.github/workflows/panel-dueno.yml`). Instalación en la PC
+(ApiDueno.exe como tarea programada + firewall), Tailscale y el celular, paso a paso, en
+**[apps/movil_dueno/README.md](apps/movil_dueno/README.md)**.
 
 ---
 
