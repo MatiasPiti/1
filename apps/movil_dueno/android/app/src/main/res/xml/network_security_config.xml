@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- La app habla con la PC del local por Tailscale (100.x.y.z o *.ts.net). Ese
+     tráfico ya viaja cifrado dentro del túnel WireGuard de Tailscale, así que se
+     permite HTTP plano hacia la PC. Si se usa `tailscale serve` (HTTPS), también funciona. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
