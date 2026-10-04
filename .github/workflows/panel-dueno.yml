@@ -14,6 +14,9 @@ name: Panel Dueño
 
 on:
   push:
+    # Con "tags" definido hay que listar "branches" explícitamente; si no,
+    # GitHub ignora los push a ramas.
+    branches: ["**"]
     paths:
       - "apps/movil_dueno/**"
       - "pos_core/**"

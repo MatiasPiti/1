@@ -43,6 +43,16 @@ pyinstaller --noconfirm --clean --onedir --noconsole %DATA% ^
     services\stock_windows_service.py
 
 echo.
+echo === API del Dueno para la app del celular (sin ventana) ===
+REM uvicorn carga sus protocolos dinamicamente: --collect-submodules los
+REM incluye. Se lanza con --base apuntando a la carpeta de MaestroDueno.
+pyinstaller --noconfirm --clean --onedir --noconsole %DATA% ^
+    --name ApiDueno --paths . ^
+    --collect-submodules uvicorn ^
+    --collect-data pdfminer ^
+    services\api_dueno.py
+
+echo.
 echo Listo. Los ejecutables quedan en dist\NombreApp\NombreApp.exe
 echo Copia cada carpeta dist\MaestroCaja, dist\MaestroDueno, etc. a su
 echo destino final (disco de la PC fija o raiz del USB correspondiente).
