@@ -411,7 +411,7 @@ class _PantallaAjusteMasivoState extends State<PantallaAjusteMasivo> {
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           title: const Text('Redondear a la centena superior'),
-          subtitle: const Text(r'Ej.: $ 2.575 → $ 2.600 (como en la PC)'),
+          subtitle: const Text(r'Ej.: $ 2.575 pasa a $ 2.600 (como en la PC)'),
           value: _redondear,
           onChanged: (v) {
             _redondear = v;
@@ -438,7 +438,13 @@ class _PantallaAjusteMasivoState extends State<PantallaAjusteMasivo> {
                       ? Text.rich(TextSpan(children: [
                           TextSpan(text: moneda(cp.anterior!),
                               style: TextStyle(decoration: TextDecoration.lineThrough, color: t.colorScheme.onSurfaceVariant)),
-                          const TextSpan(text: '  →  '),
+                          WidgetSpan(
+                            alignment: PlaceholderAlignment.middle,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 6),
+                              child: Icon(Icons.arrow_forward, size: 16, color: t.colorScheme.onSurfaceVariant),
+                            ),
+                          ),
                           TextSpan(text: moneda(cp.nuevo!),
                               style: TextStyle(fontWeight: FontWeight.w700,
                                   color: cp.nuevo! >= cp.anterior! ? c.ok : c.peligro)),

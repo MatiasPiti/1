@@ -123,6 +123,18 @@ void main() {
     await terminar(tester);
   });
 
+  for (final idioma in const [Locale('en', 'US'), Locale('es', 'ES'), Locale('pt', 'BR')]) {
+    testWidgets('arranca bien con el teléfono en $idioma', (tester) async {
+      tester.platformDispatcher.localesTestValue = [idioma];
+      tester.platformDispatcher.localeTestValue = idioma;
+      addTearDown(tester.platformDispatcher.clearAllTestValues);
+      await arrancar(tester, logueado: true);
+      expect(find.text('Ventas de hoy'), findsOneWidget);
+      expect(find.textContaining(r'$ 152.300'), findsOneWidget, reason: 'siempre pesos argentinos');
+      await terminar(tester);
+    });
+  }
+
   testWidgets('el botón de cámara carga el código escaneado', (tester) async {
     final control = TextEditingController();
     String? enviado;

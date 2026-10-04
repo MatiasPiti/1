@@ -1,7 +1,10 @@
 import 'package:intl/intl.dart';
 
-final _moneda = NumberFormat.currency(locale: 'es_AR', symbol: r'$', decimalDigits: 0);
-final _monedaCentavos = NumberFormat.currency(locale: 'es_AR', symbol: r'$', decimalDigits: 2);
+// El patrón de es_AR de intl pone el símbolo al final ("2.500 $"); en
+// Argentina se escribe adelante: "$ 2.500".
+final _moneda = NumberFormat.currency(locale: 'es_AR', symbol: r'$', decimalDigits: 0, customPattern: '\u00a4 #,##0');
+final _monedaCentavos =
+    NumberFormat.currency(locale: 'es_AR', symbol: r'$', decimalDigits: 2, customPattern: '\u00a4 #,##0.00');
 final _numero = NumberFormat.decimalPattern('es_AR');
 
 /// $ 2.500 (o $ 2.450,50 si tiene centavos).

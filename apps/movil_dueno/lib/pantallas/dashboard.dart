@@ -181,7 +181,11 @@ class _TarjetaHoy extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(20)),
-                  child: Text('${_nombreMetodo(m.metodo)} ${moneda(m.total)}', style: const TextStyle(fontSize: 13)),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(_metodo(m.metodo).$1, size: 16, color: Colors.white70),
+                    const SizedBox(width: 6),
+                    Text('${_metodo(m.metodo).$2} ${moneda(m.total)}', style: const TextStyle(fontSize: 13)),
+                  ]),
                 ),
             ]),
           ],
@@ -190,8 +194,13 @@ class _TarjetaHoy extends StatelessWidget {
     );
   }
 
-  static String _nombreMetodo(String m) =>
-      const {'EFECTIVO': '💵 Efectivo', 'TARJETA': '💳 Tarjeta', 'TRANSFERENCIA': '🏦 Transf.', 'MIXTO': '🔀 Mixto'}[m] ?? m;
+  static (IconData, String) _metodo(String m) => switch (m) {
+        'EFECTIVO' => (Icons.payments_outlined, 'Efectivo'),
+        'TARJETA' => (Icons.credit_card, 'Tarjeta'),
+        'TRANSFERENCIA' => (Icons.account_balance_outlined, 'Transf.'),
+        'MIXTO' => (Icons.call_split, 'Mixto'),
+        _ => (Icons.attach_money, m),
+      };
 }
 
 class _Dato extends StatelessWidget {

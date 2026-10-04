@@ -10,8 +10,9 @@ void main() {
 
   group('formato', () {
     test('moneda en pesos argentinos', () {
-      expect(moneda(2500), contains('2.500'));
-      expect(moneda(2450.5), contains('2.450,50'));
+      expect(moneda(2500), r'$ 2.500');
+      expect(moneda(2450.5), r'$ 2.450,50');
+      expect(moneda(151300), r'$ 151.300');
     });
 
     test('parsearNumero acepta formatos es-AR y en-US', () {
