@@ -77,6 +77,32 @@ void main() {
     await terminar(tester);
   });
 
+  testWidgets('el bloqueo por inactividad no pierde lo que Leo estaba haciendo', (tester) async {
+    var ahora = DateTime(2026, 10, 4, 12);
+    sesion = SesionEstado(almacen: almacen, biometria: BiometriaFalsa(), crearCliente: servidor.crear, reloj: () => ahora);
+    await arrancar(tester, logueado: true);
+
+    await tester.tap(find.text('Stock'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, '7790002');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+    expect(find.text('Café Molido 500g'), findsOneWidget);
+
+    sesion.pasoASegundoPlano();
+    ahora = ahora.add(const Duration(minutes: 3));
+    sesion.volvioAPrimerPlano();
+    await tester.pumpAndSettle();
+    expect(find.text('¡Hola de nuevo!'), findsOneWidget);
+    expect(find.text('Café Molido 500g').hitTestable(), findsNothing, reason: 'el bloqueo tapa la pantalla y no se puede tocar');
+
+    await tester.enterText(find.byType(TextField).last, '1234');
+    await tester.tap(find.text('Entrar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Café Molido 500g').hitTestable(), findsOneWidget, reason: 'sigue en Stock con el producto abierto');
+    await terminar(tester);
+  });
+
   testWidgets('stock: buscar, sumar y ver el stock nuevo', (tester) async {
     await arrancar(tester, logueado: true);
 

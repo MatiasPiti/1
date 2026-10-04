@@ -78,17 +78,31 @@ class _RaizState extends State<Raiz> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) sesion.volvioAPrimerPlano();
   }
 
+  /// Si Leo ya estaba usando la app y se bloqueó por inactividad, la
+  /// pantalla de bloqueo TAPA lo que estaba haciendo en vez de reemplazarlo:
+  /// al desbloquear sigue en la misma pestaña, con la factura o el ajuste a
+  /// medio revisar.
+  bool _yaEntro = false;
+
   @override
   Widget build(BuildContext context) {
     final estado = context.select<SesionEstado, EstadoSesion>((s) => s.estado);
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 300),
-      child: switch (estado) {
-        EstadoSesion.cargando => const Scaffold(body: Center(child: CircularProgressIndicator())),
-        EstadoSesion.sinSesion => const PantallaLogin(key: ValueKey('login')),
-        EstadoSesion.bloqueada => const PantallaBloqueo(key: ValueKey('bloqueo')),
-        EstadoSesion.activa => const PantallaInicio(key: ValueKey('inicio')),
-      },
-    );
+    if (estado == EstadoSesion.activa) _yaEntro = true;
+    if (estado == EstadoSesion.sinSesion) _yaEntro = false;
+    final activa = estado == EstadoSesion.activa;
+    return Stack(children: [
+      if (_yaEntro)
+        IgnorePointer(
+          key: const ValueKey('inicio'),
+          ignoring: !activa,
+          child: ExcludeSemantics(
+            excluding: !activa,
+            child: TickerMode(enabled: activa, child: const PantallaInicio()),
+          ),
+        ),
+      if (estado == EstadoSesion.bloqueada) const PantallaBloqueo(key: ValueKey('bloqueo')),
+      if (estado == EstadoSesion.sinSesion) const PantallaLogin(key: ValueKey('login')),
+      if (estado == EstadoSesion.cargando) const Scaffold(body: Center(child: CircularProgressIndicator())),
+    ]);
   }
 }
