@@ -3,17 +3,13 @@
 Uso:  python scripts/setup_inicial.py
 """
 
-import hashlib
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pos_core.db import init_db, transaction
-
-
-def _hash_pin(pin: str) -> str:
-    return hashlib.sha256(pin.encode("utf-8")).hexdigest()
+from pos_core.usuarios import hash_pin as _hash_pin
 
 
 def main():

@@ -360,15 +360,8 @@ class AppDueno(tk.Tk):
 
     def _guardar_umbrales(self):
         try:
-            from pos_core.db import transaction
-            with transaction() as conn:
-                conn.execute(
-                    """INSERT INTO Configuracion_Alertas (producto_codigo, stock_minimo, stock_maximo, activo)
-                       VALUES (NULL, ?, ?, 1)
-                       ON CONFLICT(producto_codigo) DO UPDATE SET
-                          stock_minimo = excluded.stock_minimo, stock_maximo = excluded.stock_maximo""",
-                    (int(self.um_min.get() or 0), int(self.um_max.get() or 0)),
-                )
+            from pos_core import alertas
+            alertas.guardar_umbral_global(int(self.um_min.get() or 0), int(self.um_max.get() or 0))
             messagebox.showinfo("Guardado", "Umbrales globales guardados.")
         except Exception as e:
             messagebox.showerror("Error", str(e))
