@@ -193,29 +193,32 @@ class _PantallaPreciosState extends State<PantallaPrecios> {
     if (_productos.isEmpty && !_cargando) {
       return const EstadoVacio(icono: Icons.search_off, titulo: 'No hay productos que coincidan');
     }
-    return ListView.builder(
-      padding: const EdgeInsets.only(bottom: 16),
-      itemCount: _productos.length,
-      itemBuilder: (context, i) {
-        final p = _productos[i];
-        final t = Theme.of(context);
-        final margen = p.margen;
-        return ListTile(
-          leading: Checkbox(
-            value: _seleccion.contains(p.codigo),
-            onChanged: (v) => setState(() => v == true ? _seleccion.add(p.codigo) : _seleccion.remove(p.codigo)),
-          ),
-          title: Text(p.nombre, maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Text([p.codigo, if (p.marca != null) p.marca!].join(' · '), maxLines: 1),
-          trailing: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Text(moneda(p.precioVenta), style: t.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-            if (margen != null)
-              Text('margen ${margen.toStringAsFixed(0)}%',
-                  style: t.textTheme.bodySmall?.copyWith(color: t.colorScheme.onSurfaceVariant)),
-          ]),
-          onTap: () => _editarPrecio(p),
-        );
-      },
+    return RefreshIndicator(
+      onRefresh: () => _buscar(_busqueda.text),
+      child: ListView.builder(
+        padding: const EdgeInsets.only(bottom: 16),
+        itemCount: _productos.length,
+        itemBuilder: (context, i) {
+          final p = _productos[i];
+          final t = Theme.of(context);
+          final margen = p.margen;
+          return ListTile(
+            leading: Checkbox(
+              value: _seleccion.contains(p.codigo),
+              onChanged: (v) => setState(() => v == true ? _seleccion.add(p.codigo) : _seleccion.remove(p.codigo)),
+            ),
+            title: Text(p.nombre, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text([p.codigo, if (p.marca != null) p.marca!].join(' · '), maxLines: 1),
+            trailing: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Text(moneda(p.precioVenta), style: t.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+              if (margen != null)
+                Text('margen ${margen.toStringAsFixed(0)}%',
+                    style: t.textTheme.bodySmall?.copyWith(color: t.colorScheme.onSurfaceVariant)),
+            ]),
+            onTap: () => _editarPrecio(p),
+          );
+        },
+      ),
     );
   }
 }
