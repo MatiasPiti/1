@@ -225,7 +225,11 @@ class AppDueno(tk.Tk):
         except ValueError:
             messagebox.showerror("Error", "Porcentaje inválido")
             return
-        resultados = bulk_edit.aplicar_ajuste_masivo(codigos, porcentaje=pct, usuario=USUARIO, origen=ORIGEN)
+        try:
+            resultados = bulk_edit.aplicar_ajuste_masivo(codigos, porcentaje=pct, usuario=USUARIO, origen=ORIGEN)
+        except ValueError as e:  # precio resultante inválido: no se aplicó nada
+            messagebox.showerror("Error", str(e))
+            return
         self._mostrar_resultado_bulk(resultados)
         self._aplicar_filtro()
 
@@ -238,7 +242,11 @@ class AppDueno(tk.Tk):
         except ValueError:
             messagebox.showerror("Error", "Monto inválido")
             return
-        resultados = bulk_edit.aplicar_ajuste_masivo(codigos, monto_fijo=monto, usuario=USUARIO, origen=ORIGEN)
+        try:
+            resultados = bulk_edit.aplicar_ajuste_masivo(codigos, monto_fijo=monto, usuario=USUARIO, origen=ORIGEN)
+        except ValueError as e:  # precio resultante inválido: no se aplicó nada
+            messagebox.showerror("Error", str(e))
+            return
         self._mostrar_resultado_bulk(resultados)
         self._aplicar_filtro()
 
@@ -339,19 +347,32 @@ class AppDueno(tk.Tk):
 
         ttk.Button(form, text="Guardar", command=self._guardar_config_telegram).grid(row=3, column=1, pady=8, sticky="w")
 
+        # Se precargan los valores actuales: si arrancaran vacíos, guardar con
+        # un campo sin tocar pondría 0 lo que el dueño configuró (p. ej. desde la app).
+        from pos_core import alertas
+        actual = alertas.obtener_umbral_global()
         umbrales = ttk.LabelFrame(frame, text="Umbral global por defecto", padding=10)
         umbrales.pack(fill="x", padx=8, pady=8)
         ttk.Label(umbrales, text="Stock mínimo (stoploss):").grid(row=0, column=0)
         self.um_min = ttk.Entry(umbrales, width=8)
+        self.um_min.insert(0, str(actual["stock_minimo"]))
         self.um_min.grid(row=0, column=1, padx=4)
         ttk.Label(umbrales, text="Stock máximo (sobre-stock):").grid(row=0, column=2)
         self.um_max = ttk.Entry(umbrales, width=8)
+        self.um_max.insert(0, str(actual["stock_maximo"]))
         self.um_max.grid(row=0, column=3, padx=4)
         ttk.Button(umbrales, text="Guardar umbrales globales", command=self._guardar_umbrales
                    ).grid(row=0, column=4, padx=8)
 
     def _guardar_config_telegram(self):
-        cfg = config.cargar_config()
+        # Estricto: si config.ini existe pero no se puede leer, reescribirlo
+        # con los valores por defecto borraría [api] secreto (y con él las
+        # sesiones de la app del celular). Mejor avisar y no tocar nada.
+        try:
+            cfg = config.cargar_config(estricto=True)
+        except config.ConfigIlegibleError as e:
+            messagebox.showerror("No se pudo guardar", f"{e}\n\nRevisá o restaurá config.ini y probá de nuevo.")
+            return
         cfg["telegram"]["bot_token"] = self.tg_token.get().strip()
         cfg["telegram"]["chat_id_default"] = self.tg_chat.get().strip()
         cfg["telegram"]["habilitado"] = "true" if self.tg_habilitado.get() else "false"

@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 
 import requests
 
+from pos_core import alertas
 from pos_core.config import cargar_config
 from pos_core.db import get_connection, transaction
 
@@ -41,17 +42,19 @@ def enviar_mensaje(texto: str, *, chat_id: str = None, timeout: int = 10) -> boo
 
 
 def _productos_fuera_de_umbral():
+    """Umbrales con el mismo criterio que pos_core/alertas.py (la app y
+    Telegram tienen que coincidir). El cooldown se lee con un JOIN aparte
+    que no filtra `activo`, porque las filas de cooldown quedan inactivas."""
     conn = get_connection()
     return conn.execute(
-        """
+        f"""
         SELECT p.codigo, p.nombre, p.stock,
-               COALESCE(a.stock_minimo, ga.stock_minimo, 0) AS stock_minimo,
-               COALESCE(a.stock_maximo, ga.stock_maximo, 0) AS stock_maximo,
-               COALESCE(a.telegram_chat_id, ga.telegram_chat_id) AS chat_id,
-               a.ultima_alerta_enviada
+               {alertas.SQL_UMBRALES_EFECTIVOS},
+               {alertas.SQL_CHAT_ID_EFECTIVO},
+               c.ultima_alerta_enviada
         FROM Productos p
-        LEFT JOIN Configuracion_Alertas a ON a.producto_codigo = p.codigo AND a.activo = 1
-        LEFT JOIN Configuracion_Alertas ga ON ga.producto_codigo IS NULL AND ga.activo = 1
+        {alertas.SQL_JOIN_UMBRAL_PRODUCTO}
+        LEFT JOIN Configuracion_Alertas c ON c.producto_codigo = p.codigo
         WHERE p.activo = 1
         """
     ).fetchall()
@@ -74,10 +77,14 @@ def revisar_umbrales_y_alertar():
             continue
 
         if enviar_mensaje(alerta, chat_id=row["chat_id"]):
+            # La fila nueva nace con activo = 0: solo guarda el cooldown y
+            # no debe pasar a ser el umbral del producto (traería los DEFAULT
+            # 5 / 0 del esquema y taparía el global). Si ya hay una fila de
+            # umbral real, el ON CONFLICT solo toca ultima_alerta_enviada.
             with transaction() as conn:
                 conn.execute(
                     """INSERT INTO Configuracion_Alertas (producto_codigo, ultima_alerta_enviada, activo)
-                       VALUES (?, ?, 1)
+                       VALUES (?, ?, 0)
                        ON CONFLICT(producto_codigo) DO UPDATE SET ultima_alerta_enviada = excluded.ultima_alerta_enviada""",
                     (row["codigo"], ahora.isoformat(timespec="milliseconds")),
                 )
