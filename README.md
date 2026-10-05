@@ -118,7 +118,7 @@ flowchart TB
 │   └── api_dueno.py                # API HTTP para la app del celular (FastAPI)
 ├── tests/                          # pytest (API del dueño + reglas de negocio)
 ├── scripts/setup_inicial.py        # primer arranque de una DB
-└── build/build_all.bat             # PyInstaller x5
+└── build/build_all.bat             # PyInstaller: 5 apps + StockService + ApiDueno
 ```
 
 **PC Fija (post-instalación):**
@@ -359,7 +359,7 @@ python apps/master_caja/main.py        # ya se puede cobrar
 ```
 
 **B) Instalación real en la PC fija del local:**
-1. `build\build_all.bat` (requiere Windows + Python + `pip install -r requirements.txt`).
+1. `build\build_all.bat` (requiere Windows + Python + `python -m pip install -r requirements.txt`).
 2. Copiar `dist\MaestroCaja\`, `dist\MaestroDueno\` y `dist\StockService\` a `C:\SistemaDual\`.
 3. Ejecutar una vez `MaestroDueno.exe` (o `scripts\setup_inicial.py --base C:\SistemaDual\MaestroDueno`)
    para crear `database\stock.db` y cargar el Excel inicial de productos (pestaña "Carga Excel").

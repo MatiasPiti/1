@@ -32,11 +32,21 @@ stock, queda en la auditoría como `dueño (app)`.
 
 ### 1.1 Compilar y copiar la API
 
+En una PC con Windows y Python, desde la carpeta del repo (en la rama
+`claude/dual-pos-portable-emergency-dvt5ym`, que es la que trae la API):
+
 ```bat
+python -m pip install -r requirements.txt
 build\build_all.bat
 ```
 
-Copiar `dist\ApiDueno\` completo a `C:\SistemaDual\ApiDueno\`.
+Queda en **`dist\ApiDueno\ApiDueno.exe`** (cada programa en su propia subcarpeta de `dist`). Copiar
+la carpeta `dist\ApiDueno\` **completa** (no solo el `.exe`) a `C:\SistemaDual\ApiDueno\`.
+
+- `build_all.bat` usa `python -m PyInstaller`, así que anda aunque pip avise que la carpeta
+  `Scripts` de Python *"is not on PATH"*. Si un programa no compila, al final dice cuál.
+- Para compilar **solo** la API (una sola línea, sirve en `cmd` y en PowerShell):
+  `python -m PyInstaller --noconfirm --clean --onedir --noconsole --add-data "sql\schema.sql;sql" --name ApiDueno --paths . --collect-submodules uvicorn --collect-data pdfminer services\api_dueno.py`
 
 ### 1.2 Definir el PIN del dueño y probarla a mano
 
