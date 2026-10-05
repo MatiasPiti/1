@@ -15,17 +15,79 @@ import '../widgets/escaner.dart';
 /// Para imitarlo, un código solo vuelve a contar después de haber salido
 /// de cuadro un momento (`pausa`), así un producto quieto frente a la
 /// cámara no descuenta stock de más.
+///
+/// Recuerda CADA código que está a la vista (no solo el último): con dos
+/// productos en el recuadro, alternar entre uno y otro no los vuelve a contar.
 class FiltroLecturas {
   FiltroLecturas({this.pausa = const Duration(milliseconds: 1500)});
   final Duration pausa;
-  String? _ultimo;
-  DateTime _visto = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Código -> última vez que se lo vio.
+  final _vistos = <String, DateTime>{};
 
   bool esNueva(String codigo, DateTime ahora) {
-    final repetida = codigo == _ultimo && ahora.difference(_visto) < pausa;
-    _ultimo = codigo;
-    _visto = ahora;
-    return !repetida;
+    // lo que no se ve hace más de `pausa` ya contaría como nuevo: se olvida
+    _vistos.removeWhere((_, visto) => ahora.difference(visto) >= pausa);
+    final nueva = !_vistos.containsKey(codigo);
+    _vistos[codigo] = ahora;
+    return nueva;
+  }
+
+  /// Registra todos los códigos de una captura y devuelve los que cuentan.
+  List<String> nuevas(Iterable<String> codigos, DateTime ahora) =>
+      [for (final c in codigos) if (esNueva(c, ahora)) c];
+}
+
+/// Procesa las lecturas de a una y en orden. Un código nuevo que aparece
+/// mientras se procesa otro no se pierde: se encola (sin repetir) y se
+/// procesa al terminar. Cada lectura guarda el modo (sumar/restar) que
+/// estaba elegido cuando se leyó.
+class ColaLecturas {
+  ColaLecturas({required this.procesar, FiltroLecturas? filtro, this.reloj = DateTime.now})
+      : filtro = filtro ?? FiltroLecturas();
+
+  final Future<void> Function(String codigo, bool sumar) procesar;
+  final FiltroLecturas filtro;
+  final DateTime Function() reloj;
+  final _pendientes = <({String codigo, bool sumar})>[];
+  String? _actual;
+  bool _cerrada = false;
+
+  /// El código que se está procesando ahora (o null).
+  String? get procesando => _actual;
+
+  /// Códigos que vio la cámara en un cuadro: solo cuentan los disparos nuevos.
+  void detectados(Iterable<String> codigos, {required bool sumar}) {
+    for (final c in filtro.nuevas(codigos, reloj())) {
+      if (c == _actual || _pendientes.any((p) => p.codigo == c)) continue;
+      _pendientes.add((codigo: c, sumar: sumar));
+    }
+    _vaciar();
+  }
+
+  /// Código escrito a mano: cada Enter cuenta.
+  void manual(String codigo, {required bool sumar}) {
+    _pendientes.add((codigo: codigo, sumar: sumar));
+    _vaciar();
+  }
+
+  /// Al salir de la pantalla: lo pendiente ya no se procesa.
+  void cerrar() {
+    _cerrada = true;
+    _pendientes.clear();
+  }
+
+  Future<void> _vaciar() async {
+    if (_actual != null) return; // ya hay un ciclo andando: va a tomar lo nuevo
+    while (_pendientes.isNotEmpty && !_cerrada) {
+      final l = _pendientes.removeAt(0);
+      _actual = l.codigo;
+      try {
+        await procesar(l.codigo, l.sumar);
+      } finally {
+        _actual = null;
+      }
+    }
   }
 }
 
@@ -45,7 +107,7 @@ class PantallaModoLector extends StatefulWidget {
 
 class _PantallaModoLectorState extends State<PantallaModoLector> {
   final _control = MobileScannerController(formats: formatosProducto);
-  final _filtro = FiltroLecturas();
+  late final _cola = ColaLecturas(procesar: _procesar);
   final _manual = TextEditingController();
   final _lecturas = <_Lectura>[];
   bool _sumar = false; // igual que el lector de la PC: por defecto resta
@@ -53,31 +115,40 @@ class _PantallaModoLectorState extends State<PantallaModoLector> {
 
   @override
   void dispose() {
+    _cola.cerrar();
     _control.dispose();
     _manual.dispose();
     super.dispose();
   }
 
   void _alDetectar(BarcodeCapture captura) {
-    final codigo = primerCodigo(captura);
-    if (codigo == null) return;
-    // mientras se procesa una lectura, otro código distinto se ignora sin
-    // "consumirlo": se va a tomar en el próximo cuadro
-    if (_procesando != null && codigo != _procesando) return;
-    if (_filtro.esNueva(codigo, DateTime.now()) && _procesando == null) _procesar(codigo);
+    // Con la app bloqueada esta pantalla queda tapada pero viva, y la cámara
+    // se reanuda sola al volver del segundo plano: lo que vea no descuenta
+    // nada hasta desbloquear.
+    if (!mounted || context.read<SesionEstado>().estado != EstadoSesion.activa) return;
+    _cola.detectados(codigosDe(captura), sumar: _sumar);
   }
 
-  Future<void> _procesar(String codigo) async {
+  /// [sumar] es el modo de cuando se leyó el código: si Leo lo cambia
+  /// mientras espera la respuesta, el texto no tiene que mentir.
+  Future<void> _procesar(String codigo, bool sumar) async {
+    if (!mounted) return;
     setState(() => _procesando = codigo);
     final api = context.read<SesionEstado>().api;
     try {
-      final r = await api.lector(codigo, sumar: _sumar);
+      final r = await api.lector(codigo, sumar: sumar);
       HapticFeedback.mediumImpact();
       SystemSound.play(SystemSoundType.click);
-      _agregar(_Lectura(codigo: codigo, ok: true, texto: '${r.nombre}  ${_sumar ? '+1' : '−1'}  → quedan ${r.stockNuevo}'));
+      _agregar(_Lectura(codigo: codigo, ok: true, texto: '${r.nombre}  ${sumar ? '+1' : '−1'}  → quedan ${r.stockNuevo}'));
     } on ApiError catch (e) {
       HapticFeedback.heavyImpact();
-      _agregar(_Lectura(codigo: codigo, ok: false, texto: e.status == 404 ? 'Código $codigo: no existe en el sistema' : e.mensaje));
+      final texto = switch (e) {
+        ApiError(status: 404) => 'Código $codigo: no existe en el sistema',
+        // no se sabe si descontó: que no lo vuelva a pasar sin revisar
+        ApiError(incierto: true) => 'Código $codigo: ${e.mensaje}',
+        _ => e.mensaje,
+      };
+      _agregar(_Lectura(codigo: codigo, ok: false, texto: texto));
     } finally {
       if (mounted) setState(() => _procesando = null);
     }
@@ -155,7 +226,7 @@ class _PantallaModoLectorState extends State<PantallaModoLector> {
             decoration: const InputDecoration(labelText: 'O escribí el código y Enter', prefixIcon: Icon(Icons.keyboard)),
             onSubmitted: (t) {
               _manual.clear();
-              if (t.trim().isNotEmpty && _procesando == null) _procesar(t.trim());
+              if (t.trim().isNotEmpty) _cola.manual(t.trim(), sumar: _sumar);
             },
           ),
         ),

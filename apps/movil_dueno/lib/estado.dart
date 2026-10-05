@@ -130,7 +130,11 @@ class SesionEstado extends ChangeNotifier {
   }
 
   /// Primer ingreso (o reingreso tras vencer el token): servidor + PIN.
-  Future<void> ingresar(String direccion, String pin) async {
+  ///
+  /// [antesDeEntrar] corre con el PIN ya validado pero todavía en la
+  /// pantalla de login (p. ej. para ofrecer la huella): al pasar a `activa`
+  /// esa pantalla desaparece, y con ella cualquier diálogo que tuviera abierto.
+  Future<void> ingresar(String direccion, String pin, {Future<void> Function()? antesDeEntrar}) async {
     final cliente = crearCliente(direccion);
     final salud = await cliente.salud();
     final sesion = await cliente.login(pin);
@@ -141,8 +145,12 @@ class SesionEstado extends ChangeNotifier {
     await almacen.escribir(_kUsuario, usuario);
     await almacen.escribir(_kLocal, nombreLocal);
     await _guardarToken(sesion.token, sesion.expira);
-    estado = EstadoSesion.activa;
-    notifyListeners();
+    try {
+      await antesDeEntrar?.call();
+    } finally {
+      estado = EstadoSesion.activa;
+      notifyListeners();
+    }
   }
 
   Future<void> _guardarToken(String token, DateTime expira) async {

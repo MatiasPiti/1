@@ -81,14 +81,17 @@ class _PantallaLoginState extends State<PantallaLogin> {
       _error = null;
     });
     try {
-      await sesion.ingresar(_servidor.text, _pin.text);
-      if (sesion.biometriaDisponible && !sesion.biometriaActiva && mounted) {
+      // la huella se ofrece antes de entrar: después esta pantalla (y su
+      // diálogo) ya no está
+      await sesion.ingresar(_servidor.text, _pin.text, antesDeEntrar: () async {
+        if (!sesion.biometriaDisponible || sesion.biometriaActiva || !mounted) return;
+        setState(() => _ocupado = false); // ya validó: ahora espera la respuesta de Leo
         final usar = await confirmar(context,
             titulo: '¿Entrar con huella o rostro?',
             mensaje: 'La próxima vez vas a poder abrir el panel con tu huella o tu cara, sin escribir el PIN.',
             si: 'Sí, activar');
         if (usar) await sesion.configurarBiometria(true);
-      }
+      });
     } on ApiError catch (e) {
       if (mounted) setState(() => _error = e.mensaje);
     } finally {

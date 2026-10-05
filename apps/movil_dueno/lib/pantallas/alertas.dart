@@ -175,8 +175,13 @@ class _HojaReponerState extends State<_HojaReponer> {
       mostrarMensaje(context, '${r.nombre}: stock ${r.stockNuevo}');
       Navigator.pop(context, true);
     } on ApiError catch (e) {
-      if (mounted) {
-        mostrarMensaje(context, e.mensaje, error: true);
+      if (!mounted) return;
+      mostrarMensaje(context, e.mensaje, error: true);
+      // no se sabe si se sumó: se cierra la hoja y la lista se recarga con
+      // el stock real (repetir acá podría sumarlo dos veces)
+      if (e.incierto) {
+        Navigator.pop(context, true);
+      } else {
         setState(() => _ocupado = false);
       }
     }
@@ -262,7 +267,9 @@ class _PantallaConfigAlertasState extends State<PantallaConfigAlertas> {
     try {
       await accion();
     } on ApiError catch (e) {
-      if (mounted) mostrarMensaje(context, e.mensaje, error: true);
+      if (!mounted) return;
+      mostrarMensaje(context, e.mensaje, error: true);
+      if (e.incierto) _cargar(); // mostrar lo que quedó guardado de verdad
     } finally {
       if (mounted) setState(() => _ocupado = false);
     }

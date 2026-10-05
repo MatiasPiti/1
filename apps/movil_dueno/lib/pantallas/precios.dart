@@ -12,6 +12,12 @@ import 'inicio.dart';
 /// "Buscar en": código/nombre, o los mismos campos del filtro de la PC.
 const _modos = {'todo': 'Código o nombre', 'marca': 'Marca', 'proveedor': 'Proveedor', 'categoria': 'Categoría'};
 
+/// Lo máximo que devuelve GET /api/productos. Si una búsqueda trae
+/// exactamente esto, puede haber más productos que no se ven (y que el
+/// ajuste masivo no va a tocar): se avisa.
+const limiteProductos = 2000;
+const avisoRecorte = 'Se muestran los primeros $limiteProductos: refiná la búsqueda para ajustar el resto';
+
 class PantallaPrecios extends StatefulWidget {
   const PantallaPrecios({super.key, required this.activa});
   final bool activa;
@@ -27,6 +33,7 @@ class _PantallaPreciosState extends State<PantallaPrecios> {
   final _seleccion = <String>{};
   bool _cargando = false;
   bool _cargadoUnaVez = false;
+  bool _recortado = false;
   String? _error;
 
   ClienteApi get _api => context.read<SesionEstado>().api;
@@ -50,11 +57,12 @@ class _PantallaPreciosState extends State<PantallaPrecios> {
     });
     try {
       final r = _modo == 'todo'
-          ? await _api.productos(q: texto.trim())
-          : await _api.productos(campo: _modo, valor: texto.trim());
+          ? await _api.productos(q: texto.trim(), limite: limiteProductos)
+          : await _api.productos(campo: _modo, valor: texto.trim(), limite: limiteProductos);
       if (!mounted) return;
       setState(() {
         _productos = r;
+        _recortado = r.length >= limiteProductos;
         _seleccion.removeWhere((c) => !r.any((p) => p.codigo == c));
         _error = null;
       });
@@ -84,16 +92,23 @@ class _PantallaPreciosState extends State<PantallaPrecios> {
       });
       mostrarMensaje(context, '${p.nombre}: ${moneda(p.precioVenta)} → ${moneda(r.nuevo ?? nuevo)}');
     } on ApiError catch (e) {
-      if (mounted) mostrarMensaje(context, e.mensaje, error: true);
+      if (!mounted) return;
+      mostrarMensaje(context, e.mensaje, error: true);
+      if (e.incierto) _buscar(_busqueda.text); // que se vea el precio que quedó de verdad
     }
   }
 
   Future<void> _ajusteMasivo() async {
-    final aplicado = await Navigator.of(context).push<int>(
+    // vuelve la cantidad aplicada, o el ApiError si no se sabe si se aplicó
+    final resultado = await Navigator.of(context).push<Object>(
       MaterialPageRoute(builder: (_) => PantallaAjusteMasivo(codigos: _afectados)),
     );
-    if (aplicado == null || !mounted) return;
-    mostrarMensaje(context, 'Listo: $aplicado precios actualizados.');
+    if (resultado == null || !mounted) return;
+    if (resultado is ApiError) {
+      mostrarMensaje(context, resultado.mensaje, error: true);
+    } else {
+      mostrarMensaje(context, 'Listo: $resultado precios actualizados.');
+    }
     _seleccion.clear();
     _buscar(_busqueda.text);
   }
@@ -161,6 +176,8 @@ class _PantallaPreciosState extends State<PantallaPrecios> {
               ),
             ]),
           ),
+        if (_recortado && _productos.isNotEmpty)
+          const Padding(padding: EdgeInsets.fromLTRB(16, 0, 16, 4), child: _AvisoRecorte()),
         Expanded(child: _lista()),
       ]),
       bottomNavigationBar: _productos.isEmpty
@@ -168,13 +185,16 @@ class _PantallaPreciosState extends State<PantallaPrecios> {
           : SafeArea(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                child: FilledButton.icon(
-                  onPressed: _ajusteMasivo,
-                  icon: const Icon(Icons.trending_up),
-                  label: Text(_seleccion.isEmpty
-                      ? 'Ajustar los ${_productos.length} precios'
-                      : 'Ajustar ${_seleccion.length} seleccionados'),
-                ),
+                child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  if (_recortado) const Padding(padding: EdgeInsets.only(bottom: 8), child: _AvisoRecorte()),
+                  FilledButton.icon(
+                    onPressed: _ajusteMasivo,
+                    icon: const Icon(Icons.trending_up),
+                    label: Text(_seleccion.isEmpty
+                        ? 'Ajustar los ${_productos.length} precios'
+                        : 'Ajustar ${_seleccion.length} seleccionados'),
+                  ),
+                ]),
               ),
             ),
     );
@@ -220,6 +240,21 @@ class _PantallaPreciosState extends State<PantallaPrecios> {
         },
       ),
     );
+  }
+}
+
+/// La búsqueda trajo el máximo de productos: puede haber más que no se ven.
+class _AvisoRecorte extends StatelessWidget {
+  const _AvisoRecorte();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = ColoresEstado.de(context);
+    return Row(children: [
+      Icon(Icons.warning_amber_rounded, size: 18, color: c.aviso),
+      const SizedBox(width: 6),
+      Expanded(child: Text(avisoRecorte, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: c.aviso))),
+    ]);
   }
 }
 
@@ -361,10 +396,15 @@ class _PantallaAjusteMasivoState extends State<PantallaAjusteMasivo> {
           porcentaje: _porcentaje ? n : null, montoFijo: _porcentaje ? null : n, redondear: _redondear);
       if (mounted) Navigator.pop(context, r.where((c) => c.ok).length);
     } on ApiError catch (e) {
-      if (mounted) {
-        mostrarMensaje(context, e.mensaje, error: true);
-        setState(() => _ocupado = false);
+      if (!mounted) return;
+      if (e.incierto) {
+        // no se sabe si se aplicó: se vuelve a la lista, que se recarga con
+        // los precios reales (repetir acá podría subirlos dos veces)
+        Navigator.pop(context, e);
+        return;
       }
+      mostrarMensaje(context, e.mensaje, error: true);
+      setState(() => _ocupado = false);
     }
   }
 

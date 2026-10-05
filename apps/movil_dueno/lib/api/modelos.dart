@@ -274,7 +274,12 @@ class ItemFactura {
     this.nombreSistema,
     this.stockActual,
     this.posibleDuplicado = false,
-  }) : seleccionado = existe && !posibleDuplicado;
+  }) : seleccionado = existe && !posibleDuplicado && cantidadEsValida(cantidad);
+
+  /// Lo que acepta la PC por renglón (ItemFacturaIn en services/api_dueno.py):
+  /// un renglón fuera de rango hace rechazar (422) la factura ENTERA.
+  static const cantidadMaxima = 100000;
+  static bool cantidadEsValida(int cantidad) => cantidad >= 1 && cantidad <= cantidadMaxima;
 
   factory ItemFactura.fromJson(Map<String, dynamic> j) => ItemFactura(
         codigo: j['codigo'] as String,
@@ -296,6 +301,8 @@ class ItemFactura {
   int? stockActual;
   final bool posibleDuplicado;
   bool seleccionado;
+
+  bool get cantidadValida => cantidadEsValida(cantidad);
 
   Map<String, dynamic> toJson() =>
       {'codigo': codigo, 'cantidad': cantidad, if (precioCompra != null) 'precio_compra': precioCompra};

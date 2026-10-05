@@ -118,4 +118,22 @@ void main() {
     await expectLater(s.api.dashboard(), throwsA(isA<ApiError>()));
     expect(s.estado, EstadoSesion.sinSesion);
   });
+
+  test('una dirección inválida no rompe el login: da un ApiError', () async {
+    final s = nueva();
+    await s.cargar();
+    await expectLater(s.ingresar('fd7a::zz', '1234'),
+        throwsA(isA<ApiError>().having((e) => e.mensaje, 'mensaje', 'La dirección de la PC no es válida')));
+    await expectLater(s.probarServidor('http://[::1'), throwsA(isA<ApiError>()));
+    expect(s.estado, EstadoSesion.sinSesion);
+  });
+
+  test('antesDeEntrar corre con el PIN validado pero todavía en el login', () async {
+    final s = nueva();
+    await s.cargar();
+    EstadoSesion? durante;
+    await s.ingresar('100.1.2.3', '1234', antesDeEntrar: () async => durante = s.estado);
+    expect(durante, EstadoSesion.sinSesion);
+    expect(s.estado, EstadoSesion.activa);
+  });
 }

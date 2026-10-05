@@ -24,6 +24,9 @@ class _PantallaFacturasState extends State<PantallaFacturas> {
   List<ResultadoFactura>? _resultados;
   bool _ocupado = false;
 
+  /// Se cortó la comunicación al sumar y no se sabe si se aplicó.
+  bool _incierto = false;
+
   ClienteApi get _api => context.read<SesionEstado>().api;
 
   Future<void> _elegir() async {
@@ -32,6 +35,7 @@ class _PantallaFacturasState extends State<PantallaFacturas> {
     setState(() {
       _ocupado = true;
       _resultados = null;
+      _incierto = false;
     });
     try {
       final bytes = await archivo.readAsBytes();
@@ -71,7 +75,7 @@ class _PantallaFacturasState extends State<PantallaFacturas> {
           ..existe = true
           ..nombreSistema = p.nombre
           ..stockActual = p.stock
-          ..seleccionado = true;
+          ..seleccionado = item.cantidadValida;
       });
     } on ApiError catch (e) {
       if (!mounted) return;
@@ -90,6 +94,19 @@ class _PantallaFacturasState extends State<PantallaFacturas> {
   Future<void> _aplicar() async {
     final f = _factura!;
     final items = f.items.where((i) => i.seleccionado && i.existe).toList();
+    // un solo renglón fuera de rango hace rechazar la factura entera (422)
+    final invalidos = items.where((i) => !i.cantidadValida).length;
+    if (invalidos > 0) {
+      final rango = 'de 1 a ${numero(ItemFactura.cantidadMaxima)}';
+      mostrarMensaje(
+          context,
+          invalidos == 1
+              ? 'Hay 1 renglón con cantidad inválida (marcado en rojo): corregí la cantidad ($rango) o destildalo.'
+              : 'Hay $invalidos renglones con cantidad inválida (marcados en rojo): corregí la cantidad ($rango) '
+                  'o destildalos.',
+          error: true);
+      return;
+    }
     final unidades = items.fold<int>(0, (s, i) => s + i.cantidad);
     final ok = await confirmar(context,
         titulo: '¿Sumar al stock?',
@@ -101,15 +118,37 @@ class _PantallaFacturasState extends State<PantallaFacturas> {
       final r = await _api.aplicarFactura(f.nombre, items);
       if (mounted) setState(() => _resultados = r);
     } on ApiError catch (e) {
-      if (mounted) mostrarMensaje(context, e.mensaje, error: true);
+      if (!mounted) return;
+      mostrarMensaje(context, e.mensaje, error: true);
+      if (e.incierto) {
+        // no se sabe si se sumó: se destilda todo para que no se cargue dos
+        // veces sin querer, y se trae el stock actual de lo que se mandó
+        setState(() {
+          _incierto = true;
+          for (final i in f.items) {
+            i.seleccionado = false;
+          }
+        });
+        _refrescarStock(items);
+      }
     } finally {
       if (mounted) setState(() => _ocupado = false);
     }
   }
 
+  Future<void> _refrescarStock(List<ItemFactura> items) async {
+    await Future.wait([
+      for (final item in items)
+        _api.producto(item.codigo).then((p) {
+          if (mounted) setState(() => item.stockActual = p.stock);
+        }, onError: (Object _) {}), // sin conexión todavía: queda el stock que había
+    ]);
+  }
+
   void _reiniciar() => setState(() {
         _factura = null;
         _resultados = null;
+        _incierto = false;
       });
 
   @override
@@ -142,6 +181,7 @@ class _PantallaFacturasState extends State<PantallaFacturas> {
         else
           _Revision(
             factura: f,
+            incierto: _incierto,
             alCambiar: () => setState(() {}),
             alCorregir: _corregirCodigo,
           ),
@@ -164,8 +204,9 @@ class _PantallaFacturasState extends State<PantallaFacturas> {
 }
 
 class _Revision extends StatelessWidget {
-  const _Revision({required this.factura, required this.alCambiar, required this.alCorregir});
+  const _Revision({required this.factura, required this.incierto, required this.alCambiar, required this.alCorregir});
   final FacturaAnalizada factura;
+  final bool incierto;
   final VoidCallback alCambiar;
   final Future<void> Function(ItemFactura) alCorregir;
 
@@ -177,6 +218,10 @@ class _Revision extends StatelessWidget {
     return ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 24), children: [
       Text(factura.nombre, style: t.textTheme.titleMedium),
       Text('${factura.items.length} ítems detectados', style: t.textTheme.bodyMedium),
+      if (incierto)
+        _Aviso(color: c.peligro, icono: Icons.sync_problem,
+            texto: 'Se cortó la comunicación al sumar y no se sabe si se aplicó. Revisá los últimos movimientos en '
+                'Stock antes de repetir: destildamos todo para que no se cargue dos veces.'),
       if (factura.escaneada)
         _Aviso(color: c.aviso, icono: Icons.image_outlined,
             texto: 'Este PDF parece una imagen escaneada: no tiene texto para leer. Cargá los productos a mano desde Stock.'),
@@ -250,17 +295,26 @@ class _FilaItem extends StatelessWidget {
               if (item.posibleDuplicado)
                 Text('¿Repetido? El lector de PDF a veces lee la misma línea dos veces.',
                     style: t.textTheme.bodySmall?.copyWith(color: c.aviso)),
+              if (!item.cantidadValida)
+                Text('Cantidad inválida: tiene que ser de 1 a ${numero(ItemFactura.cantidadMaxima)}.',
+                    style: t.textTheme.bodySmall?.copyWith(color: c.peligro)),
             ]),
           ),
           Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
             ActionChip(
               label: Text('x${item.cantidad}'),
+              labelStyle: item.cantidadValida ? null : TextStyle(color: c.peligro, fontWeight: FontWeight.w700),
+              side: item.cantidadValida ? null : BorderSide(color: c.peligro),
               onPressed: () async {
                 final n = await pedirNumero(context, titulo: 'Cantidad recibida', inicial: '${item.cantidad}');
-                if (n != null && n >= 1) {
-                  item.cantidad = n.round();
-                  alCambiar();
+                if (n == null || !context.mounted) return;
+                if (!n.isFinite || !ItemFactura.cantidadEsValida(n.round())) {
+                  mostrarMensaje(context, 'La cantidad tiene que ser de 1 a ${numero(ItemFactura.cantidadMaxima)}.',
+                      error: true);
+                  return;
                 }
+                item.cantidad = n.round();
+                alCambiar();
               },
             ),
             if (item.precioCompra != null)

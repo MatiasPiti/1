@@ -22,12 +22,15 @@ Future<String?> escanearCodigo(BuildContext context) =>
     Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const PantallaEscaner()));
 
 String? primerCodigo(BarcodeCapture captura) {
-  for (final b in captura.barcodes) {
-    final v = b.rawValue?.trim();
-    if (v != null && v.isNotEmpty) return v;
-  }
-  return null;
+  final codigos = codigosDe(captura);
+  return codigos.isEmpty ? null : codigos.first;
 }
+
+/// Todos los códigos legibles de una captura (puede haber varios en cuadro).
+List<String> codigosDe(BarcodeCapture captura) => [
+      for (final b in captura.barcodes)
+        if (b.rawValue?.trim() case final v? when v.isNotEmpty) v,
+    ];
 
 class PantallaEscaner extends StatefulWidget {
   const PantallaEscaner({super.key});

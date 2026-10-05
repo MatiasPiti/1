@@ -92,9 +92,23 @@ class _PantallaStockState extends State<PantallaStock> {
       mostrarMensaje(context, '${sumar ? '+' : '−'}$_cantidad  ${p.nombre} → stock ${r.stockNuevo}');
       _cargarMovimientos();
     } on ApiError catch (e) {
-      if (mounted) mostrarMensaje(context, e.mensaje, error: true);
+      if (!mounted) return;
+      mostrarMensaje(context, e.mensaje, error: true);
+      if (e.incierto) _refrescar(p.codigo);
     } finally {
       if (mounted) setState(() => _moviendo = false);
+    }
+  }
+
+  /// Después de un movimiento que no se sabe si se aplicó: trae el stock
+  /// real y los últimos movimientos, para que Leo vea cómo quedó antes de repetir.
+  Future<void> _refrescar(String codigo) async {
+    _cargarMovimientos();
+    try {
+      final p = await _api.producto(codigo);
+      if (mounted && _producto?.codigo == codigo) setState(() => _producto = p);
+    } on ApiError {
+      // sin conexión todavía: el aviso ya está a la vista
     }
   }
 

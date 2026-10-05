@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -106,5 +107,95 @@ void main() {
     expect(f.items.single.cantidad, 12);
     expect(f.items.single.seleccionado, isTrue);
     expect(f.noReconocidas, ['?']);
+  });
+
+  test('productos manda el límite pedido', () async {
+    late http.Request enviado;
+    final api = ClienteApi(servidor: 'pc', token: 't', client: MockClient((r) async {
+      enviado = r;
+      return json([]);
+    }));
+    await api.productos(q: 'yerba', limite: 2000);
+    expect(enviado.url.queryParameters, {'q': 'yerba', 'limite': '2000'});
+  });
+
+  group('cortes y timeouts', () {
+    // un pedido que la PC nunca contesta
+    final colgado = MockClient((_) => Completer<http.Response>().future);
+    const corto = Duration(milliseconds: 20);
+
+    test('por defecto: 20 s para leer y 60 s para escribir', () {
+      final api = ClienteApi(servidor: 'pc');
+      expect(api.timeoutLectura, const Duration(seconds: 20));
+      expect(api.timeoutEscritura, const Duration(seconds: 60));
+    });
+
+    test('una lectura que tarda invita a probar de nuevo', () async {
+      final api = ClienteApi(servidor: 'pc', client: colgado, timeoutLectura: corto);
+      await expectLater(
+        api.dashboard(),
+        throwsA(isA<ApiError>()
+            .having((e) => e.incierto, 'incierto', isFalse)
+            .having((e) => e.mensaje, 'mensaje', contains('Probá de nuevo'))),
+      );
+    });
+
+    for (final (nombre, escribir) in <(String, Future<Object?> Function(ClienteApi))>[
+      ('un movimiento de stock', (api) => api.movimiento('779', 3, sumar: true)),
+      ('una lectura del lector', (api) => api.lector('779')),
+      ('un precio', (api) => api.fijarPrecio('779', 2500)),
+      ('un ajuste masivo', (api) => api.aplicarPrecios(['779'], porcentaje: 3)),
+      ('una factura', (api) => api.aplicarFactura('remito.pdf', [])),
+      ('la config de alertas', (api) => api.guardarUmbrales(5, 0)),
+    ]) {
+      test('si $nombre se queda sin respuesta, no se sabe si se aplicó', () async {
+        final api = ClienteApi(servidor: 'pc', client: colgado, timeoutLectura: corto, timeoutEscritura: corto);
+        await expectLater(
+          escribir(api),
+          throwsA(isA<ApiError>()
+              .having((e) => e.incierto, 'incierto', isTrue)
+              .having((e) => e.mensaje, 'mensaje', contains('No se sabe si se aplicó'))
+              .having((e) => e.mensaje, 'mensaje', isNot(contains('Probá de nuevo')))),
+        );
+      });
+    }
+
+    test('las escrituras esperan más que las lecturas', () async {
+      final lenta = MockClient((_) async {
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        return json({'codigo': '779', 'nombre': 'Café', 'stock_nuevo': 6});
+      });
+      final api = ClienteApi(servidor: 'pc', client: lenta, timeoutLectura: corto,
+          timeoutEscritura: const Duration(seconds: 5));
+      expect((await api.movimiento('779', 3, sumar: true)).stockNuevo, 6);
+    });
+
+    test('un corte en medio de una escritura también es incierto', () async {
+      final api = ClienteApi(servidor: 'pc', client: MockClient((_) async => throw http.ClientException('Connection reset')));
+      await expectLater(api.movimiento('779', 3, sumar: true),
+          throwsA(isA<ApiError>().having((e) => e.incierto, 'incierto', isTrue)));
+    });
+
+    test('un corte en la vista previa (no escribe) se puede reintentar', () async {
+      final api = ClienteApi(servidor: 'pc', client: MockClient((_) async => throw http.ClientException('Connection reset')));
+      await expectLater(api.previsualizarPrecios(['779'], porcentaje: 3),
+          throwsA(isA<ApiError>()
+              .having((e) => e.incierto, 'incierto', isFalse)
+              .having((e) => e.mensaje, 'mensaje', contains('Tailscale'))));
+    });
+  });
+
+  group('dirección inválida', () {
+    final nuncaLlamado = MockClient((_) async => fail('no debería mandar nada'));
+    for (final direccion in ['fd7a::zz', 'http://fd7a::1', 'http://[::1']) {
+      test('"$direccion" da un error claro en vez de romper', () async {
+        final api = ClienteApi(servidor: direccion, client: nuncaLlamado);
+        final esDireccionInvalida =
+            throwsA(isA<ApiError>().having((e) => e.mensaje, 'mensaje', 'La dirección de la PC no es válida'));
+        await expectLater(api.salud(), esDireccionInvalida);
+        await expectLater(api.login('1234'), esDireccionInvalida);
+        await expectLater(api.analizarFactura([1, 2, 3], 'remito.pdf'), esDireccionInvalida);
+      });
+    }
   });
 }

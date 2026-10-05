@@ -13,6 +13,34 @@ class ServidorFalso {
   int stockCafe = 3;
   final pedidos = <String>[];
 
+  /// Cuántos productos hay en total (el café y, si es más de 1, relleno).
+  int cantidadProductos = 1;
+  Map<String, String>? ultimaBusqueda;
+
+  /// Simula que se corta la conexión DESPUÉS de que la PC aplicó la escritura.
+  bool cortarEscrituras = false;
+
+  /// Renglones que llegaron a /api/facturas/aplicar.
+  final itemsFacturaAplicados = <Map<String, dynamic>>[];
+
+  /// Lo que devuelve /api/facturas/analizar.
+  List<Map<String, dynamic>> itemsFactura = [
+    {'codigo': '7790002', 'nombre': 'CAFE MOLIDO X 500', 'cantidad': 12, 'precio_compra': 3000.0, 'existe': true,
+     'nombre_sistema': 'Café Molido 500g', 'stock_actual': 3, 'posible_duplicado': false},
+    {'codigo': '7790001', 'nombre': 'YERBA X 1KG', 'cantidad': 0, 'precio_compra': 1800.0, 'existe': true,
+     'nombre_sistema': 'Yerba Mate 1kg', 'stock_actual': 20, 'posible_duplicado': false},
+  ];
+
+  Map<String, dynamic> _relleno(int i) => {
+        'codigo': 'R${i.toString().padLeft(5, '0')}', 'nombre': 'Producto $i', 'precio_venta': 1000, 'precio_compra': 0,
+        'stock': 10, 'stock_minimo': 0, 'stock_maximo': 0,
+      };
+
+  http.Response _escritura(http.Response r) {
+    if (cortarEscrituras) throw http.ClientException('Connection closed while receiving data');
+    return r;
+  }
+
   Map<String, dynamic> get _cafe => {
         'codigo': '7790002', 'nombre': 'Café Molido 500g', 'precio_venta': 4300, 'precio_compra': 3000,
         'stock': stockCafe, 'stock_minimo': 5, 'stock_maximo': 0, 'marca': 'Colombia',
@@ -50,14 +78,32 @@ class ServidorFalso {
           'alertas_activas': 1,
         });
       case '/api/productos':
-        return respuesta([_cafe]);
+        ultimaBusqueda = r.url.queryParameters;
+        final limite = (int.tryParse(r.url.queryParameters['limite'] ?? '') ?? 200).clamp(1, 2000);
+        final todos = [_cafe, for (var i = 1; i < cantidadProductos; i++) _relleno(i)];
+        return respuesta(todos.take(limite).toList());
+      case '/api/productos/7790002':
+        return respuesta({..._cafe, 'movimientos': []});
       case '/api/movimientos':
         return respuesta([]);
       case '/api/stock/movimiento':
         final datos = jsonDecode(r.body) as Map;
         final cantidad = datos['cantidad'] as int;
         stockCafe += datos['operacion'] == 'sumar' ? cantidad : -cantidad;
-        return respuesta({'codigo': '7790002', 'nombre': 'Café Molido 500g', 'stock_nuevo': stockCafe});
+        return _escritura(respuesta({'codigo': '7790002', 'nombre': 'Café Molido 500g', 'stock_nuevo': stockCafe}));
+      case '/api/facturas/analizar':
+        return respuesta({
+          'factura_nombre': 'remito.pdf', 'es_pdf_escaneado': false, 'lineas_no_reconocidas': [], 'items': itemsFactura,
+        });
+      case '/api/facturas/aplicar':
+        final items = ((jsonDecode(r.body) as Map)['items'] as List).cast<Map<String, dynamic>>();
+        itemsFacturaAplicados.addAll(items);
+        for (final i in items) {
+          if (i['codigo'] == '7790002') stockCafe += i['cantidad'] as int;
+        }
+        return _escritura(respuesta([
+          for (final i in items) {'codigo': i['codigo'], 'ok': true, 'stock_nuevo': stockCafe},
+        ]));
       case '/api/alertas':
         return respuesta([
           {'codigo': '7790002', 'nombre': 'Café Molido 500g', 'stock': stockCafe, 'stock_minimo': 5,
