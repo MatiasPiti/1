@@ -46,7 +46,8 @@ la carpeta `dist\ApiDueno\` **completa** (no solo el `.exe`) a `C:\SistemaDual\A
 - `build_all.bat` usa `python -m PyInstaller`, así que anda aunque pip avise que la carpeta
   `Scripts` de Python *"is not on PATH"*. Si un programa no compila, al final dice cuál.
 - Para compilar **solo** la API (una sola línea, sirve en `cmd` y en PowerShell):
-  `python -m PyInstaller --noconfirm --clean --onedir --noconsole --add-data "sql\schema.sql;sql" --name ApiDueno --paths . --collect-submodules uvicorn --collect-data pdfminer services\api_dueno.py`
+  `python -m PyInstaller --noconfirm --clean --onedir --noconsole --add-data "sql\schema.sql;sql" --name ApiDueno --paths . --collect-submodules uvicorn --collect-data pdfminer --exclude-module pandas --exclude-module scipy --exclude-module matplotlib --exclude-module tkinter --exclude-module numpy --exclude-module sqlalchemy --exclude-module pytest services\api_dueno.py`
+  (los `--exclude-module` dejan afuera librerías pesadas que la API no usa, como pandas o scipy: la carpeta queda en unos 80 MB).
 
 ### 1.2 Definir el PIN del dueño y probarla a mano
 

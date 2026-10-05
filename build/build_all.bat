@@ -74,10 +74,16 @@ REM uvicorn carga sus protocolos dinamicamente: --collect-submodules los
 REM incluye. Se lanza con --base apuntando a la carpeta de MaestroDueno;
 REM --definir-pin PIN define el PIN del dueno y sale. Como no tiene consola,
 REM todo lo que informa queda en logs\api_dueno.log de esa carpeta.
+REM Los --exclude-module dejan afuera librerias que la API no usa pero que
+REM PyInstaller arrastra si estan instaladas (asi la carpeta queda en ~80 MB). PIL y
+REM cryptography NO se excluyen: las usa el lector de facturas PDF.
 %PYI% --noconsole %DATA% ^
     --name ApiDueno --paths . ^
     --collect-submodules uvicorn ^
     --collect-data pdfminer ^
+    --exclude-module pandas --exclude-module scipy --exclude-module matplotlib ^
+    --exclude-module tkinter --exclude-module numpy --exclude-module sqlalchemy ^
+    --exclude-module pytest ^
     services\api_dueno.py
 if errorlevel 1 set "FALLARON=%FALLARON% ApiDueno"
 
