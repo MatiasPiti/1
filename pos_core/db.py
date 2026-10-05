@@ -50,6 +50,9 @@ def init_db(path: str = None) -> None:
     llamar en cada arranque (idempotente)."""
     conn = get_connection(path)
     conn.executescript(_schema_sql())
+    # Migraciones de datos idempotentes (import local: alertas importa db).
+    from pos_core import alertas
+    alertas.migrar_cooldown_viejo(path)
 
 
 @contextmanager

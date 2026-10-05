@@ -1,0 +1,112 @@
+# Tests de la API del dueño + análisis, tests y APK de la app del celular.
+#
+# El APK queda como artefacto "panel-dueno-apk" de cada corrida (pestaña
+# Actions > la corrida > Artifacts). Si se pushea un tag "movil-v1.2.3",
+# además se publica como Release con el .apk adjunto.
+#
+# Firma: si el repo tiene los secrets ANDROID_KEYSTORE_BASE64,
+# ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS y ANDROID_KEY_PASSWORD, el
+# APK se firma siempre con la misma clave y cada versión se instala encima
+# de la anterior. Sin ellos se firma con una clave de debug descartable
+# (sirve para probar, pero para actualizar hay que desinstalar antes).
+
+name: Panel Dueño
+
+on:
+  push:
+    # Con "tags" definido hay que listar "branches" explícitamente; si no,
+    # GitHub ignora los push a ramas.
+    branches: ["**"]
+    paths:
+      - "apps/movil_dueno/**"
+      - "pos_core/**"
+      - "services/**"
+      - "sql/**"
+      - "tests/**"
+      - "requirements.txt"
+      - ".github/workflows/panel-dueno.yml"
+    tags: ["movil-v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    name: API del dueño (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+
+  app:
+    name: App Android (analyze, test, APK)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/movil_dueno
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.6"
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+      - name: Preparar firma (si hay secrets)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::Sin secrets de firma: el APK sale firmado con clave de debug."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+          # Solo la ruta: contraseñas y alias van como variables de entorno al
+          # paso de build (key.properties toma la '\' como escape y una
+          # contraseña con '\' rompía la firma). Ver android/app/build.gradle.kts.
+          echo "storeFile=upload-keystore.jks" > android/key.properties
+
+      - name: Compilar APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: flutter build apk --release
+      - run: mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/panel-dueno.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: panel-dueno-apk
+          path: apps/movil_dueno/build/app/outputs/flutter-apk/panel-dueno.apk
+          if-no-files-found: error
+
+  release:
+    name: Publicar Release del APK
+    if: startsWith(github.ref, 'refs/tags/movil-v')
+    needs: [api, app]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: panel-dueno-apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: panel-dueno.apk
+          body: |
+            App "Panel Dueño" para Android. Descargá `panel-dueno.apk` desde el celular e instalala
+            (la primera vez Android pide permitir "instalar apps de origen desconocido").

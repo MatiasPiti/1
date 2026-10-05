@@ -21,7 +21,14 @@ def get_base_path() -> str:
       los recursos y sirve igual.
     - Si corre como script .py normal (desarrollo), usamos la carpeta del
       archivo que se está ejecutando.
+    - Si está definida la variable de entorno SISTEMA_DUAL_BASE, gana sobre
+      todo lo anterior. La usa la API del dueño (services/api_dueno.py
+      --base ...) para abrir la MISMA base y config.ini que MaestroDueno
+      aunque su .exe viva en otra carpeta.
     """
+    override = os.environ.get("SISTEMA_DUAL_BASE")
+    if override:
+        return os.path.abspath(override)
     if getattr(sys, "frozen", False):
         return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.abspath(sys.argv[0]))
