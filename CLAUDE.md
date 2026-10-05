@@ -25,13 +25,14 @@ Telegram (saliente, best-effort).
 
 ```bash
 pip install -r requirements.txt            # requests, matplotlib, pdfplumber, openpyxl, pyinstaller, pywin32 (solo win32)
-python scripts/setup_inicial.py            # crea database/stock.db + usuario 'dueño' (primer arranque)
+python scripts/setup_inicial.py --base apps/master_dueno   # crea la base del panel + usuario 'dueño' (sin --base: carpeta del script)
 python apps/master_dueno/main.py           # panel del dueño (alta de productos, Excel, alertas, stock)
 python apps/master_caja/main.py            # caja (cobrar)
 python apps/usb_caja/main.py               # caja portátil
 python apps/usb_dueno/main.py              # panel dueño portátil
 python apps/usb_dev/mantenimiento.py       # mantenimiento
 python services/api_dueno.py --base apps/master_dueno   # API del celular (puerto 8765) sobre la base de dev del panel
+python services/api_dueno.py --base apps/master_dueno --definir-pin 1234   # crea/cambia el PIN del dueño y sale
 build\build_all.bat                        # compila los 5 .exe + StockService + ApiDueno (requiere Windows + deps)
 
 python -m pytest -q                        # tests de la API y de reglas de negocio (tests/)
@@ -46,7 +47,9 @@ flutter build apk --release
 - Los tests de Python usan una instalación aislada en `tmp_path` vía `SISTEMA_DUAL_BASE`
   (`tests/conftest.py`); nunca tocan una `stock.db` real.
 - El APK lo compila GitHub Actions (`.github/workflows/panel-dueno.yml`, artefacto `panel-dueno-apk`);
-  acá no hay SDK de Android. Firma con los secrets `ANDROID_*` si existen (ver `apps/movil_dueno/README.md`).
+  acá no hay SDK de Android. Firma con los secrets `ANDROID_*` si existen (ver `apps/movil_dueno/README.md`):
+  `key.properties` lleva solo `storeFile` y las contraseñas/alias llegan como variables de entorno
+  (`build.gradle.kts::datoFirma`), porque `key.properties` toma la `\` como escape.
 - Las apps necesitan un entorno gráfico (tkinter). En headless, importá y ejercitá `pos_core/*`
   directamente en vez de abrir las ventanas.
 - `database/`, `SYNC_DATA/`, `logs/`, `config.ini` y `*.db` están gitignored: son estado local/por-USB,
@@ -87,7 +90,9 @@ Invariantes que hay que respetar al tocar este código (romper uno corrompe dato
 7. **Rutas portables:** todo (`database/`, `SYNC_DATA/`, `logs/`, `config.ini`) cuelga de
    `pos_core/paths.py::get_base_path()`, **nunca** de una letra de unidad fija. El mismo USB debe
    funcionar montado como `E:`, `F:` o `G:`.
-8. **Telegram es best-effort y nunca puede romper el core.** `pos_core/telegram_bot.py` atrapa
+8. **Telegram es best-effort y nunca puede romper el core.** El monitor de alertas
+   (`telegram_bot.MonitorAlertas`, cada 5 min con cooldown de 4 h) lo arranca `services/api_dueno.py::main`,
+   que es lo único que corre 24 h en la PC; ninguna app de escritorio lo arranca. `pos_core/telegram_bot.py` atrapa
    `requests.RequestException`; sin internet no manda nada, pero cobrar/descontar stock sigue 100%
    offline. No introduzcas dependencias de red en el camino de cobro.
 9. **Edición masiva redondea a la centena superior** (`pos_core/bulk_edit.py::redondear_a_centena_superior`),
@@ -121,11 +126,22 @@ como en `sincronizacion_exitosa.txt` (dentro del propio USB).
 - **Base de datos de la API:** cada app resuelve `database/` relativo a **su propia carpeta**
   (`get_base_path()`), así que MaestroCaja y MaestroDueno no comparten base solo por estar en
   `C:\SistemaDual`. La API debe arrancar con `--base <carpeta de MaestroDueno>` (setea
-  `SISTEMA_DUAL_BASE`, que tiene prioridad en `paths.get_base_path()`).
+  `SISTEMA_DUAL_BASE`, que tiene prioridad en `paths.get_base_path()`). Con el despliegue actual las
+  ventas de MaestroCaja quedan en la base de su carpeta y no se ven en la app (unificar está pendiente).
+  Si `<base>/database/stock.db` no existe o no hay ningún usuario DUEÑO activo, la API **no arranca**:
+  sale con código 2 y deja el motivo en `logs/api_dueno.log`. `--definir-pin <PIN>` (4 a 12 dígitos,
+  `usuarios.definir_pin_dueno`) crea o actualiza el usuario 'dueño' en esa base y sale con 0 sin levantar
+  el servidor; en desarrollo también sirve `scripts/setup_inicial.py --base <carpeta>`.
 - **Sesión:** login con el PIN de un usuario `rol='DUEÑO'` (`pos_core/usuarios.py`, sha256); devuelve un
-  token HMAC de 30 días firmado con `config.ini [api] secreto` (se autogenera; borrarlo invalida todos los
-  celulares). 5 PIN fallidos por IP bloquean 5 min. Todo lo que escribe la app queda con
-  `usuario = "<nombre> (app)"` y `origen = 'MAESTRO'`.
+  token HMAC de 30 días firmado con `config.ini [api] secreto` (se autogenera solo si `config.ini` se leyó
+  bien y no lo tiene; se lee una vez por proceso, así que borrarlo y reiniciar la API invalida todos los
+  celulares). El token lleva una huella HMAC del `pin_hash` y en cada pedido se revalida contra el usuario:
+  cambiar el PIN (`--definir-pin`), desactivarlo o quitarle el rol DUEÑO → 401 en todos los celulares.
+  5 PIN fallidos por IP bloquean esa IP 5 min, y más de 20 fallidos en 5 min sumando todas las IPs
+  bloquean todos los logins 5 min. `config.ini` se guarda de forma atómica (`config.guardar_config`:
+  temporal + `os.replace`), y quien lo vaya a reescribir tiene que leerlo con `cargar_config(estricto=True)`,
+  que ante un archivo ilegible tira `ConfigIlegibleError` en vez de pisarlo con defaults. Todo lo que escribe
+  la app queda con `usuario = "<nombre> (app)"` y `origen = 'MAESTRO'`.
 - **Umbrales de alerta:** el efectivo es la fila de `Configuracion_Alertas` del producto o, si no hay, la
   global (`producto_codigo IS NULL`). Usá `pos_core/alertas.py` (no `ON CONFLICT(producto_codigo)`:
   en SQLite cada NULL es distinto para el UNIQUE y eso duplicaba filas globales).

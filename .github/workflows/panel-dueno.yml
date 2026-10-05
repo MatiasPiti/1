@@ -69,23 +69,23 @@ jobs:
       - name: Preparar firma (si hay secrets)
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           if [ -z "$KEYSTORE_BASE64" ]; then
             echo "::warning::Sin secrets de firma: el APK sale firmado con clave de debug."
             exit 0
           fi
           echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
-          {
-            echo "storeFile=upload-keystore.jks"
-            echo "storePassword=$KEYSTORE_PASSWORD"
-            echo "keyAlias=$KEY_ALIAS"
-            echo "keyPassword=$KEY_PASSWORD"
-          } > android/key.properties
+          # Solo la ruta: contraseñas y alias van como variables de entorno al
+          # paso de build (key.properties toma la '\' como escape y una
+          # contraseña con '\' rompía la firma). Ver android/app/build.gradle.kts.
+          echo "storeFile=upload-keystore.jks" > android/key.properties
 
-      - run: flutter build apk --release
+      - name: Compilar APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: flutter build apk --release
       - run: mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/panel-dueno.apk
       - uses: actions/upload-artifact@v4
         with:

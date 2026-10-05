@@ -1,13 +1,22 @@
 import java.io.FileInputStream
 import java.util.Properties
 
-// Firma de release: si existe android/key.properties (lo arma el CI con los
-// secrets del repo) se firma con esa clave fija, así cada APK nuevo se
-// instala ENCIMA del anterior sin perder la sesión. Si no, firma de debug.
+// Firma de release: si existe android/key.properties con storeFile (lo arma
+// el CI cuando el repo tiene los secrets) se firma con esa clave fija, así
+// cada APK nuevo se instala ENCIMA del anterior sin perder la sesión. Si no,
+// firma de debug.
+//
+// Contraseñas y alias: primero de las variables de entorno
+// ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD (el CI
+// las pasa desde los secrets) y, si no están, de key.properties (para firmar
+// a mano). El CI ya no las escribe en key.properties: ese formato toma la '\'
+// como escape y una contraseña con '\' rompía la firma.
 val propiedadesFirma = Properties().apply {
     val archivo = rootProject.file("key.properties")
-    if (archivo.exists()) load(FileInputStream(archivo))
+    if (archivo.exists()) FileInputStream(archivo).use { load(it) }
 }
+fun datoFirma(variable: String, propiedad: String): String? =
+    System.getenv(variable)?.takeIf { it.isNotEmpty() } ?: propiedadesFirma.getProperty(propiedad)
 val hayFirma = propiedadesFirma.getProperty("storeFile") != null
 
 plugins {
@@ -42,9 +51,9 @@ android {
         if (hayFirma) {
             create("release") {
                 storeFile = file(propiedadesFirma.getProperty("storeFile"))
-                storePassword = propiedadesFirma.getProperty("storePassword")
-                keyAlias = propiedadesFirma.getProperty("keyAlias")
-                keyPassword = propiedadesFirma.getProperty("keyPassword")
+                storePassword = datoFirma("ANDROID_KEYSTORE_PASSWORD", "storePassword")
+                keyAlias = datoFirma("ANDROID_KEY_ALIAS", "keyAlias")
+                keyPassword = datoFirma("ANDROID_KEY_PASSWORD", "keyPassword")
             }
         }
     }

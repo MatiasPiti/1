@@ -19,6 +19,13 @@ stock, queda en la auditoría como `dueño (app)`.
 
 > Requisito: la PC del local tiene que estar **prendida y con internet** para usar la app.
 
+> **Importante: qué datos ve la app.** La app muestra la base a la que apunta `--base` (la de
+> **MaestroDueno**). Con el despliegue actual cada programa usa la carpeta `database\` de **su propia
+> carpeta**, así que **las ventas que cobra MaestroCaja (y el stock que descuentan) quedan en
+> `C:\SistemaDual\MaestroCaja\database\stock.db` y no aparecen en la app** (tampoco en el panel de la
+> PC) hasta que se unifiquen las bases, algo que está pendiente. Lo que se hace desde MaestroDueno o
+> desde la app (stock, precios, facturas, alertas) sí se ve en los dos.
+
 ---
 
 ## 1. En la PC del local (una sola vez)
@@ -31,42 +38,114 @@ build\build_all.bat
 
 Copiar `dist\ApiDueno\` completo a `C:\SistemaDual\ApiDueno\`.
 
-### 1.2 Probarla a mano
+### 1.2 Definir el PIN del dueño y probarla a mano
+
+La app entra con el PIN del usuario **dueño** guardado en la base de MaestroDueno. En la PC del
+local no hace falta Python: el PIN se define con el mismo `ApiDueno.exe`. En una consola `cmd`:
 
 ```bat
-C:\SistemaDual\ApiDueno\ApiDueno.exe --base "C:\SistemaDual\MaestroDueno"
+start "" /wait C:\SistemaDual\ApiDueno\ApiDueno.exe --base "C:\SistemaDual\MaestroDueno" --definir-pin 1234
+type C:\SistemaDual\MaestroDueno\logs\api_dueno.log
 ```
 
-`--base` **tiene que apuntar a la carpeta de MaestroDueno** (la que tiene `database\stock.db` y
-`config.ini`): así la app del celular ve exactamente los mismos datos que el panel de la PC.
+- Cambiá `1234` por el PIN que quieras: de **4 a 12 dígitos**, solo números.
+- `--definir-pin` crea el usuario `dueño` (rol DUEÑO) o, si ya existe, le cambia el PIN y lo deja
+  activo; después **sale sin levantar la API**. Si todavía no existe `database\stock.db`, la crea.
+  Si el PIN no tiene ese formato o la carpeta de `--base` no existe, no toca nada y lo anota en el log
+  (si la carpeta no existe, el log queda en `C:\SistemaDual\ApiDueno\logs\api_dueno.log`).
+- ApiDueno no tiene ventana ni escribe en la consola: el resultado queda en `logs\api_dueno.log`
+  (*"Usuario 'dueño' (rol DUEÑO) creado..."* o *"PIN del usuario 'dueño' actualizado..."*; el PIN
+  nunca se anota). `start "" /wait` hace que la consola espere a que termine antes del `type`.
+- Sirve también para **cambiar el PIN** más adelante; ojo, eso cierra la sesión de los celulares
+  (ver sección 5).
 
-Abrir en el navegador de la PC `http://localhost:8765/api/salud`. Tiene que responder algo como
-`{"ok": true, "nombre_local": "Mi Negocio", ...}`.
+En desarrollo, desde la raíz del repo: `python scripts/setup_inicial.py --base apps/master_dueno`
+(crea la base y pide el PIN) o `python services/api_dueno.py --base apps/master_dueno --definir-pin 1234`.
 
-- El nombre que muestra la app sale de `config.ini` → `[general] nombre_local = ...`.
-- El PIN es el del usuario **dueño** del sistema (el que se definió con `scripts\setup_inicial.py`).
+Después, probar la API escuchando **solo en la propia PC**:
+
+```bat
+C:\SistemaDual\ApiDueno\ApiDueno.exe --base "C:\SistemaDual\MaestroDueno" --host 127.0.0.1
+```
+
+- `--base` **tiene que apuntar a la carpeta de MaestroDueno** (la que tiene `database\stock.db` y
+  `config.ini`), sin `\` al final: así la app del celular ve los mismos datos que el panel de la PC.
+- `--host 127.0.0.1` hace que no acepte conexiones de afuera, y así Windows no muestra el aviso del
+  Firewall. Si ese aviso aparece y se acepta, abre la API a toda la red del local (ver 1.4).
+
+Abrir en el navegador de la PC `http://127.0.0.1:8765/api/salud`. Tiene que responder algo como
+`{"ok": true, "nombre_local": "Mi Negocio", ...}`. El nombre que muestra la app sale de `config.ini`
+→ `[general] nombre_local = ...`.
+
+**Si no responde**, mirar `C:\SistemaDual\MaestroDueno\logs\api_dueno.log` (si la carpeta de `--base`
+no existe, el log queda en `C:\SistemaDual\ApiDueno\logs\api_dueno.log`). La API **no arranca**, y
+anota el motivo en el log, si:
+
+- `--base` está mal: no existe `<carpeta de --base>\database\stock.db`;
+- en esa base no hay ningún usuario DUEÑO activo (falta el `--definir-pin` de arriba);
+- `config.ini` existe pero no se puede leer.
+
+Al terminar la prueba, **cerrarla antes de seguir con 1.3**. Como no tiene ventana, sigue corriendo
+de fondo aunque cierres la consola:
+
+```bat
+taskkill /IM ApiDueno.exe /F
+```
 
 ### 1.3 Que arranque sola con Windows
 
-En una consola **como administrador**:
+En **PowerShell como administrador** (menú Inicio → escribir *PowerShell* → clic derecho →
+*Ejecutar como administrador*):
 
-```bat
-schtasks /Create /TN "SistemaDual ApiDueno" /SC ONSTART /RU SYSTEM /RL HIGHEST /F ^
-  /TR "\"C:\SistemaDual\ApiDueno\ApiDueno.exe\" --base \"C:\SistemaDual\MaestroDueno\""
-schtasks /Run /TN "SistemaDual ApiDueno"
+```powershell
+$accion = New-ScheduledTaskAction -Execute 'C:\SistemaDual\ApiDueno\ApiDueno.exe' `
+    -Argument '--base "C:\SistemaDual\MaestroDueno"' -WorkingDirectory 'C:\SistemaDual\ApiDueno'
+$inicio = New-ScheduledTaskTrigger -AtStartup
+$ajustes = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) `
+    -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+Register-ScheduledTask -TaskName 'SistemaDual ApiDueno' -Action $accion -Trigger $inicio `
+    -Settings $ajustes -User SYSTEM -RunLevel Highest -Force
+Start-ScheduledTask -TaskName 'SistemaDual ApiDueno'
 ```
 
-Corre sin ventana; su registro queda en `C:\SistemaDual\MaestroDueno\logs\api_dueno.log`.
+- `-ExecutionTimeLimit ([TimeSpan]::Zero)`: **sin límite de tiempo**. Por defecto Windows corta las
+  tareas programadas a las 72 horas; por eso no se usa `schtasks /Create`, que deja ese límite y
+  hacía que ApiDueno.exe muriera a los 3 días.
+- `-RestartCount` / `-RestartInterval`: si la tarea falla, Windows la reintenta cada minuto.
+- `-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries`: que no se corte si la PC es una notebook
+  y se desenchufa.
+- **Comillas:** el argumento va entre comillas **simples** (`'--base "C:\..."'`) para que la ruta
+  le llegue a ApiDueno con sus comillas dobles. La ruta no lleva `\` al final: `\"` se toma como una
+  comilla escapada y rompe el argumento.
+- `-Force` reemplaza la tarea si ya existía (por ejemplo, una creada antes con `schtasks`).
+
+Corre sin ventana; su registro queda en `C:\SistemaDual\MaestroDueno\logs\api_dueno.log`. Para
+reiniciarla (por ejemplo, después de tocar `config.ini`):
+
+```powershell
+Stop-ScheduledTask -TaskName 'SistemaDual ApiDueno'; Start-ScheduledTask -TaskName 'SistemaDual ApiDueno'
+```
 
 ### 1.4 Firewall: abrir el puerto solo para Tailscale
 
+En una consola **`cmd` como administrador** (no en PowerShell: ahí no anda el `^` que corta la línea):
+
 ```bat
+netsh advfirewall firewall delete rule name=all program="C:\SistemaDual\ApiDueno\ApiDueno.exe"
 netsh advfirewall firewall add rule name="ApiDueno (Tailscale)" dir=in action=allow ^
   protocol=TCP localport=8765 remoteip=100.64.0.0/10
 ```
 
-`100.64.0.0/10` es el rango de direcciones de Tailscale: la API queda accesible **solo** desde los
-dispositivos de tu red Tailscale, no desde el Wi-Fi del local ni desde internet.
+1. La primera línea borra las reglas que Windows crea **por programa** cuando aparece el aviso
+   *"Firewall de Windows bloqueó algunas características de esta aplicación"* (por ejemplo, si se
+   probó ApiDueno sin `--host 127.0.0.1`). Si el aviso se aceptó, esa regla deja entrar a la API
+   **desde cualquier dirección** (el Wi-Fi del local incluido); si se canceló, crea una regla de
+   **bloqueo**, que gana sobre la de abajo. Si responde que no hay reglas que coincidan, está bien:
+   no había ninguna.
+2. La segunda abre el puerto 8765 solo para `100.64.0.0/10`, el rango de direcciones de Tailscale:
+   la API queda accesible **solo** desde los dispositivos de tu red Tailscale, no desde el Wi-Fi del
+   local ni desde internet.
 
 ---
 
@@ -113,7 +192,7 @@ Listo. Las próximas veces se abre con la huella.
 | **Stock** | Buscar por código o nombre (o escanear), sumar/restar con cantidad y motivo, últimos movimientos. **Modo lector**: escaneás productos uno tras otro y cada lectura resta 1 unidad, igual que el lector USB de la PC (o suma 1, para cuando entra mercadería). |
 | **Precios** | Filtrar por código/nombre, marca, proveedor o categoría. Tocar un producto para ponerle precio exacto (muestra el margen). **Ajuste masivo** por % o $ fijo, con redondeo a la centena superior y **vista previa obligatoria** antes de aplicar. |
 | **Facturas** | Elegir un PDF del proveedor (WhatsApp, mail, Drive). La PC lo lee, vos revisás y corregís códigos (escaneando) y cantidades, y recién ahí se suma al stock. |
-| **Alertas** | Productos con stock bajo o sobre-stock (con globito en la pestaña), reposición rápida, configuración de Telegram y del umbral global. |
+| **Alertas** | Productos con stock bajo o sobre-stock (con globito en la pestaña), reposición rápida, configuración de Telegram y del umbral global. Los avisos automáticos por Telegram los manda **ApiDueno** desde la PC (revisa cada 5 minutos; no repite el mismo aviso antes de 4 horas), así que llegan aunque la app esté cerrada. |
 | **Ajustes** ⚙️ | Tema **claro** u **oscuro elegante**, huella/rostro, datos de conexión, cerrar sesión. |
 
 En **todos los campos de código** hay un botón 📷 para escanear el código de barras con la cámara.
@@ -127,14 +206,23 @@ En **todos los campos de código** hay un botón 📷 para escanear el código d
 
 - El **PIN nunca se guarda en el celular**: lo valida la PC, que devuelve una sesión firmada que
   dura 30 días y se guarda en el llavero cifrado de Android.
-- **5 PIN incorrectos** seguidos bloquean los intentos por 5 minutos.
+- **Cambiar el PIN del dueño** con `--definir-pin` (ver 1.2) **cierra la sesión de todos los
+  celulares** en el acto, sin reiniciar nada: cada uno tiene que volver a entrar con el PIN nuevo.
+  Lo mismo pasa si al usuario dueño se lo desactiva o se le saca el rol DUEÑO.
+- **5 PIN incorrectos** seguidos desde un mismo dispositivo bloquean sus intentos por 5 minutos.
+  Además hay un tope general: **más de 20 PIN incorrectos en 5 minutos**, sumando todos los
+  dispositivos, bloquean el ingreso para todos durante 5 minutos.
+- Las facturas PDF pueden pesar **hasta 20 MB**: la PC rechaza cualquier archivo más grande.
 - La app se **bloquea sola** después de 2 minutos en segundo plano (pide huella o PIN).
 - Con la regla de firewall de 1.4, la API solo es alcanzable desde la red Tailscale.
 
 **Si se pierde el celular:**
 1. Quitarlo de la red en <https://login.tailscale.com/admin/machines> (deja de poder conectarse).
-2. Invalidar todas las sesiones: en `C:\SistemaDual\MaestroDueno\config.ini` borrar la línea
-   `secreto = ...` de la sección `[api]` y reiniciar la tarea `SistemaDual ApiDueno`.
+2. Cambiar el PIN del dueño (1.2): las sesiones abiertas dejan de valer al instante y los otros
+   celulares entran con el PIN nuevo.
+3. Para invalidar todas las sesiones **sin** cambiar el PIN: en
+   `C:\SistemaDual\MaestroDueno\config.ini` borrar la línea `secreto = ...` de la sección `[api]` y
+   reiniciar la tarea `SistemaDual ApiDueno` (ver 1.3).
 
 ---
 
@@ -161,6 +249,13 @@ Pasarla a base64 (Linux/Mac: `base64 -w0 panel-dueno.jks`; Windows PowerShell:
 | `ANDROID_KEY_ALIAS` | `panel-dueno` |
 | `ANDROID_KEY_PASSWORD` | la contraseña de la clave |
 
+El CI escribe en `android/key.properties` solo la ruta del keystore y le pasa las contraseñas y el
+alias a Gradle como variables de entorno con esos mismos nombres, así una contraseña con `\` (u
+otros caracteres raros) no rompe la firma. Para firmar a mano en una PC: dejar el `.jks` en
+`android/app/`, escribir `storeFile=panel-dueno.jks` en `android/key.properties` y definir esas tres
+variables de entorno (o, si no, poner `storePassword`, `keyAlias` y `keyPassword` en el mismo
+`key.properties`, donde cada `\` se escribe `\\`).
+
 **Guardá el `.jks` y las contraseñas en un lugar seguro**: si se pierden, no se puede actualizar
 la app instalada sin desinstalarla.
 
@@ -183,6 +278,7 @@ flutter build apk --release
 
 # API (desde la raíz del repo)
 python -m pytest -q
+python scripts/setup_inicial.py --base apps/master_dueno   # crea la base de dev y pide el PIN del dueño
 python services/api_dueno.py --base apps/master_dueno      # usa la base de dev de MaestroDueno
 ```
 
@@ -200,8 +296,13 @@ Estructura de `lib/`:
 
 | Mensaje | Qué revisar |
 |---|---|
-| *No se pudo conectar con la PC del local* | ¿La PC está prendida y con internet? ¿Tailscale está conectado en los dos equipos? En la PC, ¿responde `http://localhost:8765/api/salud`? ¿Está la regla de firewall? |
-| *Sesión vencida o inválida* | Pasaron 30 días o se reseteó el `secreto`: ingresar el PIN de nuevo. |
-| *Demasiados intentos* | Se equivocó el PIN 5 veces: esperar 5 minutos. |
+| *No se pudo conectar con la PC del local* | ¿La PC está prendida y con internet? ¿Tailscale está conectado en los dos equipos? En la PC, ¿responde `http://127.0.0.1:8765/api/salud`? Si no, ver las filas siguientes y `C:\SistemaDual\MaestroDueno\logs\api_dueno.log`. ¿Está la regla de firewall (1.4)? |
+| En el log: *La API no arrancó: no existe la base de datos...* | `--base` está mal: tiene que ser la carpeta de MaestroDueno, sin `\` al final. Corregir la tarea (1.3). |
+| En el log: *...no tiene ningún usuario DUEÑO activo* | Definir el PIN con `--definir-pin` (1.2) y reiniciar la tarea. |
+| La API se corta sola a los 3 días | La tarea se creó con `schtasks`, que la limita a 72 horas: volver a crearla con PowerShell como en 1.3. |
+| Apareció el aviso del Firewall de Windows, o la API responde desde el Wi-Fi del local | El aviso crea reglas por programa que pasan por encima de la de Tailscale. En `cmd` como administrador: `netsh advfirewall firewall delete rule name=all program="C:\SistemaDual\ApiDueno\ApiDueno.exe"` y dejar solo la regla de 1.4. |
+| Las ventas de la caja no aparecen en la app | Con el despliegue actual MaestroCaja graba en la base de su propia carpeta (ver el aviso al principio): no es un error de la app. |
+| *Sesión vencida o inválida* | Pasaron 30 días, se cambió el PIN del dueño o se reseteó el `secreto`: ingresar el PIN de nuevo. |
+| *Demasiados intentos* | 5 PIN incorrectos desde el celular, o más de 20 en 5 minutos sumando todos: esperar 5 minutos. |
 | *La app no tiene permiso para usar la cámara* | Ajustes del teléfono → Apps → Panel Dueño → Permisos → Cámara. |
 | *Este PDF parece una imagen escaneada* | El PDF no tiene texto: cargar esos productos desde Stock. |

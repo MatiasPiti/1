@@ -45,7 +45,9 @@ pyinstaller --noconfirm --clean --onedir --noconsole %DATA% ^
 echo.
 echo === API del Dueno para la app del celular (sin ventana) ===
 REM uvicorn carga sus protocolos dinamicamente: --collect-submodules los
-REM incluye. Se lanza con --base apuntando a la carpeta de MaestroDueno.
+REM incluye. Se lanza con --base apuntando a la carpeta de MaestroDueno;
+REM --definir-pin PIN define el PIN del dueno y sale. Como no tiene consola,
+REM todo lo que informa queda en logs\api_dueno.log de esa carpeta.
 pyinstaller --noconfirm --clean --onedir --noconsole %DATA% ^
     --name ApiDueno --paths . ^
     --collect-submodules uvicorn ^
