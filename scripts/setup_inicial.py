@@ -1,29 +1,43 @@
 """Primer arranque: crea la base de datos y un usuario dueño por defecto.
 
 Uso:  python scripts/setup_inicial.py
+      python scripts/setup_inicial.py --base "C:\\SistemaDual\\MaestroDueno"
+
+`--base` es la carpeta de la app (la que tiene o va a tener database\\stock.db
+y config.ini). Sin `--base`, se usa la carpeta de este script.
 """
 
+import argparse
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from pos_core.db import init_db, transaction
-from pos_core.usuarios import hash_pin as _hash_pin
 
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Primer arranque: base de datos + usuario dueño")
+    parser.add_argument("--base", help="Carpeta de la app (donde va database\\stock.db y config.ini)")
+    args = parser.parse_args(argv)
+    if args.base:
+        # Antes de cualquier acceso a la DB: paths.get_base_path() lo lee.
+        os.environ["SISTEMA_DUAL_BASE"] = os.path.abspath(args.base)
 
-def main():
+    from pos_core.db import init_db, transaction
+    from pos_core.paths import db_path
+    from pos_core.usuarios import definir_pin_dueno
+
     init_db()
-    print("Base de datos creada/verificada en database/stock.db")
+    print(f"Base de datos creada/verificada en {db_path()}")
 
-    pin = input("PIN para el usuario 'dueño' (4-6 dígitos, Enter para '1234'): ").strip() or "1234"
+    while True:
+        pin = input("PIN para el usuario 'dueño' (4 a 12 dígitos, Enter para '1234'): ").strip() or "1234"
+        try:
+            definir_pin_dueno(pin)
+            break
+        except ValueError as exc:
+            print(exc)
+
     with transaction() as conn:
-        conn.execute(
-            """INSERT INTO Usuarios (nombre, pin_hash, rol, activo)
-               VALUES ('dueño', ?, 'DUEÑO', 1)
-               ON CONFLICT(nombre) DO UPDATE SET pin_hash = excluded.pin_hash""",
-            (_hash_pin(pin),),
-        )
         # NULL no es comparable vía ON CONFLICT en SQLite (cada NULL cuenta
         # como distinto para el UNIQUE), así que se chequea a mano.
         existe_global = conn.execute(
