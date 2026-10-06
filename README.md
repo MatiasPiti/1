@@ -325,21 +325,27 @@ pero **nunca** rompe el resto del sistema (cobrar/descontar stock sigue 100% off
 
 ## 11. Compilación (PyInstaller)
 
-Ver **`build/build_all.bat`** completo. Resumen de los comandos:
+Ver **`build/build_all.bat`** completo (se corre tal cual: `build\build_all.bat`). Resumen de los comandos:
 
 ```bat
-set PYI=pyinstaller --noconfirm --clean --onedir --windowed
+set "PYI=python -m PyInstaller --noconfirm --clean --onedir"
 set DATA=--add-data "sql\schema.sql;sql"
 
-%PYI% %DATA% --name MaestroCaja  --paths . apps\master_caja\main.py
-%PYI% %DATA% --name MaestroDueno --paths . --hidden-import matplotlib.backends.backend_tkagg apps\master_dueno\main.py
-%PYI% %DATA% --name USB_Caja     --paths . apps\usb_caja\main.py
-%PYI% %DATA% --name USB_Dueno    --paths . --hidden-import matplotlib.backends.backend_tkagg apps\usb_dueno\main.py
-%PYI% %DATA% --name USB_Mantenimiento --paths . apps\usb_dev\mantenimiento.py
+%PYI% --windowed %DATA% --name MaestroCaja  --paths . apps\master_caja\main.py
+%PYI% --windowed %DATA% --name MaestroDueno --paths . --hidden-import matplotlib.backends.backend_tkagg apps\master_dueno\main.py
+%PYI% --windowed %DATA% --name USB_Caja     --paths . apps\usb_caja\main.py
+%PYI% --windowed %DATA% --name USB_Dueno    --paths . --hidden-import matplotlib.backends.backend_tkagg apps\usb_dueno\main.py
+%PYI% --windowed %DATA% --name USB_Mantenimiento --paths . apps\usb_dev\mantenimiento.py
 
-pyinstaller --noconfirm --clean --onedir --noconsole %DATA% --name StockService --paths . ^
-    --hidden-import win32timezone services\stock_windows_service.py
+%PYI% --noconsole %DATA% --name StockService --paths . --hidden-import win32timezone services\stock_windows_service.py
+%PYI% --noconsole %DATA% --name ApiDueno --paths . --collect-submodules uvicorn --collect-data pdfminer ^
+    --exclude-module pandas --exclude-module scipy --exclude-module matplotlib --exclude-module tkinter ^
+    --exclude-module numpy --exclude-module sqlalchemy --exclude-module pytest services\api_dueno.py
 ```
+
+`python -m PyInstaller` (y no `pyinstaller` suelto) porque la carpeta `Scripts` de Python muchas veces
+no está en el PATH de Windows. El script además chequea que estén Python y PyInstaller, corre siempre
+desde la raíz del repo y al final avisa qué programas no compilaron.
 
 `--onedir` (no `--onefile`): así los USBs quedan con estructura de carpetas navegable y el arranque
 es más rápido (no hay que descomprimir en cada ejecución). `--windowed` = sin consola visible.
