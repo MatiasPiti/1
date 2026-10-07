@@ -28,6 +28,46 @@ from pos_core.db import get_connection, transaction
 # que el día que haya que tocarlo sea un solo lugar.
 IVA_POR_DEFECTO = 21.0
 
+# Los cuatro valores guardados que tiene que haber visto quien guarda desde
+# el celular (ver actualizar_precios(esperado=...)).
+CAMPOS_ESPERADO = ("costo_sin_iva", "precio_compra", "margen_ganancia", "precio_venta")
+
+
+class PrecioCambiadoError(ValueError):
+    """Alguno de los 4 valores guardados no es el que vio quien está guardando.
+
+    Lleva el PRIMER campo que difiere, con lo que vio (antes) y lo que hay
+    (ahora), para poder decir en castellano qué cambió.
+    """
+
+    def __init__(self, campo: str, antes: float, ahora: float):
+        self.campo, self.antes, self.ahora = campo, antes, ahora
+        super().__init__(f"{campo} cambió mientras tanto: era {antes}, ahora es {ahora}")
+
+
+def valores_para_pantalla(producto: dict) -> dict:
+    """Los cuatro números de la cadena, como los muestra la pantalla de
+    precios, a partir de una fila de obtener_para_precios().
+
+    Un 0 guardado es "nunca se cargó" (la misma convención del Panel), así
+    que sale como None. No es cosmético: recalcular() con ceros inventa un
+    costo y un margen de 0 a partir del precio final; con None deja los
+    costos vacíos.
+    """
+    def _o_none(valor):
+        try:
+            numero = float(valor)
+        except (TypeError, ValueError):
+            return None
+        return numero if numero != 0 else None
+
+    return {
+        "costo_sin_iva": _o_none(producto.get("costo_sin_iva")),
+        "precio_costo": _o_none(producto.get("precio_compra")),
+        "margen": _o_none(producto.get("margen_ganancia")),
+        "precio_final": _o_none(producto.get("precio_venta")),
+    }
+
 
 def _num(valor):
     """Convierte a float lo que venga de un campo de texto.
@@ -190,16 +230,29 @@ def obtener_para_precios(codigo: str) -> dict:
 def actualizar_precios(*, codigo: str, nombre: str = None, categoria: str = None,
                         subrubro: str = None, costo_sin_iva=None, precio_costo=None,
                         margen=None, precio_final=None, usuario: str = "dueño",
-                        origen: str = "MAESTRO") -> dict:
+                        origen: str = "MAESTRO", esperado: dict = None) -> dict:
     """Guarda los cambios de UN producto y devuelve cómo quedó.
 
     El precio final es lo único obligatorio: es el número con el que
     cobra la Caja. El resto (costos, margen, rubro, subrubro) se guarda
     si vino, y si no queda como estaba.
+
+    `esperado` (opcional, lo manda la app del celular) son los 4 valores
+    crudos que vio quien guarda (CAMPOS_ESPERADO, tal como los devolvió
+    obtener_para_precios). Si alguno ya no es el guardado, lanza
+    PrecioCambiadoError SIN escribir nada. Se comparan los cuatro y no solo
+    el precio final: una factura aplicada mientras la hoja estaba abierta
+    cambia el costo, y guardar encima dejaba un margen que no era el real.
+    Se compara DENTRO de la transacción, así nadie escribe en el medio. Con
+    None (el Panel y la API remota no lo mandan) no cambia nada.
     """
     codigo = (codigo or "").strip()
     if not codigo:
         raise ValueError("Hace falta el código del producto.")
+    if esperado is not None:
+        faltan = [c for c in CAMPOS_ESPERADO if c not in esperado]
+        if faltan:
+            raise ValueError(f"Falta el valor esperado de: {', '.join(faltan)}")
 
     precio_final = _num(precio_final)
     if precio_final is None:
@@ -212,11 +265,18 @@ def actualizar_precios(*, codigo: str, nombre: str = None, categoria: str = None
 
     with transaction() as conn:
         actual = conn.execute(
-            "SELECT nombre, categoria, subrubro, costo_sin_iva, precio_compra, margen_ganancia "
-            "FROM Productos WHERE codigo = ? AND activo = 1", (codigo,)
+            "SELECT nombre, categoria, subrubro, costo_sin_iva, precio_compra, margen_ganancia, "
+            "precio_venta FROM Productos WHERE codigo = ? AND activo = 1", (codigo,)
         ).fetchone()
         if not actual:
             raise ValueError(f"No existe un producto activo con código '{codigo}'.")
+        if esperado is not None:
+            for campo in CAMPOS_ESPERADO:
+                ahora_ = float(actual[campo] or 0)
+                visto = float(esperado[campo] or 0)
+                if abs(ahora_ - visto) > 0.005:
+                    # La excepción sale de la transacción: ROLLBACK, nada escrito.
+                    raise PrecioCambiadoError(campo, antes=visto, ahora=ahora_)
 
         # Lo que no vino se deja como estaba: esta pantalla nunca tiene
         # que borrar un dato por omisión.

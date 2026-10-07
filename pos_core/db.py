@@ -8,6 +8,7 @@ completo, o no se aplica nada.
 """
 
 import os
+import pathlib
 import re
 import sqlite3
 import threading
@@ -17,6 +18,9 @@ from pos_core.paths import db_path
 
 _SCHEMA_CACHE = None
 _local = threading.local()
+# Ruta absoluta de la base para los procesos que NUNCA la tienen que crear
+# (la API del celular). None = el comportamiento de siempre.
+_SOLO_EXISTENTE = None
 _PALABRAS_RESERVADAS_SQL = {"PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "CONSTRAINT"}
 
 
@@ -55,14 +59,43 @@ def _schema_sql() -> str:
         f"Se buscó en: {candidatos}")
 
 
+def _uri_solo_existente(ruta: str) -> str:
+    # mode=rw: si el archivo no existe SQLite falla en vez de crearlo. La ruta
+    # va como URI (as_uri escapa espacios, '#' y '?', que en una URI cortan).
+    return pathlib.Path(ruta).absolute().as_uri() + "?mode=rw"
+
+
+def usar_solo_base_existente(ruta) -> None:
+    """Para procesos que NUNCA tienen que crear la base (ApiCelular).
+
+    Desde que se llama, get_connection() SIN path usa esta ruta (sin pasar
+    por db_path(), que crea database\\) y la abre con mode=rw: si el archivo
+    no existe, sqlite3.OperationalError ("unable to open database file") en
+    vez de crear una base vacía. Una API instalada en la carpeta equivocada
+    que "anda" contra una base vacía es la misma trampa que la regla 2: sin
+    ningún error, y sin mostrar nunca una venta del negocio.
+
+    Los PRAGMA y el cache por hilo quedan iguales. None la apaga (lo usan
+    las pruebas). Las apps y el StockService no la llaman: para ellos
+    get_connection no cambia en nada.
+    """
+    global _SOLO_EXISTENTE
+    _SOLO_EXISTENTE = os.path.abspath(ruta) if ruta else None
+
+
 def get_connection(path: str = None) -> sqlite3.Connection:
     """Conexión SQLite por hilo (sqlite3 no es thread-safe entre hilos
     compartiendo una misma conexión sin check_same_thread=False + locks).
     El servicio oculto de stock corre en su propio hilo/proceso, así que
     cada hilo obtiene su propia conexión."""
-    path = path or db_path()
+    solo_existente = _SOLO_EXISTENTE if path is None else None
+    path = path or solo_existente or db_path()
     if not hasattr(_local, "conn") or getattr(_local, "conn_path", None) != path:
-        conn = sqlite3.connect(path, timeout=30, isolation_level=None)
+        if solo_existente:
+            conn = sqlite3.connect(_uri_solo_existente(path), uri=True, timeout=30,
+                                   isolation_level=None)
+        else:
+            conn = sqlite3.connect(path, timeout=30, isolation_level=None)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
@@ -178,6 +211,31 @@ def _columnas_por_tabla_en_schema() -> dict:
             columnas[primer_token] = parte
         tablas[tabla] = columnas
     return tablas
+
+
+def columnas_faltantes(path: str) -> list:
+    """Lo que le falta a una base ya instalada para estar al día con
+    sql/schema.sql: ['Tabla'] si falta la tabla entera, ['Tabla.columna']
+    si falta una columna. Vacía = al día.
+
+    SOLO LEE, y nunca crea nada: si el archivo no está lanza
+    FileNotFoundError ANTES de conectar (sqlite3.connect lo crearía). Abre
+    su propia conexión (no la del hilo) con mode=rw y la cierra al terminar.
+    """
+    if not os.path.isfile(path):
+        raise FileNotFoundError(path)
+    conn = sqlite3.connect(_uri_solo_existente(path), uri=True, timeout=5)
+    try:
+        faltan = []
+        for tabla, columnas in _columnas_por_tabla_en_schema().items():
+            existentes = {row[1] for row in conn.execute(f"PRAGMA table_info({tabla})")}
+            if not existentes:
+                faltan.append(tabla)
+                continue
+            faltan.extend(f"{tabla}.{col}" for col in columnas if col not in existentes)
+        return faltan
+    finally:
+        conn.close()
 
 
 def _quitar_clausula_default(definicion: str) -> str:

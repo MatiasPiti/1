@@ -1,0 +1,1211 @@
+{
+ "contrato": 2,
+ "firma": "otter-api-celular",
+ "ejemplos": {
+  "salud": {
+   "metodo": "GET",
+   "ruta": "/api/salud",
+   "status": 200,
+   "respuestas": [
+    {
+     "ok": true,
+     "servicio": "otter-api-celular",
+     "contrato": 2,
+     "version_api": "2.0.0",
+     "compilado": "4c01dfc",
+     "nombre_local": "El Galpón Del Nono",
+     "hora_servidor": "2026-10-06T21:40:00",
+     "estado_al": "2026-10-06T21:39:51",
+     "pin_configurado": true,
+     "login_disponible": true,
+     "motivo": null,
+     "base": {
+      "ok": true,
+      "detalle": "ok"
+     }
+    },
+    {
+     "ok": true,
+     "servicio": "otter-api-celular",
+     "contrato": 2,
+     "version_api": "2.0.0",
+     "compilado": "desconocido",
+     "nombre_local": "El Galpón Del Nono",
+     "hora_servidor": "2026-10-06T21:40:00",
+     "estado_al": "2026-10-06T21:39:51",
+     "pin_configurado": true,
+     "login_disponible": false,
+     "motivo": "base_desactualizada",
+     "base": {
+      "ok": false,
+      "detalle": "faltan columnas: Productos.subrubro; abrí la Caja una vez o corré el Actualizador"
+     }
+    },
+    {
+     "ok": true,
+     "servicio": "otter-api-celular",
+     "contrato": 2,
+     "version_api": "2.0.0",
+     "compilado": "desarrollo",
+     "nombre_local": "",
+     "hora_servidor": "2026-10-06T21:40:00",
+     "estado_al": "2026-10-06T21:39:51",
+     "pin_configurado": false,
+     "login_disponible": false,
+     "motivo": "pin_no_definido",
+     "base": {
+      "ok": true,
+      "detalle": "ok"
+     }
+    }
+   ]
+  },
+  "login": {
+   "metodo": "POST",
+   "ruta": "/api/auth/login",
+   "pedido": {
+    "pin": "482915"
+   },
+   "status": 200,
+   "respuestas": [
+    {
+     "token": "v2.eyJ2IjoyfQ.ZmlybWEtZGUtZWplbXBsbw",
+     "usuario": "dueño",
+     "expira": 1762464000
+    }
+   ]
+  },
+  "yo": {
+   "metodo": "GET",
+   "ruta": "/api/auth/yo",
+   "status": 200,
+   "respuestas": [
+    {
+     "usuario": "dueño"
+    }
+   ]
+  },
+  "dashboard": {
+   "metodo": "GET",
+   "ruta": "/api/dashboard?periodo_top=historico",
+   "status": 200,
+   "respuestas": [
+    {
+     "hoy": {
+      "total": 152300.0,
+      "tickets": 41,
+      "ticket_promedio": 3714.63,
+      "por_metodo": [
+       {
+        "metodo_pago": "EFECTIVO",
+        "tickets": 30,
+        "total": 100000.0
+       },
+       {
+        "metodo_pago": "TRANSFERENCIA",
+        "tickets": 11,
+        "total": 52300.0
+       }
+      ]
+     },
+     "ultimos_7_dias": [
+      {
+       "dia": "2026-09-30",
+       "total": 0,
+       "tickets": 0
+      },
+      {
+       "dia": "2026-10-01",
+       "total": 98000.0,
+       "tickets": 30
+      },
+      {
+       "dia": "2026-10-02",
+       "total": 120500.5,
+       "tickets": 35
+      },
+      {
+       "dia": "2026-10-03",
+       "total": 0,
+       "tickets": 0
+      },
+      {
+       "dia": "2026-10-04",
+       "total": 87000.0,
+       "tickets": 22
+      },
+      {
+       "dia": "2026-10-05",
+       "total": 143250.0,
+       "tickets": 39
+      },
+      {
+       "dia": "2026-10-06",
+       "total": 152300.0,
+       "tickets": 41
+      }
+     ],
+     "top_productos": [
+      {
+       "codigo": "7790001",
+       "nombre": "Yerba Mate 1kg",
+       "cantidad": 18,
+       "importe": 45000.0
+      },
+      {
+       "codigo": "7790002",
+       "nombre": "Café Molido 500g",
+       "cantidad": 9,
+       "importe": 34830.0
+      }
+     ],
+     "periodo_top": "historico",
+     "alertas_activas": 25,
+     "telegram_habilitado": true
+    }
+   ]
+  },
+  "productos": {
+   "metodo": "GET",
+   "ruta": "/api/productos?q=&limite=200",
+   "status": 200,
+   "respuestas": [
+    [
+     {
+      "codigo": "7790002",
+      "nombre": "Café Molido 500g",
+      "marca": "Colombia",
+      "proveedor": null,
+      "categoria": "ALMACEN",
+      "subrubro": null,
+      "stock": 3,
+      "stock_minimo": 5,
+      "stock_maximo": 0,
+      "umbral_propio": false,
+      "precio_venta": 4300.0,
+      "precio_efectivo": 3870.0,
+      "oferta": {
+       "id": 4,
+       "tipo_descuento": "PORCENTAJE",
+       "valor": 10.0,
+       "descripcion": "Semana del café",
+       "fecha_fin": "2026-10-09"
+      },
+      "precio_compra": 3000.0,
+      "costo_sin_iva": 2479.34,
+      "margen_ganancia": 43.33,
+      "actualizado_en": "2026-10-06T10:00:00.000"
+     },
+     {
+      "codigo": "7790001",
+      "nombre": "Yerba Mate 1kg",
+      "marca": null,
+      "proveedor": "Distribuidora Sur",
+      "categoria": null,
+      "subrubro": "INFUSIONES",
+      "stock": 20,
+      "stock_minimo": 20,
+      "stock_maximo": 20,
+      "umbral_propio": true,
+      "precio_venta": 3500.0,
+      "precio_efectivo": 3500.0,
+      "oferta": null,
+      "precio_compra": 2420.0,
+      "costo_sin_iva": 2000.0,
+      "margen_ganancia": 44.63,
+      "actualizado_en": "2026-10-06T01:04:51.533"
+     },
+     {
+      "codigo": "7790003",
+      "nombre": "Coca Cola 2,25 L",
+      "marca": "Coca-Cola",
+      "proveedor": null,
+      "categoria": "BEBIDAS",
+      "subrubro": "GASEOSAS",
+      "stock": 0,
+      "stock_minimo": 20,
+      "stock_maximo": 20,
+      "umbral_propio": false,
+      "precio_venta": 2500.0,
+      "precio_efectivo": 2000.0,
+      "oferta": {
+       "id": 5,
+       "tipo_descuento": "PRECIO_FIJO",
+       "valor": 2000.0,
+       "descripcion": "",
+       "fecha_fin": "2026-10-12"
+      },
+      "precio_compra": 0.0,
+      "costo_sin_iva": 0.0,
+      "margen_ganancia": 0.0,
+      "actualizado_en": "2026-10-05T18:22:10.004"
+     }
+    ]
+   ]
+  },
+  "producto": {
+   "metodo": "GET",
+   "ruta": "/api/productos/7790002",
+   "status": 200,
+   "respuestas": [
+    {
+     "codigo": "7790002",
+     "nombre": "Café Molido 500g",
+     "marca": "Colombia",
+     "proveedor": null,
+     "categoria": "ALMACEN",
+     "subrubro": null,
+     "stock": 3,
+     "stock_minimo": 5,
+     "stock_maximo": 0,
+     "umbral_propio": false,
+     "precio_venta": 4300.0,
+     "precio_efectivo": 3870.0,
+     "oferta": {
+      "id": 4,
+      "tipo_descuento": "PORCENTAJE",
+      "valor": 10.0,
+      "descripcion": "Semana del café",
+      "fecha_fin": "2026-10-09"
+     },
+     "precio_compra": 3000.0,
+     "costo_sin_iva": 2479.34,
+     "margen_ganancia": 43.33,
+     "actualizado_en": "2026-10-06T10:00:00.000",
+     "movimientos": [
+      {
+       "fecha_hora": "2026-10-06T11:02:03.456",
+       "codigo": "7790002",
+       "nombre": "Café Molido 500g",
+       "tipo": "ENTRADA_MANUAL",
+       "cantidad": 12,
+       "stock_resultante": 15,
+       "motivo": "Reposición",
+       "usuario": "dueño (celular)"
+      },
+      {
+       "fecha_hora": "2026-10-06T10:41:00.120",
+       "codigo": "7790002",
+       "nombre": "Café Molido 500g",
+       "tipo": "SALIDA_VENTA",
+       "cantidad": 2,
+       "stock_resultante": 3,
+       "motivo": "Venta ticket 1b7e2c1e-9a55-4f0e-8d0e-3c2f5a6b7c8d",
+       "usuario": "El Galpón Del Nono"
+      }
+     ]
+    },
+    {
+     "codigo": "7790001",
+     "nombre": "Yerba Mate 1kg",
+     "marca": null,
+     "proveedor": "Distribuidora Sur",
+     "categoria": null,
+     "subrubro": "INFUSIONES",
+     "stock": 20,
+     "stock_minimo": 20,
+     "stock_maximo": 20,
+     "umbral_propio": true,
+     "precio_venta": 3500.0,
+     "precio_efectivo": 3500.0,
+     "oferta": null,
+     "precio_compra": 2420.0,
+     "costo_sin_iva": 2000.0,
+     "margen_ganancia": 44.63,
+     "actualizado_en": "2026-10-06T01:04:51.533",
+     "movimientos": [
+      {
+       "fecha_hora": "2026-10-05T09:15:44.002",
+       "codigo": "7790001",
+       "nombre": null,
+       "tipo": "SALIDA_MANUAL",
+       "cantidad": 1,
+       "stock_resultante": 0,
+       "motivo": null,
+       "usuario": "dueño"
+      }
+     ]
+    }
+   ]
+  },
+  "movimientos": {
+   "metodo": "GET",
+   "ruta": "/api/movimientos?limite=30",
+   "status": 200,
+   "respuestas": [
+    [
+     {
+      "fecha_hora": "2026-10-06T11:02:03.456",
+      "codigo": "7790002",
+      "nombre": "Café Molido 500g",
+      "tipo": "ENTRADA_MANUAL",
+      "cantidad": 12,
+      "stock_resultante": 15,
+      "motivo": "Reposición",
+      "usuario": "dueño (celular)"
+     },
+     {
+      "fecha_hora": "2026-10-06T10:41:00.120",
+      "codigo": "7790002",
+      "nombre": "Café Molido 500g",
+      "tipo": "SALIDA_VENTA",
+      "cantidad": 2,
+      "stock_resultante": 3,
+      "motivo": "Venta ticket 1b7e2c1e-9a55-4f0e-8d0e-3c2f5a6b7c8d",
+      "usuario": "El Galpón Del Nono"
+     },
+     {
+      "fecha_hora": "2026-10-05T09:15:44.002",
+      "codigo": "7790999",
+      "nombre": null,
+      "tipo": "SALIDA_MANUAL",
+      "cantidad": 1,
+      "stock_resultante": 0,
+      "motivo": null,
+      "usuario": "dueño"
+     }
+    ]
+   ]
+  },
+  "stock_movimiento": {
+   "metodo": "POST",
+   "ruta": "/api/stock/movimiento",
+   "pedido": {
+    "codigo": "7790002",
+    "cantidad": 12,
+    "operacion": "sumar",
+    "motivo": "Reposición"
+   },
+   "status": 200,
+   "respuestas": [
+    {
+     "codigo": "7790002",
+     "nombre": "Café Molido 500g",
+     "stock_nuevo": 15,
+     "stock_minimo": 5,
+     "stock_maximo": 0,
+     "ventas_pendientes": {
+      "lineas": 0,
+      "unidades": 0
+     }
+    },
+    {
+     "codigo": "7790003",
+     "nombre": "Coca Cola 2,25 L",
+     "stock_nuevo": 12,
+     "stock_minimo": 20,
+     "stock_maximo": 20,
+     "ventas_pendientes": {
+      "lineas": 3,
+      "unidades": 6
+     }
+    }
+   ]
+  },
+  "stock_lector": {
+   "metodo": "POST",
+   "ruta": "/api/stock/lector",
+   "pedido": {
+    "codigo": "7790002",
+    "operacion": "restar"
+   },
+   "status": 200,
+   "respuestas": [
+    {
+     "codigo": "7790002",
+     "nombre": "Café Molido 500g",
+     "stock_nuevo": 2,
+     "stock_minimo": 5,
+     "stock_maximo": 0,
+     "ventas_pendientes": {
+      "lineas": 0,
+      "unidades": 0
+     }
+    }
+   ]
+  },
+  "precios_ver": {
+   "metodo": "GET",
+   "ruta": "/api/precios/7790001",
+   "status": 200,
+   "respuestas": [
+    {
+     "codigo": "7790001",
+     "nombre": "Yerba Mate 1kg",
+     "categoria": "ALMACEN",
+     "subrubro": "INFUSIONES",
+     "stock": 20,
+     "costo_sin_iva": 2000.0,
+     "precio_costo": 2420.0,
+     "margen": 44.63,
+     "precio_final": 3500.0,
+     "precio_venta": 3500.0,
+     "crudos": {
+      "costo_sin_iva": 2000.0,
+      "precio_compra": 2420.0,
+      "margen_ganancia": 44.63,
+      "precio_venta": 3500.0
+     },
+     "precio_efectivo": 3500.0,
+     "oferta": null,
+     "actualizado_en": "2026-10-06T01:04:51.533"
+    },
+    {
+     "codigo": "7790004",
+     "nombre": "Alfajor Triple",
+     "categoria": null,
+     "subrubro": null,
+     "stock": 12,
+     "costo_sin_iva": null,
+     "precio_costo": null,
+     "margen": null,
+     "precio_final": null,
+     "precio_venta": 0.0,
+     "crudos": {
+      "costo_sin_iva": 0.0,
+      "precio_compra": 0.0,
+      "margen_ganancia": 0.0,
+      "precio_venta": 0.0
+     },
+     "precio_efectivo": 0.0,
+     "oferta": {
+      "id": 5,
+      "tipo_descuento": "PRECIO_FIJO",
+      "valor": 2000.0,
+      "descripcion": "",
+      "fecha_fin": "2026-10-12"
+     },
+     "actualizado_en": "2026-10-04T08:00:00.000"
+    }
+   ]
+  },
+  "precios_recalcular": {
+   "metodo": "POST",
+   "ruta": "/api/precios/recalcular",
+   "pedido": {
+    "cambio": "precio_final",
+    "costo_sin_iva": 2000.0,
+    "precio_costo": 2420.0,
+    "margen": 44.63,
+    "precio_final": "3.800"
+   },
+   "status": 200,
+   "respuestas": [
+    {
+     "costo_sin_iva": 2000.0,
+     "precio_costo": 2420.0,
+     "margen": 57.02,
+     "precio_final": 3800.0
+    },
+    {
+     "costo_sin_iva": null,
+     "precio_costo": null,
+     "margen": null,
+     "precio_final": 1500.0
+    },
+    {
+     "costo_sin_iva": null,
+     "precio_costo": null,
+     "margen": null,
+     "precio_final": null
+    }
+   ]
+  },
+  "precios_guardar": {
+   "metodo": "PUT",
+   "ruta": "/api/precios/7790001",
+   "pedido": {
+    "costo_sin_iva": 2000.0,
+    "precio_costo": 2420.0,
+    "margen": 57.02,
+    "precio_final": 3800.0,
+    "esperado": {
+     "costo_sin_iva": 2000.0,
+     "precio_compra": 2420.0,
+     "margen_ganancia": 44.63,
+     "precio_venta": 3500.0
+    }
+   },
+   "status": 200,
+   "respuestas": [
+    {
+     "antes": {
+      "codigo": "7790001",
+      "nombre": "Yerba Mate 1kg",
+      "categoria": "ALMACEN",
+      "subrubro": "INFUSIONES",
+      "stock": 20,
+      "costo_sin_iva": 2000.0,
+      "precio_costo": 2420.0,
+      "margen": 44.63,
+      "precio_final": 3500.0,
+      "precio_venta": 3500.0,
+      "crudos": {
+       "costo_sin_iva": 2000.0,
+       "precio_compra": 2420.0,
+       "margen_ganancia": 44.63,
+       "precio_venta": 3500.0
+      },
+      "precio_efectivo": 3500.0,
+      "oferta": null,
+      "actualizado_en": "2026-10-06T01:04:51.533"
+     },
+     "despues": {
+      "codigo": "7790001",
+      "nombre": "Yerba Mate 1kg",
+      "categoria": "ALMACEN",
+      "subrubro": "INFUSIONES",
+      "stock": 20,
+      "costo_sin_iva": 2000.0,
+      "precio_costo": 2420.0,
+      "margen": 57.02,
+      "precio_final": 3800.0,
+      "precio_venta": 3800.0,
+      "crudos": {
+       "costo_sin_iva": 2000.0,
+       "precio_compra": 2420.0,
+       "margen_ganancia": 57.02,
+       "precio_venta": 3800.0
+      },
+      "precio_efectivo": 3800.0,
+      "oferta": null,
+      "actualizado_en": "2026-10-06T12:30:00.010"
+     }
+    },
+    {
+     "antes": {
+      "codigo": "7790004",
+      "nombre": "Alfajor Triple",
+      "categoria": null,
+      "subrubro": null,
+      "stock": 12,
+      "costo_sin_iva": null,
+      "precio_costo": null,
+      "margen": null,
+      "precio_final": null,
+      "precio_venta": 0.0,
+      "crudos": {
+       "costo_sin_iva": 0.0,
+       "precio_compra": 0.0,
+       "margen_ganancia": 0.0,
+       "precio_venta": 0.0
+      },
+      "precio_efectivo": 0.0,
+      "oferta": {
+       "id": 5,
+       "tipo_descuento": "PRECIO_FIJO",
+       "valor": 2000.0,
+       "descripcion": "",
+       "fecha_fin": "2026-10-12"
+      },
+      "actualizado_en": "2026-10-04T08:00:00.000"
+     },
+     "despues": {
+      "codigo": "7790004",
+      "nombre": "Alfajor Triple",
+      "categoria": null,
+      "subrubro": null,
+      "stock": 12,
+      "costo_sin_iva": null,
+      "precio_costo": null,
+      "margen": null,
+      "precio_final": 1200.0,
+      "precio_venta": 1200.0,
+      "crudos": {
+       "costo_sin_iva": 0.0,
+       "precio_compra": 0.0,
+       "margen_ganancia": 0.0,
+       "precio_venta": 1200.0
+      },
+      "precio_efectivo": 1200.0,
+      "oferta": {
+       "id": 5,
+       "tipo_descuento": "PRECIO_FIJO",
+       "valor": 2000.0,
+       "descripcion": "",
+       "fecha_fin": "2026-10-12"
+      },
+      "actualizado_en": "2026-10-06T12:31:00.000"
+     }
+    }
+   ]
+  },
+  "precios_previsualizar": {
+   "metodo": "POST",
+   "ruta": "/api/precios/previsualizar",
+   "pedido": {
+    "codigos": [
+     "7790001",
+     "7790002",
+     "7790004",
+     "0000000"
+    ],
+    "porcentaje": 10,
+    "monto_fijo": null,
+    "redondear": true
+   },
+   "status": 200,
+   "respuestas": [
+    [
+     {
+      "codigo": "7790001",
+      "nombre": "Yerba Mate 1kg",
+      "ok": true,
+      "precio_anterior": 3500.0,
+      "precio_nuevo": 3900,
+      "queda_en_cero": false,
+      "en_oferta": false
+     },
+     {
+      "codigo": "7790002",
+      "nombre": "Café Molido 500g",
+      "ok": true,
+      "precio_anterior": 4300.0,
+      "precio_nuevo": 4800,
+      "queda_en_cero": false,
+      "en_oferta": true
+     },
+     {
+      "codigo": "7790004",
+      "nombre": "Alfajor Triple",
+      "ok": true,
+      "precio_anterior": 0.0,
+      "precio_nuevo": 0,
+      "queda_en_cero": false,
+      "en_oferta": false
+     },
+     {
+      "codigo": "0000000",
+      "ok": false,
+      "error": "no encontrado"
+     }
+    ]
+   ]
+  },
+  "precios_aplicar": {
+   "metodo": "POST",
+   "ruta": "/api/precios/aplicar",
+   "pedido": {
+    "codigos": [
+     "7790001",
+     "7790002"
+    ],
+    "porcentaje": 10,
+    "monto_fijo": null,
+    "redondear": true,
+    "esperados": {
+     "7790001": 3500.0,
+     "7790002": 4300.0
+    }
+   },
+   "status": 200,
+   "respuestas": [
+    [
+     {
+      "codigo": "7790001",
+      "ok": true,
+      "precio_anterior": 3500.0,
+      "precio_nuevo": 3900
+     },
+     {
+      "codigo": "7790002",
+      "ok": false,
+      "error": "el precio cambió mientras tanto (era 4300.0, ahora es 4500.0): no se tocó"
+     }
+    ]
+   ]
+  },
+  "alertas": {
+   "metodo": "GET",
+   "ruta": "/api/alertas?limite=1000",
+   "status": 200,
+   "respuestas": [
+    [
+     {
+      "codigo": "7790003",
+      "nombre": "Coca Cola 2,25 L",
+      "stock": 0,
+      "stock_minimo": 20,
+      "stock_maximo": 20,
+      "tipo": "BAJO",
+      "umbral_propio": false,
+      "ultima_alerta_enviada": "2026-10-06T19:00:00.000",
+      "proximo_aviso_desde": "2026-10-06T23:00:00.000"
+     },
+     {
+      "codigo": "7790002",
+      "nombre": "Café Molido 500g",
+      "stock": 3,
+      "stock_minimo": 5,
+      "stock_maximo": 0,
+      "tipo": "BAJO",
+      "umbral_propio": true,
+      "ultima_alerta_enviada": "2026-10-05T08:00:00.000",
+      "proximo_aviso_desde": null
+     },
+     {
+      "codigo": "7790001",
+      "nombre": "Yerba Mate 1kg",
+      "stock": 20,
+      "stock_minimo": 0,
+      "stock_maximo": 20,
+      "tipo": "SOBRE",
+      "umbral_propio": true,
+      "ultima_alerta_enviada": null,
+      "proximo_aviso_desde": null
+     }
+    ]
+   ]
+  },
+  "config_alertas": {
+   "metodo": "GET",
+   "ruta": "/api/config/alertas",
+   "status": 200,
+   "respuestas": [
+    {
+     "telegram": {
+      "habilitado": true,
+      "chat_id_default": "-1001234567890",
+      "token_configurado": true,
+      "token_mascara": "••••••••"
+     },
+     "umbral_global": {
+      "stock_minimo": 20,
+      "stock_maximo": 20,
+      "existe": true
+     },
+     "umbrales_propios": {
+      "total": 3,
+      "inactivos": 1
+     }
+    },
+    {
+     "telegram": {
+      "habilitado": false,
+      "chat_id_default": "",
+      "token_configurado": false,
+      "token_mascara": ""
+     },
+     "umbral_global": {
+      "stock_minimo": 0,
+      "stock_maximo": 0,
+      "existe": false
+     },
+     "umbrales_propios": {
+      "total": 3,
+      "inactivos": 1
+     }
+    }
+   ]
+  },
+  "config_telegram": {
+   "metodo": "PUT",
+   "ruta": "/api/config/telegram",
+   "pedido": {
+    "habilitado": false
+   },
+   "status": 200,
+   "respuestas": [
+    {
+     "telegram": {
+      "habilitado": false,
+      "chat_id_default": "-1001234567890",
+      "token_configurado": true,
+      "token_mascara": "••••••••"
+     },
+     "umbral_global": {
+      "stock_minimo": 20,
+      "stock_maximo": 20,
+      "existe": true
+     },
+     "umbrales_propios": {
+      "total": 3,
+      "inactivos": 1
+     }
+    }
+   ]
+  },
+  "telegram_probar": {
+   "metodo": "POST",
+   "ruta": "/api/config/telegram/probar",
+   "pedido": {},
+   "status": 200,
+   "respuestas": [
+    {
+     "ok": true,
+     "enviado": true,
+     "detalle": "Mensaje enviado. Fijate en el Telegram del chat configurado: si llegó, las alertas van a llegar igual."
+    },
+    {
+     "ok": false,
+     "enviado": false,
+     "detalle": "El bot está DESTILDADO: con 'Habilitado' sin tildar no se manda ninguna alerta. Tildalo y guardá."
+    }
+   ]
+  },
+  "umbrales_guardar": {
+   "metodo": "PUT",
+   "ruta": "/api/config/umbrales",
+   "pedido": {
+    "stock_minimo": 0,
+    "stock_maximo": 0
+   },
+   "status": 200,
+   "respuestas": [
+    {
+     "umbral_global": {
+      "stock_minimo": 0,
+      "stock_maximo": 0,
+      "existe": true
+     },
+     "umbrales_propios": {
+      "total": 3,
+      "inactivos": 1
+     }
+    }
+   ]
+  },
+  "umbral_global_quitar": {
+   "metodo": "DELETE",
+   "ruta": "/api/config/umbral-global",
+   "status": 200,
+   "respuestas": [
+    {
+     "borradas": 1,
+     "umbral_global": {
+      "stock_minimo": 0,
+      "stock_maximo": 0,
+      "existe": false
+     },
+     "umbrales_propios": {
+      "total": 3,
+      "inactivos": 1
+     }
+    }
+   ]
+  },
+  "factura_analizar": {
+   "metodo": "POST",
+   "ruta": "/api/facturas/analizar",
+   "status": 200,
+   "respuestas": [
+    {
+     "factura_nombre": "remito.pdf",
+     "es_pdf_escaneado": false,
+     "lineas_no_reconocidas": [
+      "Subtotal 12.000"
+     ],
+     "items": [
+      {
+       "indice": 0,
+       "codigo": "7790002",
+       "nombre": "CAFE MOLIDO X 500",
+       "cantidad": 12,
+       "precio_compra": 3000.0,
+       "existe": true,
+       "nombre_sistema": "Café Molido 500g",
+       "stock_actual": 3,
+       "precio_compra_actual": 2900.0,
+       "posible_duplicado": false,
+       "precio_sospechoso": false,
+       "emparejamiento": null
+      },
+      {
+       "indice": 1,
+       "codigo": "",
+       "nombre": "COCA COLA 2.25 LTS",
+       "cantidad": 6,
+       "precio_compra": 1250.0,
+       "existe": false,
+       "nombre_sistema": null,
+       "stock_actual": null,
+       "precio_compra_actual": null,
+       "posible_duplicado": false,
+       "precio_sospechoso": false,
+       "emparejamiento": {
+        "motivo": "sin_codigo",
+        "confianza": "SEGURA",
+        "candidatos": [
+         {
+          "codigo": "7790003",
+          "nombre": "Coca Cola 2,25 L",
+          "score": 1.0
+         }
+        ],
+        "sugerido": {
+         "codigo": "7790003",
+         "nombre": "Coca Cola 2,25 L",
+         "score": 1.0
+        }
+       }
+      },
+      {
+       "indice": 2,
+       "codigo": "7799999",
+       "nombre": "YERBA SUELTA",
+       "cantidad": 4,
+       "precio_compra": 3.5,
+       "existe": false,
+       "nombre_sistema": null,
+       "stock_actual": null,
+       "precio_compra_actual": null,
+       "posible_duplicado": false,
+       "precio_sospechoso": true,
+       "emparejamiento": {
+        "motivo": "codigo_desconocido",
+        "confianza": "POSIBLE",
+        "candidatos": [
+         {
+          "codigo": "7790001",
+          "nombre": "Yerba Mate 1kg",
+          "score": 0.7
+         },
+         {
+          "codigo": "7790005",
+          "nombre": "Yerba Mate 500g",
+          "score": 0.66
+         }
+        ],
+        "sugerido": null
+       }
+      },
+      {
+       "indice": 3,
+       "codigo": "",
+       "nombre": "ALFAJOR X 12",
+       "cantidad": 2,
+       "precio_compra": 9000.0,
+       "existe": false,
+       "nombre_sistema": null,
+       "stock_actual": null,
+       "precio_compra_actual": null,
+       "posible_duplicado": false,
+       "precio_sospechoso": false,
+       "emparejamiento": {
+        "motivo": "demasiados",
+        "confianza": "NINGUNA",
+        "candidatos": [],
+        "sugerido": null
+       }
+      },
+      {
+       "indice": 4,
+       "codigo": "7790002",
+       "nombre": "CAFE MOLIDO X 500",
+       "cantidad": 12,
+       "precio_compra": 3000.0,
+       "existe": true,
+       "nombre_sistema": "Café Molido 500g",
+       "stock_actual": 3,
+       "precio_compra_actual": 2900.0,
+       "posible_duplicado": true,
+       "precio_sospechoso": false,
+       "emparejamiento": null
+      }
+     ]
+    },
+    {
+     "factura_nombre": "escaneado.pdf",
+     "es_pdf_escaneado": true,
+     "lineas_no_reconocidas": [],
+     "items": []
+    }
+   ]
+  },
+  "factura_aplicar": {
+   "metodo": "POST",
+   "ruta": "/api/facturas/aplicar",
+   "pedido": {
+    "factura_nombre": "remito.pdf",
+    "items": [
+     {
+      "codigo": "7790002",
+      "cantidad": 12,
+      "precio_compra": 3000.0
+     },
+     {
+      "codigo": "7790999",
+      "cantidad": 1,
+      "precio_compra": null
+     }
+    ],
+    "forzar": false
+   },
+   "status": 200,
+   "respuestas": [
+    [
+     {
+      "codigo": "7790002",
+      "ok": true,
+      "stock_nuevo": 15
+     },
+     {
+      "codigo": "7790999",
+      "ok": false,
+      "error": "Producto con código '7790999' no existe o está inactivo"
+     }
+    ]
+   ]
+  },
+  "error_404_no_existe": {
+   "metodo": "GET",
+   "ruta": "/api/productos/0000000",
+   "status": 404,
+   "respuestas": [
+    {
+     "detail": "Producto con código '0000000' no existe o está inactivo",
+     "codigo": "no_existe"
+    }
+   ]
+  },
+  "error_409_stock": {
+   "metodo": "POST",
+   "ruta": "/api/stock/movimiento",
+   "pedido": {
+    "codigo": "7790003",
+    "cantidad": 1,
+    "operacion": "restar",
+    "motivo": null
+   },
+   "status": 409,
+   "respuestas": [
+    {
+     "detail": "Stock insuficiente para '7790003': disponible 0, se pidió descontar 1",
+     "codigo": "stock_insuficiente"
+    }
+   ]
+  },
+  "error_409_precio": {
+   "metodo": "PUT",
+   "ruta": "/api/precios/7790001",
+   "pedido": {
+    "costo_sin_iva": null,
+    "precio_costo": null,
+    "margen": null,
+    "precio_final": 3800.0,
+    "esperado": {
+     "costo_sin_iva": 2000.0,
+     "precio_compra": 2420.0,
+     "margen_ganancia": 44.63,
+     "precio_venta": 3500.0
+    }
+   },
+   "status": 409,
+   "respuestas": [
+    {
+     "detail": "El precio de costo cambió mientras tanto: era $ 2.420, ahora es $ 3.000. Revisalo de nuevo.",
+     "codigo": "precio_cambio",
+     "campo": "precio_compra"
+    }
+   ]
+  },
+  "error_409_factura": {
+   "metodo": "POST",
+   "ruta": "/api/facturas/aplicar",
+   "pedido": {
+    "factura_nombre": "remito.pdf",
+    "items": [
+     {
+      "codigo": "7790002",
+      "cantidad": 12,
+      "precio_compra": null
+     }
+    ],
+    "forzar": false
+   },
+   "status": 409,
+   "respuestas": [
+    {
+     "detail": "Esta factura ya se cargó hace 3 min (1 renglones iguales). Si es otra factura con el mismo nombre, tocá «Cargar igual».",
+     "codigo": "factura_ya_aplicada",
+     "hace_min": 3,
+     "renglones_iguales": 1
+    }
+   ]
+  },
+  "error_503_pin": {
+   "metodo": "POST",
+   "ruta": "/api/auth/login",
+   "pedido": {
+    "pin": "1234"
+   },
+   "status": 503,
+   "respuestas": [
+    {
+     "detail": "El PIN viejo quedó anulado: hay que definir uno nuevo en la PC del local.",
+     "codigo": "pin_no_definido"
+    }
+   ]
+  },
+  "error_503_base_desactualizada": {
+   "metodo": "GET",
+   "ruta": "/api/productos",
+   "status": 503,
+   "respuestas": [
+    {
+     "detail": "La base del negocio tiene una versión vieja: abrí la Caja una vez o corré el Actualizador. No se tocó nada.",
+     "codigo": "base_desactualizada"
+    }
+   ]
+  },
+  "error_403_red": {
+   "metodo": "GET",
+   "ruta": "/api/productos",
+   "status": 403,
+   "respuestas": [
+    {
+     "detail": "Solo se aceptan conexiones por Tailscale.",
+     "codigo": "red_no_permitida"
+    }
+   ]
+  }
+ },
+ "tipos_anulables": {
+  "salud.motivo": "string|null",
+  "productos[].marca": "string|null",
+  "producto.marca": "string|null",
+  "productos[].proveedor": "string|null",
+  "producto.proveedor": "string|null",
+  "productos[].categoria": "string|null",
+  "producto.categoria": "string|null",
+  "productos[].subrubro": "string|null",
+  "producto.subrubro": "string|null",
+  "productos[].oferta": "object|null",
+  "producto.oferta": "object|null",
+  "producto.movimientos[].nombre": "string|null",
+  "producto.movimientos[].motivo": "string|null",
+  "movimientos[].nombre": "string|null",
+  "movimientos[].motivo": "string|null",
+  "precios_ver.categoria": "string|null",
+  "precios_ver.subrubro": "string|null",
+  "precios_ver.costo_sin_iva": "number|null",
+  "precios_ver.precio_costo": "number|null",
+  "precios_ver.margen": "number|null",
+  "precios_ver.precio_final": "number|null",
+  "precios_ver.oferta": "object|null",
+  "precios_guardar.antes.categoria": "string|null",
+  "precios_guardar.antes.subrubro": "string|null",
+  "precios_guardar.antes.costo_sin_iva": "number|null",
+  "precios_guardar.antes.precio_costo": "number|null",
+  "precios_guardar.antes.margen": "number|null",
+  "precios_guardar.antes.precio_final": "number|null",
+  "precios_guardar.antes.oferta": "object|null",
+  "precios_guardar.despues.categoria": "string|null",
+  "precios_guardar.despues.subrubro": "string|null",
+  "precios_guardar.despues.costo_sin_iva": "number|null",
+  "precios_guardar.despues.precio_costo": "number|null",
+  "precios_guardar.despues.margen": "number|null",
+  "precios_guardar.despues.oferta": "object|null",
+  "precios_recalcular.costo_sin_iva": "number|null",
+  "precios_recalcular.precio_costo": "number|null",
+  "precios_recalcular.margen": "number|null",
+  "precios_recalcular.precio_final": "number|null",
+  "alertas[].ultima_alerta_enviada": "string|null",
+  "alertas[].proximo_aviso_desde": "string|null",
+  "factura_analizar.items[].nombre_sistema": "string|null",
+  "factura_analizar.items[].stock_actual": "number|null",
+  "factura_analizar.items[].precio_compra_actual": "number|null",
+  "factura_analizar.items[].emparejamiento": "object|null",
+  "factura_analizar.items[].emparejamiento.sugerido": "object|null"
+ }
+}
