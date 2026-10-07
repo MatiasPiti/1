@@ -117,7 +117,8 @@ nuevo — documentados para no perder tiempo re-descubriéndolos:
   miles de archivos chicos (10 apps en `--onedir`) y `Copy-Item` los manda de a uno, sin mostrar
   progreso: en el local se perdió una hora mirando una consola quieta. Dos cosas: **el Actualizador
   solo mira 5 de las 10 carpetas** (`OtterActualizador`, `MaestroCaja`, `MaestroDueno`,
-  `StockService`, `DuenoRemoto` — ver `buscar_origen` y `APPS_LOCAL`/`APPS_REMOTO`), así que la
+  `StockService`, `DuenoRemoto` — ver `buscar_origen` y `APPS_LOCAL`/`APPS_REMOTO`; desde octubre
+  2026 también `ApiCelular`, opcional, y para el local se lleva además `OtterBlindaje`), así que la
   mitad de los bytes se copiaban al pedo; y **`robocopy /E /MT:16` es varias veces más rápido** con
   archivos chicos y va diciendo en cuál va. Ojo: `robocopy` devuelve 1, 2 o 3 cuando salió todo
   bien — el error recién empieza en 8.
@@ -551,7 +552,8 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
   (1366x768) el Panel del Dueño quedaba tapado por la barra de tareas. Las pestañas van
   adentro de `MarcoDesplazable`: en pantalla chica aparece barra, en grande se expanden
   igual que antes.
-- **`StockService` es el único ejecutable sin `--noconsole`, y es a propósito.** Con `--noconsole`
+- **`StockService` (y desde octubre 2026 `ApiCelular`, por el mismo motivo) son los únicos
+  ejecutables sin `--noconsole`, y es a propósito.** Con `--noconsole`
   se queda sin stdout, `install` falla al imprimir su primer mensaje y la instalación se aborta
   sin mostrar ningún error: el servicio simplemente nunca aparece. Está explicado en el .bat.
 - **`USB_Dueno` sigue siendo necesario aunque ya funcione Tailscale + `DuenoRemoto`.** Son

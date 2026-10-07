@@ -21,22 +21,56 @@ app lo dice al conectarse; no se rompe nada.
 
 ## 1. Compilar (en tu laptop con Windows)
 
+En PowerShell **normal (no como administrador)**, desde la carpeta del repo. Son tres bloques:
+pegalos de a uno y mirá el resultado antes de seguir (pegados juntos, no frenan si algo da rojo).
+
+**A) Código y pruebas.** Con el PR ya unido a `main` (si todavía no se unió, usá
+`claude/tender-fermat-m94pwx` en las dos líneas de git):
+
 ```powershell
-# --- Desde la carpeta del repo ---
-git pull
-py -3.12 -m venv venv
-Set-ExecutionPolicy -Scope Process Bypass
+git fetch origin
+git checkout main
+git pull origin main
+Test-Path build\compilar_api_celular.bat
+py -3.12 -m venv --clear venv
+Set-ExecutionPolicy -Scope Process Bypass -Force
 .\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+python -c "import sys; print(sys.version); print(sys.executable)"
+python -m pip install -r requirements.txt
 python tests\correr_todos.py
-build\build_all.bat
-robocopy dist E:\dist /E /MT:16
 ```
 
-- `correr_todos.py` tiene que dar **todo en verde**. Si algo da rojo, se para acá.
-- `build_all.bat` tiene que terminar diciendo **`ApiCelular: autoprueba OK`**: compila
-  `ApiCelular.exe` y lo prueba solo, sobre una base temporal (nunca toca una base real).
-- `robocopy` devuelve 0 a 3 cuando salió bien; 8 o más es error. Cambiá `E:` por la letra del pendrive.
+- `Test-Path` tiene que dar `True` (si da `False`, estás en una rama sin la API del celular: no sigas).
+- Python tiene que ser `3.12.x` y la ruta `...\venv\Scripts\python.exe`.
+- Las pruebas terminan en **`20 en verde, 0 en rojo`** (tarda unos 3 minutos; no uses la PC
+  mientras tanto: una prueba usa el portapapeles). Si algo da rojo, se para acá.
+
+**B) Compilar** (30 a 45 minutos, en la misma ventana):
+
+```powershell
+Remove-Item dist -Recurse -Force -ErrorAction SilentlyContinue
+build\build_all.bat
+'MaestroCaja','MaestroDueno','USB_Caja','USB_Dueno','USB_Mantenimiento','DuenoRemoto','OtterInstalador','OtterActualizador','OtterBlindaje','StockService','ApiCelular' | Where-Object { -not (Test-Path "dist\$_\$_.exe") }
+```
+
+- En la salida tiene que aparecer **`ApiCelular: autoprueba OK`** (compila `ApiCelular.exe` y lo
+  prueba solo, sobre una base temporal; no es la última línea). Si dice
+  `ATENCION: ApiCelular NO compilo o NO paso la autoprueba`, borrá esa carpeta antes de copiar:
+  `Remove-Item dist\ApiCelular -Recurse -Force`.
+- La última línea (la lista de los 11 programas) **no tiene que imprimir nada**: si imprime un
+  nombre, ese programa no compiló (el `.bat` no avisa).
+
+**C) Al pendrive** (cambiá `E:` por la letra del pendrive):
+
+```powershell
+robocopy dist E:\dist /MIR /MT:16 /R:2 /W:2
+$LASTEXITCODE
+'OtterActualizador','MaestroCaja','MaestroDueno','StockService','ApiCelular','OtterBlindaje' | Where-Object { -not (Test-Path "E:\dist\$_\$_.exe") }
+```
+
+- `$LASTEXITCODE` **menor que 8** es que salió bien. `/MIR` deja `E:\dist` igual a `dist`: por eso el
+  destino es `E:\dist` y nunca `E:\`.
+- La última línea no tiene que imprimir nada.
 
 ## 2. Ensayo en tu laptop, antes de la visita
 
@@ -129,9 +163,10 @@ Tiene que dar `Running` / `Automatic`, `otter-api-celular`, todo `[SI]` en el di
 2. Instalar el APK: GitHub → *Actions* → la última corrida de "Otter (pruebas + app del celular)" →
    *Artifacts* → `panel-dueno-apk` (o el Release `movil-v…` si se publicó). La primera vez Android
    pide permitir "instalar apps de origen desconocido".
-3. En la app de Tailscale, mantener apretada la PC del local → *Copy IP* → pegarla en la app → **Probar
-   conexión**. Tiene que mostrar **el nombre del negocio** y que la PC encontró la base.
-4. Leo escribe su PIN y activa la huella.
+3. En la app de Tailscale, mantener apretada la PC del local → *Copy IP* → pegarla en el campo de la
+   dirección de la app → botón **Probar** (al costado del campo). Tiene que mostrar **el nombre del
+   negocio** y que la PC encontró la base.
+4. Leo escribe su PIN → **Ingresar**, y acepta usar la huella.
 
 **Prueba de la regla 1:** con datos móviles (Wi-Fi apagado) la app entra. Con el celular en el Wi-Fi
 del local, `http://<IP de la PC en la red del local>:8766/api/salud` desde el navegador **no** muestra
