@@ -120,10 +120,19 @@ def filas_de(lineas):
 # ---------------------------------------------------------------- #
 app = ActualizadorDePrueba()
 destino = instalacion(con_backup_dias=0, con_evidencia=True, puerto=8765)
+# "Sin permisos" de verdad, también cuando la prueba corre en Windows como
+# administrador (el CI de GitHub): si no, _excluir_del_antivirus agrega DE
+# VERDAD la carpeta temporal a las exclusiones de Defender de esa máquina, la
+# fila da SI con razón y, de paso, la prueba le cambia el antivirus a quien
+# la corre. Sin administrador es el mismo camino que en una PC sin Windows.
+es_administrador_real = act.es_administrador
+act.es_administrador = lambda: False
 try:
     app._revision_final(destino)
 except Exception as e:
     fallos.append(f"la revisión final lanzó una excepción y voltearía la actualización: {e!r}")
+finally:
+    act.es_administrador = es_administrador_real
 
 filas = filas_de(app.lineas)
 print("FILAS DE LA TABLA:")
