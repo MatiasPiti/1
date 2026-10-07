@@ -194,6 +194,30 @@ def _validar_secreto(datos) -> dict:
     return {"version": 1, "firma": datos["firma"], "pimienta": datos["pimienta"]}
 
 
+# En Windows, mirar o abrir secreto.json justo mientras otro proceso lo crea
+# (os.rename) o lo reemplaza (os.replace de cerrar-sesiones) da
+# PermissionError por un instante. El archivo nunca está a medio escribir
+# (se mueve entero), así que no es "ilegible": se reintenta. Lo agarró el CI
+# en Windows; en Linux no pasa. Mismo caso que config.ini (config._leer_texto).
+_REINTENTOS_LECTURA = 40
+_ESPERA_LECTURA_S = 0.025
+
+
+def _reintentando(funcion):
+    for intento in range(_REINTENTOS_LECTURA):
+        try:
+            return funcion()
+        except PermissionError:
+            if intento == _REINTENTOS_LECTURA - 1:
+                raise
+            time.sleep(_ESPERA_LECTURA_S)
+
+
+def _leer_json(ruta: str):
+    with open(ruta, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def leer_secreto():
     """El secreto, o None si no existe. SecretoIlegibleError si está roto.
 
@@ -202,7 +226,7 @@ def leer_secreto():
     """
     ruta = ruta_secreto()
     try:
-        st = os.stat(ruta)
+        st = _reintentando(lambda: os.stat(ruta))
     except FileNotFoundError:
         return None
     except OSError as e:
@@ -212,8 +236,7 @@ def leer_secreto():
         if _cache_secreto["clave"] == clave:
             return dict(_cache_secreto["valor"])
     try:
-        with open(ruta, "r", encoding="utf-8") as f:
-            valor = _validar_secreto(json.load(f))
+        valor = _validar_secreto(_reintentando(lambda: _leer_json(ruta)))
     except FileNotFoundError:
         return None
     except SecretoIlegibleError:

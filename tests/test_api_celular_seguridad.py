@@ -60,13 +60,42 @@ if len(sys.argv) >= 3 and sys.argv[1] == "--leer-secreto":
     paths.set_base_override(_base)
     from pos_core import acceso_celular as _ac
     _rotos = _lecturas = 0
+    _motivos = set()
     while time.time() < _hasta:
         try:
             if _ac.leer_secreto() is not None:
                 _lecturas += 1
-        except _ac.SecretoIlegibleError:
+        except _ac.SecretoIlegibleError as _e:
             _rotos += 1
+            _motivos.add(f"{_e} <- {_e.__cause__!r}")
+    if _motivos:
+        # A stderr: el padre solo lee la cuenta de stdout, y en el CI esto
+        # dice QUÉ error vio el lector (en Windows, el PermissionError pasajero).
+        print(f"lector de secreto.json: {sorted(_motivos)[:3]}", file=sys.stderr)
     print(f"{_lecturas} {_rotos}")
+    sys.exit(0)
+
+if len(sys.argv) >= 3 and sys.argv[1] == "--leer-con-choques":
+    # leer_secreto con un open que da PermissionError las primeras 3 veces,
+    # como en Windows mientras otro proceso mueve o reemplaza el archivo.
+    _base = sys.argv[2]
+    from pos_core import paths
+    paths.set_base_override(_base)
+    from pos_core import acceso_celular as _ac
+    _abrir, _choques = open, [3]
+
+    def _open_que_choca(archivo, *a, **k):
+        if str(archivo).endswith("secreto.json") and _choques[0] > 0:
+            _choques[0] -= 1
+            raise PermissionError(13, "El proceso no tiene acceso al archivo porque está siendo utilizado")
+        return _abrir(archivo, *a, **k)
+
+    _ac.open = _open_que_choca
+    try:
+        _s = _ac.leer_secreto()
+        print("ok" if (_s and _choques[0] == 0) else f"mal: {_s!r} choques sin usar {_choques[0]}")
+    except Exception as _e:
+        print(f"mal: {type(_e).__name__}: {_e}")
     sys.exit(0)
 
 if len(sys.argv) >= 2 and sys.argv[1] == "--cli":
@@ -365,6 +394,14 @@ verificar(not distintos, f"dos definir-pin a la vez terminan con el mismo secret
           f"rondas con secretos distintos o temporales sueltos: {distintos}")
 verificar(rotos_vistos == 0, "quien lee secreto.json mientras se crea nunca lo ve a medio escribir",
           f"se leyó un secreto a medias {rotos_vistos} veces")
+# En Windows, abrirlo justo mientras otro lo mueve o lo reemplaza da
+# PermissionError por un instante (lo agarró el CI). Se simula para que la
+# prueba tenga dientes también en Linux: el lector reintenta y lo lee.
+proceso = subprocess.run([sys.executable, os.path.abspath(__file__), "--leer-con-choques", base],
+                         capture_output=True, text=True, timeout=60)
+verificar(proceso.stdout.strip() == "ok",
+          "si secreto.json se está moviendo (PermissionError pasajero), leer_secreto reintenta y lo lee",
+          f"con PermissionError pasajero leer_secreto dio: {proceso.stdout.strip()} {proceso.stderr[-500:]}")
 
 # ===================================================================== #
 # Filtro de red (regla 1)
