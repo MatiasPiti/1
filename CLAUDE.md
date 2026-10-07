@@ -17,14 +17,16 @@ elegí lo que falla menos, no lo que es más elegante.
 
 ## Qué es Otter
 
-POS + control de stock en Python/Tkinter/SQLite que compila a **10 ejecutables Windows portables**
-(PyInstaller `--onedir`). Ver `README.md` para el detalle. En una línea cada uno:
+POS + control de stock en Python/Tkinter/SQLite que compila a **11 ejecutables Windows portables**
+(PyInstaller `--onedir`), más la app Android "Panel Dueño" (`apps/movil_dueno/`, Flutter; el APK lo
+compila GitHub Actions). Ver `README.md` para el detalle. En una línea cada uno:
 
 | Ejecutable | Dónde va | Para qué |
 |---|---|---|
 | `MaestroCaja` | PC del local | La caja. Vende, imprime ticket, descuenta stock. |
 | `MaestroDueno` | PC del local | Panel del dueño: stock, precios, reportes, ARCA, ofertas. |
 | `StockService` | PC del local | Servicio de Windows: alertas Telegram + API remota. |
+| `ApiCelular` | PC del local | Servicio de Windows aparte: API de la app Panel Dueño (Android), puerto 8766. Opcional. |
 | `DuenoRemoto` | Laptop de Leo | El mismo panel, contra la PC del local por Tailscale. Necesita que el local esté prendido — no reemplaza a `USB_Dueno` (ver más abajo). |
 | `USB_Caja` | Pendrive | Caja de emergencia si se rompe la PC del local. Base propia, se concilia después. |
 | `USB_Dueno` | Pendrive | Panel de emergencia del dueño si se rompe la PC del local. Base propia, se concilia después. |
@@ -37,8 +39,10 @@ POS + control de stock en Python/Tkinter/SQLite que compila a **10 ejecutables W
 
 ## Reglas duras — no romper ninguna
 
-1. **La API remota (`services/remote_api.py`) NUNCA se expone a internet ni con port forwarding.**
-   Toda su seguridad se apoya en que solo se llegue al puerto por la VPN (Tailscale).
+1. **La API remota (`services/remote_api.py`, 8765) y la API del celular (`services/api_celular.py`,
+   8766) NUNCA se exponen a internet ni con port forwarding.** Toda su seguridad se apoya en que solo
+   se llegue al puerto por la VPN (Tailscale). Además del firewall, la API del celular filtra en el
+   código que origen y destino sean de Tailscale (y rechaza origen == destino).
 2. **La laptop de Leo recibe `DuenoRemoto.exe`, jamás `MaestroDueno.exe`.** El segundo abre
    perfecto y sin dar ningún error, pero se crea su propia base vacía y nunca muestra una venta
    del negocio. Es el error más caro posible y el instalador existe en parte para evitarlo.
@@ -51,6 +55,9 @@ POS + control de stock en Python/Tkinter/SQLite que compila a **10 ejecutables W
    expuestos así el token de `[remoto]` y el del bot de Telegram, y hay que rotar los dos (está en
    los pendientes). Al mandar capturas de esa pantalla, tapar esas líneas. Y al rotar un token,
    generarlo **sin caracteres confundibles** si va a haber que tipearlo en un celular.
+   **El PIN del celular lo tipea solo Leo, en la PC** (botón del Actualizador o acceso directo
+   "Otter - PIN del celular"), nunca por SSH ni en un chat. El `bot_token` nunca viaja al celular;
+   `ApiCelular.exe diagnostico` no imprime IPs y la app muestra la IP de la PC tapada.
 5. La cuenta de Tailscale es de Matías y es la llave de la red de todos los clientes:
    **2FA activado**, y **escribir las ACLs antes de sumar un segundo cliente** — si no, los
    clientes se ven entre sí.
@@ -66,6 +73,8 @@ verificado en Windows real, no solo en sandbox.
 
 Todo está en `main`, commiteado y pusheado. La rama `claude/dual-pos-portable-emergency-dvt5ym`
 quedó vieja (tiene solo dos subidas manuales de archivos por la web): **el trabajo va a `main`**.
+Ver "API del celular (octubre 2026)" más abajo: sobre esa rama vieja se armó un `ApiDueno` que se
+corrió contra la base real y está descartado.
 
 Últimos commits relevantes:
 - **Respaldo diario verificado + cartel de arranque** — el sistema no tenía NINGUNA copia
@@ -552,9 +561,88 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
   dejaría a Leo sin panel el día que la PC del local falle, que es exactamente el escenario para el
   que existe (misma lógica que `USB_Caja`).
 
+### API del celular (octubre 2026)
+
+Leo pidió en el celular lo mismo que tiene en el Dueño Remoto. Quedó la app Android **"Panel Dueño"**
+(`apps/movil_dueno/`, Flutter) contra **`ApiCelular`**: un servicio de Windows **aparte** en la PC
+del local, puerto **8766**, escrito sobre el `pos_core` de main. La eligió Matías (opción "c": proceso
+aparte, otro puerto, PIN en la PC) sabiendo que suma un segundo programa 24/7 que hay que vigilar.
+Guía de instalación paso a paso en `apps/movil_dueno/README.md`.
+
+**Lo que pasó antes, para que no se repita.** La primera versión (un `ApiDueno` FastAPI) se armó
+sobre la rama vieja `claude/dual-pos-portable-emergency-dvt5ym`, que **no es el código instalado**.
+El 5/10/2026 a las 21:40 se corrió en el local contra `C:\SistemaDual` (`--definir-pin` y un
+arranque que murió porque el 8765 es del StockService). Medido después reproduciéndolo con una base
+armada con main: el esquema y el `config.ini` quedaron intactos; quedó una fila `Usuarios('dueño')`
+con sha256('1234'), que main no lee y la API nueva no acepta; y su migración **pudo apagar
+(`activo = 0`) umbrales propios en exactamente 5/0** que tuvieran una fecha de alerta vieja. Main
+nunca escribe `activo = 0`, así que se detecta comparando `backups\stock_2026-10-05.db` con el del
+6/10 (fuera de la PC; el del 5/10 se borra solo a los 14 días). Lo apagado se arregla en el Panel:
+código → "Quitar umbral propio" → cargar 5 y 0 → "Guardar umbral de este producto". **El
+`ApiDueno.exe` viejo no se corre nunca más** contra nada, y si queda una carpeta `ApiDueno`, se borra.
+
+**Decisiones (no re-litigar):**
+- **Proceso aparte en el 8766** (servicio `SistemaDualApiCelular`, `C:\SistemaDual\ApiCelular\`), sin
+  dependencia del StockService: si se cae, la caja y el Dueño Remoto ni se enteran (regla 6). Es
+  **opcional** en Instalador, Actualizador, Mantenimiento y build: si falla, la caja se actualiza igual.
+- **No corre `init_db`, `preparar_base` ni migraciones, no tiene monitor de Telegram y nunca crea la
+  base**: abre `stock.db` con `mode=rw` (`db.usar_solo_base_existente`), así en la carpeta equivocada
+  falla en vez de crear una base vacía (la trampa de la regla 2). Cierra la conexión en cada pedido.
+- **PIN en la PC**, PBKDF2 con sal y una pimienta guardada fuera de la base
+  (`C:\SistemaDual\api_celular\secreto.json`), 6 a 12 números, nunca como argumento. Todo hash que no
+  tenga ese formato (el 1234 del ApiDueno) no autentica.
+- **Identidad, no TCP**: `/api/salud` dice `"servicio": "otter-api-celular"`; watchdog, revisión
+  final, `diagnostico` y la app chequean esa firma. Ya pasó que otro programa en el puerto engañó al
+  diagnóstico (el 404 del remote_api se leyó como "la API contesta").
+- **Precios: un solo camino de escritura**, con los 4 valores de la cadena como `esperado` (si una
+  factura cambió el costo mientras la hoja estaba abierta, 409 y recarga). La vista previa del ajuste
+  masivo usa la misma cuenta que aplicar (bug de redondeo incluido), y aplicar manda `esperados`:
+  repetir tras un corte no suma dos veces. Factura repetida en 60 minutos: 409 `factura_ya_aplicada`.
+- **Un solo interruptor**: `ApiCelular.exe deshabilitar`/`habilitar` (`[api_celular] habilitado`).
+  Ningún corrector toca un servicio que alguien dejó Deshabilitado en Windows.
+- **Watchdog propio** (tarea `OtterWatchdogCelular`), separado del del StockService, con tope de 4
+  minutos. Desde el celular **no** van "Quitar TODOS los umbrales propios", Excel, ARCA, alta de
+  productos, ofertas ni el token de Telegram (solo prender/apagar el bot y probar).
+- `config.guardar_config` pasó a ser **atómico para todas las apps** (temporal + `os.replace`, con
+  candado; si todo falla, escribe como antes): dos escritores a la vez dejaban config.ini ilegible.
+
+**Lecciones (valen para todo el repo):**
+- **PowerShell: `Get-Content | Where-Object` con un solo resultado no es una lista.** Siempre `@(...)`.
+  Por eso el freno de "3 reinicios en 24 hs" del watchdog del 8765 **nunca frenó**; se arregló en un
+  commit aparte (llega a la PC con OtterBlindaje «Solo actualizar el watchdog»).
+- **`Restart-Service` espera sin límite**: en algo que corre solo, `sc.exe stop` + espera acotada +
+  `Stop-Process`, y `ExecutionTimeLimit` en la tarea. **STOP_PENDING no es parado**: el exe sigue
+  bloqueado. Actualizar un servicio es `update`, nunca `remove` + `install` (error 1072).
+- **configparser no saca los comentarios al final de la línea**, y un config.ini guardado con BOM no lo
+  lee ninguna app: config.ini no se edita a mano.
+- `proxy_headers` de uvicorn confía en `X-Forwarded-For` desde 127.0.0.1: va en `False`. Un
+  `logging.Filter` no tapa los tracebacks: el tapado va en el `Formatter`. FastAPI resuelve las
+  dependencias **antes** del decorador del endpoint.
+- Restaurar un respaldo devuelve también el PIN de ese día. El `Cancelar` del cartel del firewall de
+  Windows crea una regla Block: nunca correr `ApiCelular.exe consola` en el local.
+
+**Sin verificar en Windows real** (lo cubren en parte los jobs de Windows del CI): uvicorn adentro de
+un servicio de pywin32, que `update` conserve los reintentos, PowerShell 5.1 como SYSTEM, el firewall
+del local, el acceso directo del PIN sin elevar. Por eso hay un **ensayo en la laptop de Matías antes
+de la visita** (guía de la app, sección 2).
+
 ## Lo que falta hacer
 
 **Pendiente:**
+- [ ] **Desplegar la API del celular** (guía en `apps/movil_dueno/README.md`): ensayo en la laptop →
+      ACLs de Tailscale (con sus tests) → Actualizador con la casilla → PIN de Leo → OtterBlindaje
+      «Solo actualizar el watchdog» → prueba de reinicio → recién ahí el APK. **Primero la PC,
+      después el celular.**
+- [ ] **Sacar `backups\stock_2026-10-05.db` y `stock_2026-10-06.db` de la PC antes del 19/10** y
+      compararlos en la laptop para ver si el ApiDueno viejo apagó umbrales 5/0 (ver arriba).
+- [ ] Sumar `http://<pc>:8766/api/salud` a Semáforo Clientes (otro repo): sin eso, el segundo
+      programa 24/7 solo lo mira el watchdog.
+- [ ] Decisiones abiertas de la API del celular: redondeo del ajuste masivo (3000 + 10 % da 3400),
+      un "conteo de inventario" absoluto desde el celular (hoy cada carga se descuenta sola con las
+      ventas pendientes de los últimos 2 días), auditoría en la base, leer config.ini con `utf-8-sig`,
+      y la carrera de `_parar_servicio`/`_arrancar_servicio` del StockService en el Actualizador.
+- [ ] Commits aparte ya conocidos: el botón "Probar" de Telegram falla en el Panel y en DuenoRemoto
+      (falta `telegram_bot` en `dueno_backend`), y las facturas PDF leen "3.500" como 3,5.
 - [x] **Correr `scripts/blindar_local.ps1` en la PC del local.** HECHO el 9/9/2026: las 7 filas
       en SI (servicio en Automatic, watchdog Ready, Tailscale unattended por CLI, servicio
       corriendo, puerto 8765 respondiendo). Encontró el servicio parado por tercera vez y lo

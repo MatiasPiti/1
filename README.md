@@ -345,7 +345,7 @@ cualquier PC puede crear la base sin depender de un archivo externo.
 **A) Primera vez (en desarrollo, para probar):**
 ```bash
 pip install -r requirements.txt
-python scripts/setup_inicial.py        # crea database/stock.db + usuario 'dueño'
+python scripts/setup_inicial.py        # crea database/stock.db (el PIN del celular: ApiCelular definir-pin)
 python apps/master_dueno/main.py       # cargar Excel inicial / productos
 python apps/master_caja/main.py        # ya se puede cobrar
 ```
@@ -458,6 +458,44 @@ quiere cerrar más, se agrega en `[remoto]` la línea `escuchar_en = 100.x.y.z` 
 Tailscale de la PC del local: a partir de ahí el puerto deja de existir para el resto de la red
 del negocio. **En ningún caso hay que abrir este puerto en el router ni hacerle port
 forwarding**: toda la seguridad se apoya en que solo se llegue a él por la VPN.
+
+---
+
+## 14. App del celular (ApiCelular, puerto 8766)
+
+**Qué es:** la app Android "Panel Dueño" (`apps/movil_dueno/`, Flutter) habla con **ApiCelular**,
+un servicio de Windows **aparte** del StockService (`SistemaDualApiCelular`, carpeta
+`C:\SistemaDual\ApiCelular\`) que usa las mismas funciones de `pos_core` sobre la base real. Es
+opcional: si no se instala o se cae, la Caja, el Panel y el Dueño Remoto siguen igual.
+
+```
+Celular (app) ──Tailscale──► :8766 ApiCelular ──► pos_core ──► database\stock.db
+Laptop (DuenoRemoto) ──Tailscale──► :8765 StockService/remote_api ──► pos_core ──┘
+```
+
+| Puerto | Programa | Quién entra |
+|---|---|---|
+| 8765 | StockService (`services/remote_api.py`) | DuenoRemoto, con el token de `[remoto]` |
+| 8766 | ApiCelular (`services/api_celular.py`) | la app del celular, con el PIN del dueño |
+
+- **Configuración:** `[api_celular]` en `config.ini` (`habilitado`, `puerto`). La escriben solo el
+  Instalador, el Actualizador y los verbos `habilitar`/`deshabilitar`; config.ini no se edita a mano.
+- **PIN y secreto:** el PIN (6 a 12 números) vive en la tabla `Usuarios` con PBKDF2 + sal + pimienta;
+  la pimienta y la clave de las sesiones, en `C:\SistemaDual\api_celular\secreto.json`.
+- **Tres barreras de red (regla 1):** la propia API acepta solo origen y destino de Tailscale (desde
+  la misma PC, solo `/api/salud`); la regla de firewall `OtterApiCelular-Tailscale`, atada a la placa
+  de Tailscale; y la app, que solo acepta direcciones `100.64.0.0/10`.
+- **Verbos de `ApiCelular.exe`:** `install`, `update`, `start`, `stop`, `remove`, `definir-pin`,
+  `cerrar-sesiones`, `habilitar`, `deshabilitar`, `diagnostico`, `autoprueba` (y `consola`, solo en
+  desarrollo).
+- **Diagnóstico en dos pasos desde el celular:** (1) en la app de Tailscale, ¿la PC figura online?
+  (2) en el navegador, `http://<IP de Tailscale de la PC>:8766/api/salud` tiene que mostrar
+  `otter-api-celular`. Si contesta otra cosa, es otro programa en el puerto.
+- **Lo que no se puede desde el celular:** el token de Telegram, "Quitar TODOS los umbrales
+  propios", Excel, ARCA, alta de productos ni ofertas.
+
+La guía de instalación paso a paso (compilar, ensayo, ACLs, Actualizador, PIN, verificación,
+operación y **"Desinstalar la API del celular"**) está en **`apps/movil_dueno/README.md`**.
 
 ---
 
