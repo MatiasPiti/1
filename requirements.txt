@@ -13,5 +13,17 @@ openpyxl>=3.1
 # Empaquetado a .exe portable
 pyinstaller>=6.3
 
-# Servicio real de Windows (solo services/stock_windows_service.py, Windows)
+# Servicios reales de Windows (StockService y ApiCelular; solo en Windows)
 pywin32>=306; sys_platform == "win32"
+
+# API del celular (ApiCelular.exe). Versiones FIJAS: son las probadas con el build. Subirlas = volver a
+# correr tests\correr_todos.py en Windows y la autoprueba del exe antes de llevarlo al local.
+fastapi==0.142.2
+starlette==1.7.0
+pydantic==2.13.5
+uvicorn==0.54.0
+h11==0.16.0
+python-multipart==0.0.32
+anyio==4.15.1
+# Solo para las pruebas (TestClient de Starlette)
+httpx==0.28.1

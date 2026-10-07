@@ -38,11 +38,20 @@ def calcular_nuevo_precio(precio_actual: float, *, porcentaje: float = None,
 
 
 def aplicar_ajuste_masivo(codigos: list, *, porcentaje: float = None, monto_fijo: float = None,
-                           redondear: bool = True, usuario: str, origen: str = "MAESTRO") -> list:
+                           redondear: bool = True, usuario: str, origen: str = "MAESTRO",
+                           esperados: dict = None) -> list:
     """Aplica el ajuste a una lista de códigos de producto (resultado de
     un filtro guardado o de una selección manual en la grilla). Cada
     producto se actualiza en su propia transacción para no bloquear toda
-    la tabla mientras se procesan cientos de artículos."""
+    la tabla mientras se procesan cientos de artículos.
+
+    `esperados` (opcional, lo manda la app del celular) es {codigo: precio
+    que mostró la vista previa}. Un producto cuyo precio ya no es ese NO se
+    toca y sale con ok=False. Es lo que vuelve seguro "aplicar de nuevo"
+    después de un corte con datos móviles: si el primer intento llegó, todos
+    tienen ya el precio nuevo y el segundo no suma el aumento otra vez. Con
+    None (el Panel no lo manda) el comportamiento es el de siempre.
+    """
     # El ajuste se valida ANTES de tocar el primer producto: si los
     # parámetros están mal, la excepción tiene que salir con cero precios
     # modificados. Validándolo recién adentro del bucle (como estaba), el
@@ -67,6 +76,17 @@ def aplicar_ajuste_masivo(codigos: list, *, porcentaje: float = None, monto_fijo
                     resultados.append({"codigo": codigo, "ok": False, "error": "no encontrado"})
                     continue
                 precio_anterior = row["precio_venta"]
+                if esperados is not None:
+                    if codigo not in esperados:
+                        resultados.append({"codigo": codigo, "ok": False, "error": "sin precio esperado"})
+                        continue
+                    visto = float(esperados[codigo] or 0)
+                    if abs(float(precio_anterior or 0) - visto) > 0.005:
+                        resultados.append({
+                            "codigo": codigo, "ok": False,
+                            "error": f"el precio cambió mientras tanto (era {visto}, ahora es "
+                                     f"{float(precio_anterior or 0)}): no se tocó"})
+                        continue
                 precio_nuevo = calcular_nuevo_precio(
                     precio_anterior, porcentaje=porcentaje, monto_fijo=monto_fijo,
                     redondear=redondear)

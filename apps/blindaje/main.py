@@ -8,10 +8,16 @@ comandos en PowerShell mientras el negocio esperaba:
     boton de encendido y la tapa.
   - La placa de red no se apaga sola "para ahorrar energia".
   - Un watchdog cada 5 minutos que vigila EL PUERTO, no el estado del
-    servicio.
+    servicio, y otro aparte para la API del celular (si está instalada).
   - Tailscale en modo unattended.
   - Opcional: soporte remoto por SSH sobre Tailscale, para que la proxima
     vez no haya que viajar hasta el local.
+
+Con la casilla "Solo actualizar el watchdog" corre solo los pasos que
+instalan los watchdogs y verifican (el .ps1 con -SoloWatchdog): no toca la
+red, la energia ni Tailscale. Sirve para actualizar el watchdog con el
+negocio abierto, porque el blindaje entero corta la red un instante cuando
+ajusta la placa.
 
 Por que ejecuta los .ps1 en vez de reimplementarlos: son la misma
 herramienta, y duplicar la logica es garantizar que dentro de tres meses
@@ -98,8 +104,8 @@ class AppBlindaje(tk.Tk):
         else:
             self._log("Listo para blindar. Apreta el boton cuando quieras.\n")
             self._log("Se puede correr con el negocio abierto: no cierra la caja")
-            self._log("ni toca la base de datos. La red se corta un instante\n")
-            self._log("cuando ajusta la placa.\n")
+            self._log("ni toca la base de datos. La red se corta un instante")
+            self._log("cuando ajusta la placa (con «Solo actualizar el watchdog», no).\n")
 
     # ------------------------------------------------------------------ #
     def _armar_ui(self):
@@ -112,12 +118,19 @@ class AppBlindaje(tk.Tk):
         marco = ttk.Frame(self, padding=(18, 12))
         marco.pack(fill="x")
 
-        self.var_ssh = tk.BooleanVar(value=False)
+        self.var_solo_watchdog = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             marco,
+            text="Solo actualizar el watchdog (no toca la red, la energía ni Tailscale)",
+            variable=self.var_solo_watchdog, command=self._cambiar_solo_watchdog
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+        self.var_ssh = tk.BooleanVar(value=False)
+        self.casilla_ssh = ttk.Checkbutton(
+            marco,
             text="Instalar también el soporte remoto por SSH (para no tener que volver al local)",
-            variable=self.var_ssh, command=self._cambiar_ssh
-        ).grid(row=0, column=0, columnspan=2, sticky="w")
+            variable=self.var_ssh, command=self._cambiar_ssh)
+        self.casilla_ssh.grid(row=0, column=0, columnspan=2, sticky="w")
 
         self.lbl_pass = ttk.Label(marco, text=f"Contraseña para el usuario '{USUARIO_SOPORTE}':")
         self.lbl_pass.grid(row=1, column=0, sticky="w", pady=(8, 0))
@@ -151,6 +164,15 @@ class AppBlindaje(tk.Tk):
     def _cambiar_ssh(self):
         estado = "normal" if self.var_ssh.get() else "disabled"
         self.entrada_pass.config(state=estado)
+
+    def _cambiar_solo_watchdog(self):
+        # Solo el watchdog = no se instala nada más: el SSH queda afuera.
+        if self.var_solo_watchdog.get():
+            self.var_ssh.set(False)
+            self.casilla_ssh.config(state="disabled")
+        else:
+            self.casilla_ssh.config(state="normal")
+        self._cambiar_ssh()
 
     # ------------------------------------------------------------------ #
     def _log(self, texto):
@@ -188,6 +210,9 @@ class AppBlindaje(tk.Tk):
                 "'Ejecutar como administrador'.\n\n"
                 "Sin eso no se puede cambiar el servicio, la energía ni el firewall.")
             return
+        solo_watchdog = bool(self.var_solo_watchdog.get())
+        if solo_watchdog:
+            self.var_ssh.set(False)
         if self.var_ssh.get() and len(self.entrada_pass.get()) < 8:
             messagebox.showerror(
                 "Contraseña muy corta",
@@ -199,7 +224,7 @@ class AppBlindaje(tk.Tk):
         self.boton.config(state="disabled", text="TRABAJANDO...")
         self.estado.config(text="Trabajando. No cierres esta ventana.")
         clave = self.entrada_pass.get() if self.var_ssh.get() else ""
-        threading.Thread(target=self._trabajar, args=(self.var_ssh.get(), clave),
+        threading.Thread(target=self._trabajar, args=(self.var_ssh.get(), clave, solo_watchdog),
                          daemon=True).start()
 
     def _correr_script(self, ruta: str, argumentos=None) -> bool:
@@ -229,7 +254,7 @@ class AppBlindaje(tk.Tk):
         proceso.stdout.close()
         return proceso.wait() == 0
 
-    def _trabajar(self, con_ssh: bool, clave: str):
+    def _trabajar(self, con_ssh: bool, clave: str, solo_watchdog: bool = False):
         inicio = datetime.now()
         problemas = []
         try:
@@ -240,7 +265,7 @@ class AppBlindaje(tk.Tk):
             blindar = buscar_script("blindar_local.ps1")
             if not blindar:
                 problemas.append("no se encontró blindar_local.ps1 adentro del programa")
-            elif not self._correr_script(blindar):
+            elif not self._correr_script(blindar, ["-SoloWatchdog"] if solo_watchdog else None):
                 problemas.append("el blindaje terminó con errores (mirá el detalle arriba)")
 
             if con_ssh:
@@ -260,6 +285,11 @@ class AppBlindaje(tk.Tk):
                     self._log(f"  - {p}")
                 self._log("\nMandale esta pantalla a Claude junto con el archivo")
                 self._log(r"C:\SistemaDual\watchdog\estado_antes_del_blindaje.txt")
+            elif solo_watchdog:
+                self._log("TERMINÓ SIN ERRORES.")
+                self._log("")
+                self._log("Revisá arriba que las filas de la tabla digan SI.")
+                self._log("Watchdog actualizado. No hace falta la prueba de apagado.")
             else:
                 self._log("TERMINÓ SIN ERRORES.")
                 self._log("")
