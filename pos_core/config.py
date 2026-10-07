@@ -58,24 +58,53 @@ class ConfigIlegibleError(Exception):
     """
 
 
+# En Windows, abrir config.ini justo mientras otro programa lo reemplaza
+# (el os.replace de guardar_config) da PermissionError por un instante: el
+# archivo viejo queda "pendiente de borrar" mientras se cambia por el nuevo.
+# No es que no se pueda leer: se reintenta. Lo agarró el CI en Windows (13 de
+# 750 lecturas fallaron con 4 programas guardando a la vez); en Linux no pasa.
+_REINTENTOS_LECTURA = 40
+_ESPERA_LECTURA_S = 0.025
+
+
+def _leer_texto(ruta: str, encoding: str = "utf-8") -> str:
+    """El contenido de config.ini, reintentando el PermissionError pasajero
+    de Windows (como mucho 1 s). Cualquier otro error sale tal cual."""
+    for intento in range(_REINTENTOS_LECTURA):
+        try:
+            with open(ruta, "r", encoding=encoding) as f:
+                return f.read()
+        except PermissionError:
+            if intento == _REINTENTOS_LECTURA - 1:
+                raise
+            time.sleep(_ESPERA_LECTURA_S)
+
+
 def cargar_config(estricto: bool = False) -> configparser.ConfigParser:
     """La config de la app: los valores por defecto pisados por config.ini.
 
-    estricto=False es EXACTAMENTE el comportamiento de siempre (si el
-    archivo no está quedan los defaults; uno mal formado lanza el error de
-    configparser). estricto=True lanza ConfigIlegibleError si el archivo no
+    estricto=False es el comportamiento de siempre (si el archivo no está o
+    no se puede abrir quedan los defaults; uno mal formado lanza el error de
+    configparser), con un solo agregado: el reintento de _leer_texto, para
+    no quedarse con los defaults solo porque otro programa estaba guardando
+    en ese instante. estricto=True lanza ConfigIlegibleError si el archivo no
     existe, está vacío, no se puede abrir o configparser lo rechaza.
     """
     cfg = configparser.ConfigParser()
     cfg.read_dict(_DEFAULTS)
+    ruta = config_path()
     if not estricto:
-        cfg.read(config_path(), encoding="utf-8")
+        try:
+            texto = _leer_texto(ruta)
+        except OSError:
+            # Igual que configparser.read: un archivo que no está o no se
+            # puede abrir se ignora y quedan los valores por defecto.
+            return cfg
+        cfg.read_string(texto, source=ruta)
         return cfg
 
-    ruta = config_path()
     try:
-        with open(ruta, "r", encoding="utf-8") as f:
-            texto = f.read()
+        texto = _leer_texto(ruta)
     except (OSError, UnicodeDecodeError) as e:
         raise ConfigIlegibleError(f"No se pudo abrir {ruta}: {type(e).__name__}") from e
     if not texto.strip():
@@ -305,8 +334,7 @@ def leer_config_celular(ruta: str = None) -> dict:
                  "puerto_remoto": PUERTO_REMOTO_POR_DEFECTO, "leido": False}
     try:
         cfg = configparser.ConfigParser(interpolation=None, strict=False)
-        with open(ruta or config_path(), "r", encoding="utf-8-sig") as f:
-            cfg.read_file(f)
+        cfg.read_string(_leer_texto(ruta or config_path(), "utf-8-sig"))
     except Exception:
         return resultado
     try:

@@ -262,6 +262,93 @@ else:
     ok("sin poder crear el temporal en la carpeta, guarda como antes")
 
 # --------------------------------------------------------------------- #
+# 3b. Un LECTOR que abre config.ini justo mientras otro lo reemplaza
+# --------------------------------------------------------------------- #
+# En Windows, abrir el archivo en el instante del os.replace da
+# PermissionError (el viejo queda "pendiente de borrar"). Lo agarró el CI en
+# Windows: 13 de 750 lecturas fallaron. Se simula acá con un open que falla
+# las primeras veces, porque en Linux el reemplazo no da ese error.
+base = nueva_base(CONFIG_REAL)
+open_original = open
+
+
+def open_que_choca(veces):
+    estado = {"quedan": veces, "llamadas": 0}
+
+    def _open(archivo, *a, **k):
+        if str(archivo).endswith("config.ini"):
+            estado["llamadas"] += 1
+            if estado["quedan"] is None or estado["quedan"] > 0:
+                if estado["quedan"] is not None:
+                    estado["quedan"] -= 1
+                raise PermissionError(13, "El proceso no tiene acceso al archivo porque está siendo utilizado")
+        return open_original(archivo, *a, **k)
+    return _open, estado
+
+
+sleep_original = time.sleep
+for nombre, leer in (("cargar_config(estricto=True)", lambda: config.cargar_config(estricto=True)),
+                     ("cargar_config()", lambda: config.cargar_config())):
+    config.open, estado = open_que_choca(3)
+    time.sleep = lambda s: None
+    try:
+        leido = leer()
+    except Exception as e:
+        leido = None
+        falla(f"{nombre} con el archivo reemplazándose (PermissionError 3 veces) lanzó {type(e).__name__}: {e}")
+    finally:
+        del config.open
+        time.sleep = sleep_original
+    if leido is not None:
+        if estado["llamadas"] != 4:
+            # Sin esto, una lectura que no pasa por el open de pos_core.config
+            # (configparser.read abre el archivo por su cuenta) "pasaría" sin
+            # haber chocado nunca con el reemplazo.
+            falla(f"{nombre}: se esperaban 3 choques y una lectura buena (4 aperturas) y hubo "
+                  f"{estado['llamadas']}: no reintenta el PermissionError del reemplazo")
+        elif leido.get("remoto", "token", fallback="") != "TOKEN-REMOTO-DE-PRUEBA":
+            falla(f"{nombre} con el archivo reemplazándose se quedó con los valores por defecto "
+                  f"(sin el [remoto] token)")
+        else:
+            ok(f"{nombre}: si el archivo se está reemplazando, reintenta y lee el real "
+               f"({estado['llamadas']} intentos)")
+
+config.open, estado = open_que_choca(3)
+time.sleep = lambda s: None
+try:
+    celular = config.leer_config_celular()
+finally:
+    del config.open
+    time.sleep = sleep_original
+if not celular.get("leido"):
+    falla("leer_config_celular con el archivo reemplazándose no lo leyó (la API se daría por apagada)")
+else:
+    ok("leer_config_celular: si el archivo se está reemplazando, reintenta y lo lee")
+
+# Si el PermissionError no se va nunca: lo de siempre, sin colgarse.
+esperas = []
+config.open, estado = open_que_choca(None)
+time.sleep = lambda s: esperas.append(s)
+try:
+    try:
+        config.cargar_config(estricto=True)
+        falla("con el archivo bloqueado para siempre, cargar_config(estricto=True) no avisó")
+    except config.ConfigIlegibleError:
+        ok("con el archivo bloqueado para siempre, cargar_config(estricto=True) avisa ConfigIlegibleError")
+    por_defecto = config.cargar_config()
+    if por_defecto.get("remoto", "token", fallback=None) != "":
+        falla("con el archivo bloqueado para siempre, cargar_config() no quedó en los valores por defecto")
+    else:
+        ok("con el archivo bloqueado para siempre, cargar_config() queda en los valores por defecto, como antes")
+finally:
+    del config.open
+    time.sleep = sleep_original
+if sum(esperas) > 2.5:
+    falla(f"con el archivo bloqueado para siempre, la lectura esperó {sum(esperas):.1f} s en total")
+else:
+    ok(f"y nunca espera de más (como mucho {sum(esperas) / 2:.2f} s por lectura)")
+
+# --------------------------------------------------------------------- #
 # 4. El candado entre procesos nunca bloquea
 # --------------------------------------------------------------------- #
 base = nueva_base(CONFIG_REAL)
