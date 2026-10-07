@@ -1,0 +1,407 @@
+# Pruebas de Otter en Linux y en Windows, la API del celular (ApiCelular.exe)
+# compilada y probada como servicio de Windows de verdad, y análisis, tests y
+# APK de la app del celular.
+#
+# OTTER_INTEGRACION=1 (abajo, para todo el workflow): una prueba que en la
+# máquina de quien desarrolla se puede saltear porque le falta algo (pwsh,
+# una función de otro módulo) acá cuenta como FALLA. Saltear en silencio en
+# el CI es lo mismo que no probar.
+#
+# El APK queda como artefacto "panel-dueno-apk" de cada corrida (pestaña
+# Actions > la corrida > Artifacts). Si se pushea un tag "movil-v1.2.3",
+# además se publica como Release con el .apk adjunto.
+#
+# Firma: si el repo tiene los secrets ANDROID_KEYSTORE_BASE64,
+# ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS y ANDROID_KEY_PASSWORD, el
+# APK se firma siempre con la misma clave y cada versión se instala encima
+# de la anterior. Sin ellos se firma con una clave de debug descartable
+# (sirve para probar, pero para actualizar hay que desinstalar antes).
+
+name: Otter (pruebas + app del celular)
+
+on:
+  push:
+    # Con "tags" definido hay que listar "branches" explícitamente; si no,
+    # GitHub ignora los push a ramas.
+    branches: ["**"]
+    paths:
+      - "apps/**"
+      - "pos_core/**"
+      - "services/**"
+      - "sql/**"
+      - "tests/**"
+      - "build/**"
+      - "scripts/**"
+      - "requirements.txt"
+      - ".github/workflows/panel-dueno.yml"
+    tags: ["movil-v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  OTTER_INTEGRACION: "1"
+
+jobs:
+  python-linux:
+    name: Pruebas de Otter (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # Las apps son Tkinter: hace falta un display (xvfb) y las bibliotecas de Tk.
+      - run: sudo apt-get update && sudo apt-get install -y xvfb python3-tk
+      - run: pip install -r requirements.txt
+      # PowerShell 7 viene en el runner: test_blindaje.py parsea los .ps1 y
+      # corre el watchdog del celular con dobles.
+      - run: pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+      - run: xvfb-run -a python tests/correr_todos.py
+
+  python-windows:
+    name: Pruebas de Otter (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      # Correrlas en Windows es lo que agarró el bug de la restauración (en
+      # Linux os.replace funciona con el archivo abierto; en Windows no).
+      - run: python tests\correr_todos.py
+
+  exe-api-celular:
+    # Lo más cerca de la PC del local sin viajar: el .exe compilado, instalado
+    # como servicio, actualizado, matado, con su regla de firewall y su
+    # watchdog corriendo como SYSTEM en PowerShell 5.1. El runner ya es
+    # administrador. Es Windows Server en inglés, no Windows 10 Home en
+    # español: no reemplaza el ensayo en la laptop de Matías.
+    # No frena el release (no está en su "needs"), pero si falla queda en rojo.
+    name: ApiCelular.exe como servicio de Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: 1. Compilar ApiCelular y correr la autoprueba del exe
+        shell: cmd
+        run: |
+          call build\compilar_api_celular.bat
+          if errorlevel 1 exit /b 1
+
+      - name: 2. Base y config.ini de prueba al lado del exe (dist\)
+        shell: python
+        run: |
+          import os, sys
+          sys.path.insert(0, os.getcwd())
+          from pos_core import config, db, paths
+          dist = os.path.abspath("dist")
+          paths.set_base_override(dist)
+          db.preparar_base()
+          config.actualizar_config_dict({
+              "general": {"nombre_local": "Kiosco de prueba del CI"},
+              "api_celular": {"habilitado": "true", "puerto": "8766"},
+          })
+          print(open(os.path.join(dist, "config.ini"), encoding="utf-8").read())
+
+      - name: 3. Instalar dos veces (la segunda es la actualizacion), parar y arrancar
+        shell: python
+        run: |
+          import os, re, subprocess, sys
+          sys.path.insert(0, os.getcwd())
+          from pos_core import servicio_windows as sw
+          exe = os.path.abspath(r"dist\ApiCelular\ApiCelular.exe")
+          fallas = []
+          for vez in (1, 2):
+              ok, detalle = sw.instalar_servicio(exe, sw.SERVICIO_CELULAR)
+              print(f"instalar_servicio #{vez}: {ok} - {detalle}")
+              if not ok:
+                  fallas.append(f"instalar_servicio #{vez}: {detalle}")
+          qc = subprocess.run(["sc.exe", "qc", sw.SERVICIO_CELULAR], capture_output=True, text=True).stdout
+          print(qc)
+          if "AUTO_START" not in qc:
+              fallas.append("sc.exe qc no dice AUTO_START")
+          if exe.lower() not in qc.lower():
+              fallas.append("sc.exe qc no tiene la ruta del exe")
+          reintentos = sw.reintentos_configurados(sw.SERVICIO_CELULAR)
+          print("reintentos_configurados:", reintentos)
+          if reintentos is not True:
+              fallas.append(f"reintentos_configurados dio {reintentos!r} despues de instalar dos veces")
+          ok, detalle = sw.parar(sw.SERVICIO_CELULAR)
+          q = subprocess.run(["sc.exe", "queryex", sw.SERVICIO_CELULAR], capture_output=True, text=True).stdout
+          print("parar:", ok, detalle)
+          print(q)
+          if not ok or "STOPPED" not in q or not re.search(r"PID\s*:\s*0\b", q):
+              fallas.append(f"parar dio {ok} ({detalle}) sin STOPPED y PID 0 en sc queryex")
+          ok, detalle = sw.arrancar(sw.SERVICIO_CELULAR)
+          print("arrancar:", ok, detalle)
+          if not ok:
+              fallas.append(f"arrancar: {detalle}")
+          if fallas:
+              print("\n".join(["FALLAS:"] + fallas))
+              sys.exit(1)
+
+      - name: 4. /api/salud contesta con la firma (hasta 60 s)
+        shell: powershell
+        run: |
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) {
+              try {
+                  $r = Invoke-RestMethod http://127.0.0.1:8766/api/salud -UseBasicParsing -TimeoutSec 5
+                  if ($r.servicio -eq 'otter-api-celular') { $ok = $true; break }
+              } catch { }
+              Start-Sleep -Seconds 2
+          }
+          if (-not $ok) {
+              Get-Content dist\logs\api_celular.log -Tail 60 -ErrorAction SilentlyContinue
+              Get-Content dist\logs\api_celular_consola.log -Tail 60 -ErrorAction SilentlyContinue
+              throw "la API del celular no contesto /api/salud en 60 s"
+          }
+          $r | ConvertTo-Json -Depth 5
+
+      - name: 5. Quien tiene el puerto, por identidad
+        shell: python
+        run: |
+          import os, sys
+          sys.path.insert(0, os.getcwd())
+          from pos_core import servicio_windows as sw
+          fallas = []
+          quien = sw.quien_escucha(sw.PUERTO_CELULAR)
+          print("quien_escucha(8766):", quien)
+          if not quien.lower().startswith("apicelular"):
+              fallas.append(f"quien_escucha(8766) dio {quien!r}")
+          ok, detalle = sw.api_celular_contesta()
+          print("api_celular_contesta:", ok, detalle)
+          if not ok:
+              fallas.append(f"api_celular_contesta: {detalle}")
+          identidad = sw.identificar_puerto(sw.PUERTO_CELULAR)
+          print("identificar_puerto(8766):", identidad)
+          if identidad != "api_celular":
+              fallas.append(f"identificar_puerto(8766) dio {identidad!r}")
+          if fallas:
+              print("\n".join(["FALLAS:"] + fallas))
+              sys.exit(1)
+
+      - name: 6. Firewall (regla propia, Block y Allow de mas)
+        shell: python
+        run: |
+          import os, subprocess, sys
+          sys.path.insert(0, os.getcwd())
+          from pos_core import servicio_windows as sw
+          exe = os.path.abspath(r"dist\ApiCelular\ApiCelular.exe")
+          def ps(script):
+              r = subprocess.run(["powershell.exe", "-NoProfile", "-Command", script], capture_output=True, text=True)
+              return r.stdout.strip()
+          fallas = []
+          # El runner no tiene Tailscale: la regla se ata a su primera placa.
+          placa = ps("(Get-NetAdapter | Where-Object Status -eq 'Up' | Select-Object -First 1).Name")
+          print("placa:", placa)
+          ok, detalle = sw.asegurar_regla_firewall_celular(exe, interfaz=placa)
+          print("asegurar_regla_firewall_celular:", ok, detalle)
+          if not ok:
+              fallas.append(f"asegurar_regla_firewall_celular: {detalle}")
+          ps(f"New-NetFirewallRule -Name OtterCI-Block -DisplayName 'OtterCI Block' -Direction Inbound "
+             f"-Action Block -Program '{exe}' | Out-Null")
+          ps(f"New-NetFirewallRule -Name OtterCI-Allow -DisplayName 'OtterCI Allow' -Direction Inbound "
+             f"-Action Allow -Program '{exe}' | Out-Null")
+          bloquean = sw.reglas_que_bloquean(exe)
+          de_mas = sw.reglas_que_abren_de_mas(exe)
+          print("reglas_que_bloquean:", bloquean)
+          print("reglas_que_abren_de_mas:", de_mas)
+          if "OtterCI Block" not in bloquean:
+              fallas.append("reglas_que_bloquean no vio la regla Block")
+          if "OtterCI Allow" not in de_mas:
+              fallas.append("reglas_que_abren_de_mas no vio la Allow sin rango")
+          if "Otter API del celular (solo Tailscale)" in de_mas:
+              fallas.append("reglas_que_abren_de_mas acuso a la regla propia")
+          print("perfiles apagados:", sw.perfiles_firewall_apagados())
+          print("placas LAN en el rango de Tailscale:", sw.placas_lan_en_rango_tailscale())
+          ps("Remove-NetFirewallRule -Name OtterCI-Block,OtterCI-Allow -ErrorAction SilentlyContinue")
+          if fallas:
+              print("\n".join(["FALLAS:"] + fallas))
+              sys.exit(1)
+
+      - name: 7. Windows la levanta solo si el proceso muere (restart/60000)
+        shell: powershell
+        run: |
+          $antes = (Get-CimInstance Win32_Service -Filter "Name='SistemaDualApiCelular'").ProcessId
+          "PID antes: $antes"
+          Stop-Process -Id $antes -Force
+          $ok = $false
+          for ($i = 0; $i -lt 50; $i++) {
+              Start-Sleep -Seconds 2
+              $s = Get-CimInstance Win32_Service -Filter "Name='SistemaDualApiCelular'"
+              if ($s.State -eq 'Running' -and $s.ProcessId -ne $antes) {
+                  try {
+                      $r = Invoke-RestMethod http://127.0.0.1:8766/api/salud -UseBasicParsing -TimeoutSec 5
+                      if ($r.servicio -eq 'otter-api-celular') { $ok = $true; break }
+                  } catch { }
+              }
+          }
+          if (-not $ok) { throw "el SCM no volvio a levantar la API del celular en 100 s" }
+          "PID despues: $($s.ProcessId)"
+
+      - name: 8. Watchdog del celular como SYSTEM (PowerShell 5.1)
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force C:\SistemaDual\watchdog | Out-Null
+          Copy-Item scripts\watchdog_celular.ps1 C:\SistemaDual\watchdog\watchdog_celular.ps1 -Force
+          Set-Content C:\SistemaDual\config.ini "[api_celular]`r`nhabilitado = true`r`npuerto = 8766`r`n" -Encoding ASCII
+          # Igual que blindar_local.ps1, salvo el disparo (a una hora: las corridas se piden a mano).
+          $accion = New-ScheduledTaskAction -Execute "powershell.exe" `
+              -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"C:\SistemaDual\watchdog\watchdog_celular.ps1`""
+          $disparo = New-ScheduledTaskTrigger -Once -At (Get-Date).AddHours(1) `
+              -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 1)
+          $opciones = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
+              -ExecutionTimeLimit (New-TimeSpan -Minutes 4)
+          Register-ScheduledTask -TaskName OtterWatchdogCelular -Action $accion -Trigger $disparo `
+              -Settings $opciones -User "SYSTEM" -RunLevel Highest -Force | Out-Null
+          if ((Get-ScheduledTask -TaskName OtterWatchdogCelular).Settings.ExecutionTimeLimit -ne 'PT4M') { throw "la tarea no quedo con el tope de 4 min" }
+
+          function CorrerTarea {
+              Start-ScheduledTask -TaskName OtterWatchdogCelular
+              Start-Sleep -Seconds 3
+              for ($i = 0; $i -lt 90; $i++) {
+                  if ((Get-ScheduledTask -TaskName OtterWatchdogCelular).State -ne 'Running') { break }
+                  Start-Sleep -Seconds 2
+              }
+              (Get-ScheduledTaskInfo -TaskName OtterWatchdogCelular).LastTaskResult
+          }
+
+          $r1 = CorrerTarea
+          "corrida 1 (API corriendo): LastTaskResult = $r1"
+          if ($r1 -ne 0) { throw "primera corrida: LastTaskResult $r1" }
+
+          sc.exe stop SistemaDualApiCelular | Out-Null
+          for ($i = 0; $i -lt 30; $i++) {
+              if ((Get-Service SistemaDualApiCelular).Status -eq 'Stopped') { break }
+              Start-Sleep -Seconds 1
+          }
+          "antes de la corrida 2: $((Get-Service SistemaDualApiCelular).Status)"
+          $r2 = CorrerTarea
+          "corrida 2 (API parada): LastTaskResult = $r2"
+          Get-Content C:\SistemaDual\watchdog\watchdog_celular.log -ErrorAction SilentlyContinue
+          if ($r2 -ne 0) { throw "segunda corrida: LastTaskResult $r2" }
+          if ((Get-Service SistemaDualApiCelular).Status -ne 'Running') { throw "el watchdog no la arranco" }
+          $log = @(Get-Content C:\SistemaDual\watchdog\watchdog_celular.log -ErrorAction SilentlyContinue)
+          if (-not ($log -match 'Stopped: arrancandola')) { throw "el log del watchdog no dice que la arranco" }
+
+      - name: 9. Todos los .ps1 parsean en PowerShell 5.1
+        shell: powershell
+        run: |
+          $mal = 0
+          foreach ($f in @(Get-ChildItem scripts\*.ps1) + @(Get-ChildItem build\*.ps1)) {
+              $e = $null; $t = $null
+              $ast = [Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$t, [ref]$e)
+              "$($f.Name): $($e.Count) errores"
+              $e | ForEach-Object { "   $($_.Message) (linea $($_.Extent.StartLineNumber))" }
+              $mal += $e.Count
+              # El watchdog del 8765 vive como here-string adentro de blindar_local.ps1
+              # y se escribe a watchdog.ps1: se parsea tambien.
+              $ast.FindAll({ $args[0] -is [Management.Automation.Language.StringConstantExpressionAst] -and
+                             $args[0].StringConstantType -eq 'SingleQuotedHereString' }, $true) | ForEach-Object {
+                  $e2 = $null
+                  [void][Management.Automation.Language.Parser]::ParseInput($_.Value, [ref]$t, [ref]$e2)
+                  "   here-string de la linea $($_.Extent.StartLineNumber): $($e2.Count) errores"
+                  $mal += $e2.Count
+              }
+          }
+          if ($mal -gt 0) { exit 1 }
+
+      - name: Logs si algo fallo
+        if: failure()
+        shell: powershell
+        run: |
+          Get-Content dist\logs\api_celular.log -Tail 80 -ErrorAction SilentlyContinue
+          Get-Content dist\logs\api_celular_consola.log -Tail 80 -ErrorAction SilentlyContinue
+          Get-Content C:\SistemaDual\watchdog\watchdog_celular.log -ErrorAction SilentlyContinue
+          sc.exe queryex SistemaDualApiCelular
+          sc.exe qc SistemaDualApiCelular
+
+      - name: 10. Limpieza
+        if: always()
+        shell: powershell
+        run: |
+          Unregister-ScheduledTask -TaskName OtterWatchdogCelular -Confirm:$false -ErrorAction SilentlyContinue
+          sc.exe stop SistemaDualApiCelular | Out-Null
+          Start-Sleep -Seconds 5
+          if (Test-Path dist\ApiCelular\ApiCelular.exe) { & dist\ApiCelular\ApiCelular.exe remove }
+          Remove-NetFirewallRule -Name OtterApiCelular-Tailscale,OtterCI-Block,OtterCI-Allow -ErrorAction SilentlyContinue
+          exit 0
+
+  app:
+    name: App Android (analyze, test, APK)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/movil_dueno
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.6"
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      # Incluye contrato_test.dart: parsea cada ejemplo del fixture del contrato con modelos.dart.
+      - run: flutter test
+
+      - name: Preparar firma (si hay secrets)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::Sin secrets de firma: el APK sale firmado con clave de debug."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+          # Solo la ruta: contraseñas y alias van como variables de entorno al
+          # paso de build (key.properties toma la '\' como escape y una
+          # contraseña con '\' rompía la firma). Ver android/app/build.gradle.kts.
+          echo "storeFile=upload-keystore.jks" > android/key.properties
+
+      - name: Compilar APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: flutter build apk --release
+      - run: mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/panel-dueno.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: panel-dueno-apk
+          path: apps/movil_dueno/build/app/outputs/flutter-apk/panel-dueno.apk
+          if-no-files-found: error
+
+  release:
+    name: Publicar Release del APK
+    if: startsWith(github.ref, 'refs/tags/movil-v')
+    needs: [python-linux, app]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: panel-dueno-apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: panel-dueno.apk
+          body: |
+            App "Panel Dueño" para Android. Descargá `panel-dueno.apk` desde el celular e instalala
+            (la primera vez Android pide permitir "instalar apps de origen desconocido").
