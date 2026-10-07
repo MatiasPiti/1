@@ -679,12 +679,18 @@ def asegurar_regla_firewall_celular(exe: str, puerto: int = PUERTO_CELULAR,
         if not interfaz:
             return False, "no encontré la placa de Tailscale"
         nombre = _comillas_ps(REGLA_FIREWALL_CELULAR)
+        # El error de Windows se devuelve tal cual (ERROR_REGLA: ...): antes se
+        # lo tragaba y siempre decía "¿falta ejecutar como administrador?", que
+        # en el CI resultó falso (la placa elegida era la que no servía) y en
+        # el local mandaría a buscar el problema donde no está.
         script = (
             f"Remove-NetFirewallRule -Name {nombre} -ErrorAction SilentlyContinue\n"
-            f"New-NetFirewallRule -Name {nombre} -DisplayName 'Otter API del celular (solo Tailscale)' "
+            "try {\n"
+            f"  New-NetFirewallRule -Name {nombre} -DisplayName 'Otter API del celular (solo Tailscale)' "
             f"-Direction Inbound -Action Allow -Protocol TCP -LocalPort {int(puerto)} "
             f"-RemoteAddress 100.64.0.0/10 -Program {_comillas_ps(exe)} "
             f"-InterfaceAlias {_comillas_ps(interfaz)} -Profile Any -ErrorAction Stop | Out-Null\n"
+            "} catch { 'ERROR_REGLA: ' + $_.Exception.Message; exit 1 }\n"
             f"$r = Get-NetFirewallRule -Name {nombre} -ErrorAction Stop\n"
             "[pscustomobject]@{\n"
             "  remota = (@(($r | Get-NetFirewallAddressFilter).RemoteAddress) -join ',');\n"
@@ -695,6 +701,9 @@ def asegurar_regla_firewall_celular(exe: str, puerto: int = PUERTO_CELULAR,
         codigo, salida = _powershell(script, timeout=90)
         lineas = _lineas(salida)
         if codigo != 0 or not lineas:
+            error = next((l[len("ERROR_REGLA:"):].strip() for l in lineas if l.startswith("ERROR_REGLA:")), "")
+            if error:
+                return False, f"Windows no dejó crear la regla: {error[:300]}"
             return False, "no se pudo crear la regla (¿falta ejecutar como administrador?)"
         try:
             leido = json.loads(lineas[-1])

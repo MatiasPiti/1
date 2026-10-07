@@ -203,13 +203,26 @@ jobs:
               r = subprocess.run(["powershell.exe", "-NoProfile", "-Command", script], capture_output=True, text=True)
               return r.stdout.strip()
           fallas = []
-          # El runner no tiene Tailscale: la regla se ata a su primera placa.
-          placa = ps("(Get-NetAdapter | Where-Object Status -eq 'Up' | Select-Object -First 1).Name")
-          print("placa:", placa)
-          ok, detalle = sw.asegurar_regla_firewall_celular(exe, interfaz=placa)
-          print("asegurar_regla_firewall_celular:", ok, detalle)
-          if not ok:
-              fallas.append(f"asegurar_regla_firewall_celular: {detalle}")
+          # El runner no tiene Tailscale: la regla se ata a una placa del runner.
+          # Cuál es "la primera" cambia de corrida en corrida (vEthernet (nat),
+          # Ethernet 4...) y con alguna Windows no deja: se prueban todas las que
+          # tienen IPv4 y alcanza con que una quede bien. El detalle de cada una
+          # queda en el log (asegurar_regla_firewall_celular devuelve el error
+          # real de Windows).
+          placas = [p for p in ps(
+              "Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
+              "Where-Object { $_.InterfaceAlias -notlike 'Loopback*' } | "
+              "Select-Object -ExpandProperty InterfaceAlias -Unique").splitlines() if p.strip()]
+          print("placas con IPv4:", placas)
+          resultados = []
+          for placa in placas:
+              ok, detalle = sw.asegurar_regla_firewall_celular(exe, interfaz=placa.strip())
+              print(f"asegurar_regla_firewall_celular({placa.strip()!r}):", ok, detalle)
+              resultados.append(ok)
+              if ok:
+                  break
+          if not any(resultados):
+              fallas.append(f"asegurar_regla_firewall_celular no pudo con ninguna placa: {placas}")
           ps(f"New-NetFirewallRule -Name OtterCI-Block -DisplayName 'OtterCI Block' -Direction Inbound "
              f"-Action Block -Program '{exe}' | Out-Null")
           ps(f"New-NetFirewallRule -Name OtterCI-Allow -DisplayName 'OtterCI Allow' -Direction Inbound "

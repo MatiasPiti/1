@@ -553,6 +553,26 @@ finally:
 if not [f for f in fallos if "ninguna función" in f or "sin PowerShell" in f]:
     ok("ninguna función nueva de servicio_windows lanza, aunque sc.exe y PowerShell exploten")
 
+# Si Windows no deja crear la regla del firewall, el detalle dice el error de
+# Windows y no "¿falta ejecutar como administrador?" (en el CI era falso: la
+# placa elegida era la que no servía, con permisos de sobra).
+p = Parches()
+try:
+    p.poner(sw, "_ES_WINDOWS", True)
+    p.poner(sw, "_powershell", lambda script, timeout=60: (
+        1, "ERROR_REGLA: No se encontraron objetos MSFT_NetAdapter con la propiedad InterfaceAlias\n"))
+    ok_regla, detalle_regla = sw.asegurar_regla_firewall_celular(EXE_WIN, interfaz="Ethernet 4")
+    p.poner(sw, "_powershell", lambda script, timeout=60: (1, ""))
+    ok_mudo, detalle_mudo = sw.asegurar_regla_firewall_celular(EXE_WIN, interfaz="Ethernet 4")
+finally:
+    p.sacar()
+if ok_regla or "MSFT_NetAdapter" not in detalle_regla or "administrador" in detalle_regla:
+    fallos.append(f"regla de firewall rechazada por Windows: el detalle no trae el error real: {detalle_regla!r}")
+elif ok_mudo or "administrador" not in detalle_mudo:
+    fallos.append(f"regla de firewall sin ningún texto de PowerShell: detalle inesperado {detalle_mudo!r}")
+else:
+    ok("si Windows no deja crear la regla del firewall, el detalle dice por qué (no adivina 'administrador')")
+
 
 # ---------------------------------------------------------------- #
 # Identidad por HTTP, contra servidores de verdad en 127.0.0.1
@@ -1191,6 +1211,18 @@ serv.quien = "ApiDueno (PID 70)"
 r = fila(filas_celular(destino_revision(), serv), "No quedan restos")
 esperar(r and r[0] is False and "ApiDueno (PID 70)" in r[1] and "no se borró nada" in r[1],
         f"restos del ApiDueno viejo: {r}")
+# La carpeta del ApiDueno viejo también es un resto (es lo que quedó en el
+# local el 5/10): sin proceso ni tarea, igual tiene que dar NO y decir cuál.
+serv = ServicioFalso()
+destino_con_viejo = destino_revision()
+escribir(os.path.join(destino_con_viejo, "ApiDueno", "ApiDueno.exe"), "exe viejo")
+r = fila(filas_celular(destino_con_viejo, serv), "No quedan restos")
+esperar(r and r[0] is False and os.path.join(destino_con_viejo, "ApiDueno") in r[1]
+        and "borrala a mano" in r[1] and os.path.isdir(os.path.join(destino_con_viejo, "ApiDueno")),
+        f"con la carpeta ApiDueno vieja la fila tiene que dar NO y no borrar nada: {r}")
+serv = ServicioFalso()
+r = fila(filas_celular(destino_revision(), serv), "No quedan restos")
+esperar(r and r[0] is True, f"sin proceso, tarea ni carpeta del ApiDueno viejo la fila tiene que dar SI: {r}")
 if not [f for f in fallos if "fila" in f or "firewall" in f or "watchdog" in f or "Deshabilitada" in f
         or "habilitado" in f or "restos" in f or "explotando" in f]:
     ok("filas de la API del celular: solo con la carpeta, aisladas, Deshabilitada intocable, "

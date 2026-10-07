@@ -490,12 +490,21 @@ def _filas_celular(destino: str, anotar) -> None:
     que = "No quedan restos del ApiDueno viejo"
     try:
         restos = sw.restos_api_dueno()
+        # La carpeta también es un resto: con ApiDueno.exe ahí, cualquiera lo
+        # puede volver a correr contra la base del negocio, que es justo lo que
+        # pasó el 5/10. Sin mirarla, la fila daba SI con la carpeta puesta.
+        carpeta_vieja = os.path.join(destino, "ApiDueno")
+        resto_carpeta = (f"quedó la carpeta {carpeta_vieja}: borrala a mano"
+                         if os.path.isdir(carpeta_vieja) else None)
         if restos is None:
-            anotar(que, False, "no se pudo revisar")
+            anotar(que, False, "no se pudo revisar procesos y tareas"
+                   + (f"; {resto_carpeta}" if resto_carpeta else ""))
         else:
             quien = sw.quien_escucha(sw.PUERTO_POR_DEFECTO)
             if quien.lower().startswith("apidueno"):
                 restos = list(restos) + [f"el {sw.PUERTO_POR_DEFECTO} lo tiene {quien}"]
+            if resto_carpeta:
+                restos = list(restos) + [resto_carpeta]
             # Solo informa: no se borra nada a ciegas.
             anotar(que, not restos, "; ".join(restos) + (" (no se borró nada)" if restos else ""))
     except Exception as e:
