@@ -267,6 +267,30 @@ function PuertoVivo {
     } catch { return $false }
 }
 
+function RemoteApiContesta {
+    # /health sin token tiene que dar 401 {"ok": false, "error": "token inv(a con acento)lido"}. Comodin
+    # ('token inv*') para no depender de la codificacion del acento en PowerShell 5.1 (este archivo es ASCII).
+    try {
+        $req = [Net.WebRequest]::Create("http://127.0.0.1:8765/health"); $req.Proxy = $null; $req.Timeout = 5000
+        try { $resp = $req.GetResponse() } catch [Net.WebException] { $resp = $_.Exception.Response }
+        if ($null -eq $resp) { return $false }
+        $codigo = [int]$resp.StatusCode
+        $txt = (New-Object IO.StreamReader($resp.GetResponseStream())).ReadToEnd(); $resp.Close()
+        $j = $txt | ConvertFrom-Json
+        return ($codigo -eq 401 -and $j.ok -eq $false -and $j.error -like 'token inv*')
+    } catch { return $false }
+}
+
+function QuienEscucha($puerto) {
+    # La misma de watchdog_celular.ps1: el PID duenio del socket (enum, no
+    # depende del idioma; nada de netstat).
+    try {
+        $c = Get-NetTCPConnection -LocalPort $puerto -State Listen -ErrorAction Stop | Select-Object -First 1
+        $p = Get-Process -Id $c.OwningProcess -ErrorAction Stop
+        return "$($p.ProcessName) (PID $($p.Id))"
+    } catch { return "" }
+}
+
 # Aviso temprano del asesino silencioso: con el disco lleno, SQLite puede
 # corromper la base al escribir.
 try {
@@ -315,11 +339,16 @@ if (-not (PuertoVivo)) {
     # Freno de mano: si ya hubo 3 reinicios por esta causa en 24 hs, el
     # problema no se arregla reiniciando. Mejor dejar de dar vueltas y que
     # quede escrito, que entrar en un ciclo de reinicios.
+    #
+    # @() SIEMPRE: sin eso, con UNA sola marca Get-Content devuelve un texto
+    # suelto (no una lista), "texto + fecha" los pega en una linea que no se
+    # puede leer como fecha y la cuenta vuelve a 0. El freno no freno NUNCA
+    # (verificado: 0, 1, 0, 1... para siempre; con @() frena en la 4.a).
     $recientes = @()
     if (Test-Path $marcas) {
-        $recientes = Get-Content $marcas | Where-Object {
+        $recientes = @(Get-Content $marcas | Where-Object {
             try { [datetime]$_ -gt (Get-Date).AddHours(-24) } catch { $false }
-        }
+        })
     }
     if ($recientes.Count -ge 3) {
         Escribir "el puerto sigue muerto tras $($recientes.Count) reinicios en 24 hs: NO se reinicia mas, requiere revision manual"
@@ -332,9 +361,23 @@ if (-not (PuertoVivo)) {
         Start-Sleep -Seconds 10
         $vivo = PuertoVivo
         Escribir "tras reiniciar, puerto vivo=$vivo"
-        ($recientes + (Get-Date).ToString("o")) | Set-Content $marcas
+        (@($recientes) + (Get-Date).ToString("o")) | Set-Content $marcas
     } catch { Escribir "ERROR al reiniciar: $_" }
 }
+
+# Aviso que SOLO INFORMA (no cambia ninguna decision de reinicio, que sigue
+# mirando PuertoVivo): si el 8765 conecta pero no contesta como la API remota
+# de Otter, el puerto lo tiene OTRO programa y reiniciar el servicio de stock
+# no lo arregla. Una vez por dia, para que no llene el log.
+try {
+    if ((PuertoVivo) -and -not (RemoteApiContesta)) {
+        $avisoOtro = "C:\SistemaDual\watchdog\aviso_8765_otro_$(Get-Date -Format yyyyMMdd).txt"
+        if (-not (Test-Path $avisoOtro)) {
+            Escribir "el 8765 conecta pero no contesta como la API remota de Otter: lo tiene $(QuienEscucha 8765)"
+            "avisado" | Out-File $avisoOtro
+        }
+    }
+} catch { }
 '@
 Set-Content -Path "$carpeta\watchdog.ps1" -Value $vigilante -Encoding UTF8
 
@@ -345,13 +388,18 @@ $accion = New-ScheduledTaskAction -Execute "powershell.exe" `
 $disparo = New-ScheduledTaskTrigger -Once -At (Get-Date) `
     -RepetitionInterval (New-TimeSpan -Minutes 5) `
     -RepetitionDuration (New-TimeSpan -Days 3650)
-$opciones = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew
+# Tope de 4 minutos: Restart-Service espera SIN LIMITE a que el servicio
+# pare. Con el servicio trabado en "Stop Pending", la corrida quedaba viva,
+# IgnoreNew salteaba todas las siguientes y el tope por defecto de Windows
+# es de 72 hs: hasta 3 dias sin watchdog.
+$opciones = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 4)
 # Corre como SYSTEM: asi funciona con la sesion cerrada, que es justo
 # cuando hace falta.
 Register-ScheduledTask -TaskName "OtterWatchdog" -Action $accion -Trigger $disparo `
     -Settings $opciones -User "SYSTEM" -RunLevel Highest -Force | Out-Null
 $tarea = Get-ScheduledTask -TaskName OtterWatchdog -ErrorAction SilentlyContinue
-Anotar "Watchdog instalado" ($null -ne $tarea) "Estado=$($tarea.State)"
+Anotar "Watchdog instalado" (($null -ne $tarea) -and ($tarea.Settings.ExecutionTimeLimit -eq 'PT4M')) "Estado=$($tarea.State), tope=$($tarea.Settings.ExecutionTimeLimit)"
 
 # ---------------------------------------------------------------- #
 # Watchdog de la API del celular: TAREA PROPIA, con su script propio

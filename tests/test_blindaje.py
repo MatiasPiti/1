@@ -16,6 +16,8 @@ Lo que se cuida acá es lo que no se ve mirando la ventana:
   - Que el watchdog de la API del celular sea una tarea propia, con tope de
     4 minutos, que nunca nombre al servicio de stock, que lea config.ini
     igual que Python y que su freno frene (corriéndolo con dobles).
+  - El watchdog del 8765 (commit aparte): freno con @() y tope de 4 minutos,
+    con las decisiones de reinicio todavía por PuertoVivo.
 """
 import os
 import sys
@@ -698,6 +700,45 @@ else:
         print(f"FLUJO DEL WATCHDOG DEL CELULAR: {len(ESCENARIOS)} escenarios con lo esperado "
               f"(Stop Pending trabado y freno incluidos)")
     shutil.rmtree(carpeta_ps, ignore_errors=True)
+
+# ---------------------------------------------------------------- #
+# 4e. Watchdog del 8765 (commit aparte): el freno con @() y el tope de 4 min
+# ---------------------------------------------------------------- #
+# Cambia lo que ya corre en producción, aunque lo devuelve a lo documentado:
+# sin @(), con una sola marca Get-Content devuelve un texto suelto, "texto +
+# fecha" los pega en una línea ilegible y la cuenta vuelve a 0 (0, 1, 0, 1...
+# para siempre). Con el puerto muerto el servicio de stock se reiniciaba cada
+# 5 minutos sin frenar nunca. Las decisiones de reinicio NO cambian: siguen
+# mirando PuertoVivo.
+m = re.search(r"\$vigilante\s*=\s*@'\n(.*?)\n'@", blindar, re.DOTALL)
+if not m:
+    fallos.append("no encontré el watchdog del 8765 (el here-string $vigilante) en blindar_local.ps1")
+else:
+    vigilante = m.group(1)
+    mascara_vig = mascara_ps(vigilante)
+    if "$recientes = @(Get-Content $marcas" not in vigilante:
+        fallos.append("el freno del watchdog del 8765 lee las marcas sin @(): con una sola marca "
+                       "la cuenta vuelve a 0 y nunca frena")
+    if "(@($recientes) + (Get-Date).ToString(\"o\")) | Set-Content $marcas" not in vigilante:
+        fallos.append("el freno del watchdog del 8765 escribe las marcas sin @(): pega la fecha "
+                       "nueva a la vieja en una línea que no se puede leer")
+    puerto_muerto = bloques(mascara_vig, r"if\s*\(\s*-not\s*\(\s*PuertoVivo\s*\)\s*\)\s*\{")
+    p_restart = mascara_vig.find("Restart-Service SistemaDualStockService")
+    if len(puerto_muerto) != 1 or not (puerto_muerto[0][0] < p_restart < puerto_muerto[0][1]):
+        fallos.append("el reinicio del servicio de stock ya no depende de PuertoVivo (las decisiones "
+                       "de reinicio del watchdog del 8765 no se tocan en esta tarea)")
+    else:
+        a, b = puerto_muerto[0]
+        if "RemoteApiContesta" in mascara_vig[a:b]:
+            fallos.append("RemoteApiContesta decide un reinicio: por ahora solo puede informar")
+    if "aviso_8765_otro_" not in vigilante or "(PuertoVivo) -and -not (RemoteApiContesta)" not in vigilante:
+        fallos.append("falta el aviso de 'el 8765 lo tiene otro programa'")
+m = re.search(r"\$opciones\s*=\s*New-ScheduledTaskSettingsSet", mascara_blindar)
+if not m or "-ExecutionTimeLimit (New-TimeSpan -Minutes 4)" not in sentencia(mascara_blindar, m.start()):
+    fallos.append("OtterWatchdog sin -ExecutionTimeLimit: con el servicio trabado en Stop Pending, "
+                   "Restart-Service espera sin límite y el servicio de stock queda sin watchdog hasta 72 hs")
+if not [f for f in fallos if "8765" in f or "OtterWatchdog sin" in f or "PuertoVivo" in f]:
+    print("WATCHDOG DEL 8765: freno con @() en las dos líneas, tope de 4 min, reinicio por PuertoVivo")
 
 # ---------------------------------------------------------------- #
 # 5. La ventana abre de verdad, y el log es seguro entre hilos
