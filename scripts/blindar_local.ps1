@@ -18,6 +18,19 @@
 #      sesion del usuario, salvo que este en modo "unattended".
 #
 # No toca la base de datos ni el config.ini.
+#
+# Si la PC tiene la API del celular (servicio SistemaDualApiCelular, puerto
+# 8766), tambien la deja en Automatic con reintentos y le instala su PROPIO
+# watchdog (tarea OtterWatchdogCelular, script watchdog_celular.ps1 al lado
+# de este): una API colgada nunca puede dejar sin watchdog al servicio de
+# stock. Esa tarea se registra siempre, haya o no API: el script sale solo
+# si no hay servicio, y asi instalar la API despues no obliga a re-blindar.
+#
+# -SoloWatchdog: corre SOLO los pasos 3 (watchdogs) y 5 (verificacion). No
+# pisa el estado guardado (paso 0), no toca el servicio (1), ni la energia
+# ni las placas de red (2: corta la red un instante), ni Tailscale (4). Es
+# para actualizar el watchdog con el negocio abierto.
+param([switch]$SoloWatchdog)
 
 $ErrorActionPreference = "Continue"
 $resultados = @()
@@ -26,12 +39,31 @@ function Anotar($paso, $ok, $detalle) {
     $script:resultados += [PSCustomObject]@{ Paso = $paso; OK = $ok; Detalle = $detalle }
 }
 
-# ===================================================================== #
-Write-Host "== 0/5  Guardando el estado ACTUAL (antes de tocar nada) ==" -ForegroundColor Cyan
-# ===================================================================== #
+function CelularContesta($puerto) {
+    # La MISMA que en watchdog_celular.ps1: contesta /api/salud con la firma
+    # de la API del celular (que el puerto conecte no alcanza: podria ser
+    # otro programa). WebRequest a mano: sin proxy y sin el motor de IE.
+    try {
+        $req = [Net.WebRequest]::Create("http://127.0.0.1:$puerto/api/salud"); $req.Proxy = $null; $req.Timeout = 5000
+        $resp = $req.GetResponse(); $txt = (New-Object IO.StreamReader($resp.GetResponseStream())).ReadToEnd(); $resp.Close()
+        return (($txt | ConvertFrom-Json).servicio -eq 'otter-api-celular')
+    } catch { return $false }
+}
+
 $carpeta = "C:\SistemaDual\watchdog"
 New-Item -ItemType Directory -Force -Path $carpeta | Out-Null
 $antes = "$carpeta\estado_antes_del_blindaje.txt"
+
+if ($SoloWatchdog) {
+    Write-Host "Modo SOLO WATCHDOG: no se toca la red, la energia ni Tailscale." -ForegroundColor Yellow
+}
+
+# Los pasos 0, 1, 2 y 4 van adentro de "if (-not $SoloWatchdog)". El codigo
+# de adentro no se reindento a proposito: es el mismo de siempre.
+if (-not $SoloWatchdog) {
+# ===================================================================== #
+Write-Host "== 0/5  Guardando el estado ACTUAL (antes de tocar nada) ==" -ForegroundColor Cyan
+# ===================================================================== #
 
 "=== Estado antes del blindaje: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===" | Out-File $antes
 "--- sc.exe qc (aca se ve si el arranque estaba en Manual, que explicaria" | Out-File $antes -Append
@@ -51,9 +83,18 @@ $antes = "$carpeta\estado_antes_del_blindaje.txt"
 "`n--- Errores del sistema en los ultimos 7 dias (apagones, cuelgues) ---" | Out-File $antes -Append
 (Get-WinEvent -FilterHashtable @{LogName='System'; Level=1,2; StartTime=(Get-Date).AddDays(-7)} -MaxEvents 40 -ErrorAction SilentlyContinue |
     Select-Object TimeCreated, Id, ProviderName, Message | Format-List | Out-String) | Out-File $antes -Append
+"`n--- API del celular (si esta instalada): sc.exe qc, estado y ultimas 60 lineas de su log ---" | Out-File $antes -Append
+(sc.exe qc SistemaDualApiCelular 2>&1) | Out-File $antes -Append
+(Get-Service SistemaDualApiCelular -ErrorAction SilentlyContinue | Format-List * | Out-String) | Out-File $antes -Append
+# El log de la API tiene la IP del celular en cada pedido, y este archivo se
+# manda por chat: las IPv4 se tapan.
+(Get-Content C:\SistemaDual\logs\api_celular.log -Tail 60 -ErrorAction SilentlyContinue |
+    ForEach-Object { $_ -replace '\b\d{1,3}(\.\d{1,3}){3}\b', 'x.x.x.x' }) | Out-File $antes -Append
 Write-Host "Guardado en $antes  <-- MANDASELO A CLAUDE, dice por que se cayo."
 Anotar "Estado previo guardado" $true $antes
+}
 
+if (-not $SoloWatchdog) {
 # ===================================================================== #
 Write-Host "`n== 1/5  El servicio arranca con Windows y se reintenta solo ==" -ForegroundColor Cyan
 # ===================================================================== #
@@ -64,6 +105,27 @@ sc.exe failure SistemaDualStockService reset= 86400 actions= restart/60000/resta
 $svc = Get-Service SistemaDualStockService -ErrorAction SilentlyContinue
 Anotar "Servicio en Automatic" ($svc -and $svc.StartType -eq "Automatic") "StartType=$($svc.StartType)"
 
+# La API del celular (si esta instalada), con UNA excepcion: si esta
+# Deshabilitada en Windows no se toca. Es una decision de alguien, y si el
+# blindaje la deshiciera habria dos interruptores y uno se desharia solo (la
+# forma documentada de apagarla es [api_celular] habilitado = false).
+$svcCel = Get-Service SistemaDualApiCelular -ErrorAction SilentlyContinue
+if ($svcCel) {
+    if ($svcCel.StartType -eq 'Disabled') {
+        Anotar "API del celular en Automatic" $false "Deshabilitada en Windows: no se toca (para apagarla se usa [api_celular] habilitado = false)"
+    } else {
+        Set-Service SistemaDualApiCelular -StartupType Automatic
+        sc.exe failure SistemaDualApiCelular reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
+        # failureflag 1: que los reintentos corran tambien cuando el proceso
+        # termina con error (el autochequeo de la API sale con os._exit(3)).
+        sc.exe failureflag SistemaDualApiCelular 1 | Out-Null
+        $svcCel = Get-Service SistemaDualApiCelular -ErrorAction SilentlyContinue
+        Anotar "API del celular en Automatic" ($svcCel.StartType -eq 'Automatic') "StartType=$($svcCel.StartType)"
+    }
+}
+}
+
+if (-not $SoloWatchdog) {
 # ===================================================================== #
 Write-Host "`n== 2/5  La PC no se duerme, y la placa de red tampoco ==" -ForegroundColor Cyan
 # ===================================================================== #
@@ -166,6 +228,7 @@ $detalleRed = if (-not $seEnumero) { "no se pudieron leer las placas de red" }
               elseif ($vistas -eq 0) { "no hay placas fisicas activas" }
               else { "$placas de $vistas ajustada(s); el resto no expone la opcion" }
 Anotar "Placa de red siempre despierta" $seEnumero $detalleRed
+}
 
 # ===================================================================== #
 Write-Host "`n== 3/5  Watchdog cada 5 minutos ==" -ForegroundColor Cyan
@@ -290,6 +353,38 @@ Register-ScheduledTask -TaskName "OtterWatchdog" -Action $accion -Trigger $dispa
 $tarea = Get-ScheduledTask -TaskName OtterWatchdog -ErrorAction SilentlyContinue
 Anotar "Watchdog instalado" ($null -ne $tarea) "Estado=$($tarea.State)"
 
+# ---------------------------------------------------------------- #
+# Watchdog de la API del celular: TAREA PROPIA, con su script propio
+# (watchdog_celular.ps1, al lado de este). Si la API se cuelga, o su
+# script se traba, el watchdog del 8765 sigue funcionando solo. Tope de
+# 4 minutos: sin tope, una corrida trabada mas IgnoreNew dejaba la tarea
+# sin volver a correr por 72 hs (el tope por defecto de Windows).
+# ---------------------------------------------------------------- #
+$origenCel = "$PSScriptRoot\watchdog_celular.ps1"
+$destinoCel = "$carpeta\watchdog_celular.ps1"
+if (Test-Path $origenCel) {
+    Copy-Item $origenCel $destinoCel -Force
+    $accionCel = New-ScheduledTaskAction -Execute "powershell.exe" `
+        -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$destinoCel`""
+    $disparoCel = New-ScheduledTaskTrigger -Once -At (Get-Date) `
+        -RepetitionInterval (New-TimeSpan -Minutes 5) `
+        -RepetitionDuration (New-TimeSpan -Days 3650)
+    $opcionesCel = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 4)
+    Register-ScheduledTask -TaskName "OtterWatchdogCelular" -Action $accionCel -Trigger $disparoCel `
+        -Settings $opcionesCel -User "SYSTEM" -RunLevel Highest -Force | Out-Null
+    # Se verifica RELEYENDO la tarea: que exista, que tenga el tope y que
+    # apunte al script copiado. Que Register no tire error no prueba nada.
+    $tareaCel = Get-ScheduledTask -TaskName OtterWatchdogCelular -ErrorAction SilentlyContinue
+    $okCel = ($null -ne $tareaCel) -and ($tareaCel.Settings.ExecutionTimeLimit -eq 'PT4M') -and
+             (@($tareaCel.Actions | Where-Object { $_.Arguments -like '*watchdog_celular.ps1*' }).Count -gt 0) -and
+             (Test-Path $destinoCel)
+    Anotar "Watchdog del celular instalado" $okCel "Estado=$($tareaCel.State), tope=$($tareaCel.Settings.ExecutionTimeLimit)"
+} else {
+    Anotar "Watchdog del celular instalado" $false "falta watchdog_celular.ps1 al lado de blindar_local.ps1"
+}
+
+if (-not $SoloWatchdog) {
 # ===================================================================== #
 Write-Host "`n== 4/5  Tailscale conectado aunque nadie inicie sesion ==" -ForegroundColor Cyan
 # ===================================================================== #
@@ -318,6 +413,7 @@ if (-not $tsOk) {
     Write-Host "de todos: sin esto, al cerrar sesion la PC desaparece de la red." -ForegroundColor Yellow
 }
 Anotar "Tailscale unattended" $tsOk $(if ($tsOk) { "aplicado por CLI" } else { "HAY QUE HACERLO A MANO desde el icono" })
+}
 
 # ===================================================================== #
 Write-Host "`n== 5/5  Verificacion ==" -ForegroundColor Cyan
@@ -338,11 +434,29 @@ try {
 } catch { }
 Anotar "Puerto 8765 escuchando" $puerto $(if ($puerto) { "responde" } else { "NO responde: revisar [remoto] habilitado en config.ini y el log del servicio" })
 
+# La API del celular, solo si esta instalada. Si esta parada (y no
+# Deshabilitada) se arranca con sc.exe y no con Start-Service, que espera
+# sin limite si el servicio se traba arrancando.
+$svcCelFinal = Get-Service SistemaDualApiCelular -ErrorAction SilentlyContinue
+if ($svcCelFinal) {
+    if ($svcCelFinal.Status -ne "Running" -and $svcCelFinal.StartType -ne 'Disabled') {
+        Write-Host "La API del celular no estaba corriendo: arrancandola." -ForegroundColor Yellow
+        & sc.exe start SistemaDualApiCelular | Out-Null
+        Start-Sleep -Seconds 15
+        $svcCelFinal = Get-Service SistemaDualApiCelular -ErrorAction SilentlyContinue
+    }
+    Anotar "API del celular corriendo" ($svcCelFinal.Status -eq "Running") "Status=$($svcCelFinal.Status), StartType=$($svcCelFinal.StartType)"
+    $celContesta = CelularContesta 8766
+    Anotar "8766 contesta la API del celular" $celContesta $(if ($celContesta) { "responde con su firma" } else { "NO responde: si se apago a proposito (ApiCelular.exe deshabilitar) es lo esperado; si no, mirar C:\SistemaDual\logs\api_celular.log" })
+}
+
 Write-Host ""
 $resultados | Format-Table @{L='OK';E={ if ($_.OK) { "SI" } else { "NO" } }}, Paso, Detalle -AutoSize
 
 $fallaron = @($resultados | Where-Object { -not $_.OK })
-if ($fallaron.Count -eq 0) {
+if ($fallaron.Count -eq 0 -and $SoloWatchdog) {
+    Write-Host "TODO OK. Watchdog actualizado: no hace falta la prueba de apagado." -ForegroundColor Green
+} elseif ($fallaron.Count -eq 0) {
     Write-Host "TODO OK. Ahora la prueba de verdad: cerra sesion (NO apagar) y" -ForegroundColor Green
     Write-Host "fijate desde el celular si http://<ip>:8765/health sigue contestando." -ForegroundColor Green
 } else {

@@ -10,6 +10,12 @@ Lo que se cuida acá es lo que no se ve mirando la ventana:
     va a estar arreglada y la otra no.
   - Que los .ps1 sigan cubriendo las causas conocidas (energía, botón,
     tapa, placa de red, puerto).
+  - Que «Solo actualizar el watchdog» (-SoloWatchdog) no toque la red, la
+    energía ni Tailscale: se verifica qué pasos quedan adentro de qué if,
+    con el parser de PowerShell si lo hay.
+  - Que el watchdog de la API del celular sea una tarea propia, con tope de
+    4 minutos, que nunca nombre al servicio de stock, que lea config.ini
+    igual que Python y que su freno frene (corriéndolo con dobles).
 """
 import os
 import sys
@@ -128,6 +134,572 @@ for marca, que_cuida in (("$sinSuspension", "que la PC no se suspenda"),
 print("CADA 'SI' DE LA TABLA COMPRUEBA ALGO: ok")
 
 # ---------------------------------------------------------------- #
+# 4d. -SoloWatchdog y el watchdog de la API del celular
+# ---------------------------------------------------------------- #
+# Lo que se mira acá es la ESTRUCTURA de los .ps1 (qué queda adentro de qué
+# if) y, si hay PowerShell, cómo se comportan de verdad. Mirar el texto no
+# alcanza: un paso que quede afuera del "if (-not $SoloWatchdog)" corta la
+# red con el negocio abierto, que es justo lo que ese modo existe para evitar.
+import json
+import re
+import shutil
+import subprocess
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
+
+from pos_core import config as config_otter
+from pos_core import servicio_windows
+
+RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RUTA_BLINDAR = buscar_script("blindar_local.ps1")
+RUTA_WATCHDOG_CEL = os.path.join(RAIZ, "scripts", "watchdog_celular.ps1")
+INTEGRACION = os.environ.get("OTTER_INTEGRACION") == "1"
+
+
+def saltear(que, por_que):
+    """Saltear se dice en voz alta, y en el CI (OTTER_INTEGRACION=1) es una falla."""
+    print(f"SALTEADA: {que} ({por_que})")
+    if INTEGRACION:
+        fallos.append(f"SALTEADA con OTTER_INTEGRACION=1: {que} ({por_que})")
+
+
+def mascara_ps(t):
+    """El .ps1 con strings, here-strings y comentarios tapados con espacios.
+
+    Mismo largo y mismos saltos de línea que el original: lo que queda a la
+    vista es solo código, y las posiciones sirven para el texto original.
+    Así las llaves de un mensaje o de un comentario no confunden a nadie.
+    """
+    n = len(t)
+    out = list(t)
+
+    def tapar(a, b):
+        for k in range(a, min(b, n)):
+            if out[k] != "\n":
+                out[k] = " "
+
+    def fin_simple(i):
+        while i < n:
+            if t[i] == "'":
+                if i + 1 < n and t[i + 1] == "'":
+                    i += 2
+                    continue
+                return i + 1
+            i += 1
+        return n
+
+    def fin_subexpresion(i):
+        prof = 1
+        while i < n:
+            c = t[i]
+            if c == "'":
+                i = fin_simple(i + 1)
+                continue
+            if c == '"':
+                i = fin_doble(i + 1)
+                continue
+            if c == "(":
+                prof += 1
+            elif c == ")":
+                prof -= 1
+                if prof == 0:
+                    return i + 1
+            i += 1
+        return n
+
+    def fin_doble(i):
+        while i < n:
+            c = t[i]
+            if c == "`":
+                i += 2
+                continue
+            if c == '"':
+                if i + 1 < n and t[i + 1] == '"':
+                    i += 2
+                    continue
+                return i + 1
+            if c == "$" and i + 1 < n and t[i + 1] == "(":
+                i = fin_subexpresion(i + 2)
+                continue
+            i += 1
+        return n
+
+    i = 0
+    while i < n:
+        c = t[i]
+        if t.startswith("<#", i):
+            j = t.find("#>", i + 2)
+            j = n if j < 0 else j + 2
+            tapar(i, j)
+            i = j
+            continue
+        if c == "#":
+            j = t.find("\n", i)
+            j = n if j < 0 else j
+            tapar(i, j)
+            i = j
+            continue
+        if c == "@" and i + 1 < n and t[i + 1] in "'\"":
+            fin_linea = t.find("\n", i)
+            if fin_linea >= 0 and t[i + 2:fin_linea].strip() == "":
+                m = re.compile(r"\n" + re.escape(t[i + 1]) + "@").search(t, fin_linea)
+                j = n if not m else m.end()
+                tapar(i, j)
+                i = j
+                continue
+        if c == "'":
+            j = fin_simple(i + 1)
+            tapar(i, j)
+            i = j
+            continue
+        if c == '"':
+            j = fin_doble(i + 1)
+            tapar(i, j)
+            i = j
+            continue
+        if c == "`":
+            i += 2
+            continue
+        i += 1
+    return "".join(out)
+
+
+def cierre_de_llave(mascara, pos_llave):
+    prof = 0
+    for k in range(pos_llave, len(mascara)):
+        if mascara[k] == "{":
+            prof += 1
+        elif mascara[k] == "}":
+            prof -= 1
+            if prof == 0:
+                return k
+    return -1
+
+
+def bloques(mascara, patron_if):
+    """(desde, hasta) del cuerpo de cada if cuyo encabezado matchea el patrón."""
+    rangos = []
+    for m in re.finditer(patron_if, mascara):
+        llave = m.end() - 1
+        rangos.append((llave, cierre_de_llave(mascara, llave)))
+    return rangos
+
+
+mascara_blindar = mascara_ps(blindar)
+
+# --- param() es la primera instrucción, y los pasos 0, 1, 2 y 4 quedan adentro ---
+if not mascara_blindar.lstrip().startswith("param([switch]$SoloWatchdog)"):
+    fallos.append("blindar_local.ps1 no arranca con param([switch]$SoloWatchdog): en PowerShell "
+                   "un param() que no es la primera instrucción es un comando más, y el "
+                   "parámetro no existe")
+rangos_solo = bloques(mascara_blindar, r"if\s*\(\s*-not\s+\$SoloWatchdog\s*\)\s*\{")
+for paso, tiene_que_estar_adentro in ((0, True), (1, True), (2, True), (3, False), (4, True), (5, False)):
+    pos = blindar.find(f"== {paso}/5")
+    if pos < 0:
+        fallos.append(f"blindar_local.ps1 ya no tiene el paso {paso}/5")
+        continue
+    adentro = any(a < pos < b for a, b in rangos_solo)
+    if tiene_que_estar_adentro and not adentro:
+        fallos.append(f"el paso {paso}/5 corre también con -SoloWatchdog (tiene que estar adentro "
+                       f"de if (-not $SoloWatchdog))")
+    if not tiene_que_estar_adentro and adentro:
+        fallos.append(f"el paso {paso}/5 NO corre con -SoloWatchdog, y es justo lo que ese modo hace")
+if "Modo SOLO WATCHDOG" not in blindar:
+    fallos.append("con -SoloWatchdog el script no avisa que no toca la red")
+print(f"-SoloWatchdog: {len(rangos_solo)} bloques salteables; pasos 0, 1, 2 y 4 adentro, 3 y 5 afuera")
+
+# --- el watchdog del celular es una tarea PROPIA, con tope, copiada de al lado ---
+def sentencia(mascara, desde):
+    """Una sentencia de PowerShell que puede seguir en la línea siguiente con `."""
+    fin = desde
+    while True:
+        fin_linea = mascara.find("\n", fin)
+        if fin_linea < 0:
+            return mascara[desde:]
+        if not mascara[:fin_linea].rstrip().endswith("`"):
+            return mascara[desde:fin_linea]
+        fin = fin_linea + 1
+
+
+m = re.search(r"\$opcionesCel\s*=\s*New-ScheduledTaskSettingsSet", mascara_blindar)
+if not m or "-ExecutionTimeLimit (New-TimeSpan -Minutes 4)" not in sentencia(mascara_blindar, m.start()):
+    fallos.append("la tarea del watchdog del celular no tiene -ExecutionTimeLimit de 4 minutos: "
+                   "una corrida trabada la dejaría sin volver a correr por 72 hs")
+m = re.search(r"Register-ScheduledTask\s+-TaskName\s+\"OtterWatchdogCelular\"", blindar)
+if not m or "-Settings $opcionesCel" not in sentencia(blindar, m.start()):
+    fallos.append("no se registra OtterWatchdogCelular con sus propias opciones ($opcionesCel)")
+if '"$PSScriptRoot\\watchdog_celular.ps1"' not in blindar or "Copy-Item $origenCel" not in blindar:
+    fallos.append("blindar_local.ps1 no copia watchdog_celular.ps1 desde $PSScriptRoot")
+if "falta watchdog_celular.ps1 al lado de blindar_local.ps1" not in blindar:
+    fallos.append("si falta watchdog_celular.ps1 la tabla no lo dice")
+m = re.search(r"if\s*\(\s*\$svcCel\s*\)\s*\{", mascara_blindar)
+if not m:
+    fallos.append("el paso 1 ya no revisa la API del celular")
+else:
+    cuerpo = blindar[m.end():cierre_de_llave(mascara_blindar, m.end() - 1)]
+    p_deshab = cuerpo.find("StartType -eq 'Disabled'")
+    p_set = cuerpo.find("Set-Service SistemaDualApiCelular")
+    if p_deshab < 0 or p_set < 0 or p_deshab > p_set:
+        fallos.append("el paso 1 puede poner en Automatic una API del celular Deshabilitada (D21)")
+if "CelularContesta 8766" not in blindar or "otter-api-celular" not in blindar:
+    fallos.append("el paso 5 no verifica la API del celular por su firma")
+print("TAREA OtterWatchdogCelular: propia, con tope de 4 min y copiada de al lado")
+
+# --- scripts/watchdog_celular.ps1, mirado sin ejecutarlo ---
+if not os.path.isfile(RUTA_WATCHDOG_CEL):
+    fallos.append("falta scripts/watchdog_celular.ps1")
+    watchdog_cel = ""
+else:
+    crudo = open(RUTA_WATCHDOG_CEL, "rb").read()
+    try:
+        crudo.decode("ascii")
+    except UnicodeDecodeError:
+        fallos.append("watchdog_celular.ps1 tiene caracteres que no son ASCII: PowerShell 5.1 "
+                       "lee en ANSI un .ps1 sin BOM y los rompe")
+    watchdog_cel = crudo.decode("utf-8", errors="replace")
+mascara_cel = mascara_ps(watchdog_cel)
+# El servicio de stock no se nombra ni en un comentario; lo demás se mira en
+# el código (los comentarios del script explican justamente por qué no van).
+if "SistemaDualStockService" in watchdog_cel:
+    fallos.append("watchdog_celular.ps1 nombra al servicio de stock: si este script falla, el "
+                   "watchdog del 8765 tiene que seguir solo")
+for prohibido, por_que in (("Restart-Service", "espera sin límite a que el servicio pare"),
+                           ("netstat", "su salida cambia con el idioma"),
+                           ("Invoke-WebRequest", "sin -UseBasicParsing falla como SYSTEM"),
+                           ("Select-String", "sobre texto traducido no es un chequeo")):
+    if prohibido.lower() in mascara_cel.lower():
+        fallos.append(f"watchdog_celular.ps1 usa {prohibido}: {por_que}")
+salidas = re.findall(r"\bexit\b[^\n;}]*", mascara_cel)
+malas = [s.strip() for s in salidas if not re.fullmatch(r"exit\s+0\s*", s.strip() + " ")]
+if not salidas or malas:
+    fallos.append(f"watchdog_celular.ps1 tiene salidas que no son 'exit 0' ({malas}): un "
+                   f"LastTaskResult distinto de 0 tiene que quedar solo para fallas de verdad")
+if "@(Get-Content $marcas" not in watchdog_cel or "(@($rec) +" not in watchdog_cel:
+    fallos.append("el freno del watchdog del celular no usa @(): con una sola marca no frena nunca")
+if "reinicios_celular.txt" not in watchdog_cel:
+    fallos.append("el watchdog del celular no lleva su propio archivo de reinicios")
+firmas = set(re.findall(r"'(otter-api-[a-z]+)'", watchdog_cel))
+if firmas != {servicio_windows.FIRMA_CELULAR}:
+    fallos.append(f"la firma que busca el watchdog ({firmas}) no es la de servicio_windows "
+                   f"({servicio_windows.FIRMA_CELULAR})")
+p_marca = mascara_cel.find("Set-Content $marcas")
+p_reinicio = mascara_cel.find("ReiniciarCelular $cfg.puerto")
+if p_marca < 0 or p_reinicio < 0 or p_marca > p_reinicio:
+    fallos.append("la marca del freno se tiene que escribir ANTES de reiniciar: si la tarea se "
+                   "corta a los 4 minutos en el medio, el reinicio igual tiene que contar")
+for palabra in PALABRAS_EN_INGLES:
+    if f"Select-String {palabra}" in watchdog_cel or f"-Pattern {palabra}" in watchdog_cel:
+        fallos.append(f"watchdog_celular.ps1 busca {palabra} en la salida de un comando")
+print("watchdog_celular.ps1: ASCII, solo 'exit 0', freno con @(), sin tocar el servicio de stock")
+
+
+# --- Con PowerShell: parsear, y correr las partes con dobles ---
+def buscar_powershell():
+    for nombre in ("pwsh", "powershell.exe", "powershell"):
+        ruta = shutil.which(nombre)
+        if ruta:
+            return ruta
+    return None
+
+
+PWSH = buscar_powershell()
+
+# Los 13 casos de exp-diseno-correccion/k5_regla_ini.py (comentario en la
+# línea, mayúsculas, sí, ":", puerto basura o fuera de rango, sección en
+# mayúsculas, otra sección después), más el BOM y el puerto de [remoto].
+CASOS_INI = [
+    ("simple", "[api_celular]\nhabilitado = true\npuerto = 8766\n"),
+    ("comentario_misma_linea", "[api_celular]\nhabilitado = true     ; la escribe el Instalador\n"
+                               "puerto = 8766   ; falta = 8766\n"),
+    ("mayusculas_valor", "[api_celular]\nhabilitado = TRUE\npuerto = 8770\n"),
+    ("clave_mayuscula", "[api_celular]\nHabilitado = si\n"),
+    ("si_con_acento", "[api_celular]\nhabilitado = sí\n"),
+    ("false", "[api_celular]\nhabilitado = false\npuerto = 8766\n"),
+    ("sin_seccion", "[remoto]\nhabilitado = true\n"),
+    ("seccion_mayus", "[API_CELULAR]\nhabilitado = true\n"),
+    ("dos_puntos", "[api_celular]\nhabilitado: 1\npuerto: 9000\n"),
+    ("puerto_basura", "[api_celular]\nhabilitado = true\npuerto = 87x6\n"),
+    ("puerto_fuera_rango", "[api_celular]\nhabilitado = true\npuerto = 99999\n"),
+    ("pegado_punto_coma", "[api_celular]\nhabilitado = true;x\npuerto = 8766;x\n"),
+    ("otra_seccion_despues", "[api_celular]\nhabilitado = false\n[telegram]\nhabilitado = true\n"),
+    ("con_bom", "﻿[api_celular]\nhabilitado = sí\npuerto = 8790\n"),
+    ("puerto_remoto", "[remoto]\npuerto = 9001\n[api_celular]\nhabilitado = on\npuerto = 9001\n"),
+]
+
+# Devuelve el TEXTO de las funciones: quien llama las define con ". " en su
+# propio alcance (definidas adentro de otra función, desaparecerían al volver).
+CARGAR_FUNCIONES = r'''
+function FuncionesDe($ruta, $nombres) {
+    $e = $null; $t = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile($ruta, [ref]$t, [ref]$e)
+    foreach ($f in $ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+        if ($nombres -contains $f.Name) { $f.Extent.Text }
+    }
+}
+'''
+
+# Un solo PowerShell para todo lo que no hace "exit": parseo, estructura,
+# regla del ini, freno y paso 1 del blindaje con dobles.
+REVISAR = r'''
+param($blindar, $watchdog, $carpeta)
+''' + CARGAR_FUNCIONES + r'''
+$r = @{}
+$parseo = @{}
+foreach ($f in @($blindar, $watchdog)) {
+    $e = $null; $t = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile($f, [ref]$t, [ref]$e)
+    $parseo[[IO.Path]::GetFileName($f)] = @($e | ForEach-Object { "$($_.Message) (linea $($_.Extent.StartLineNumber))" })
+    # El watchdog del 8765 vive como here-string adentro de blindar_local.ps1: se parsea tambien.
+    $ast.FindAll({ $args[0] -is [Management.Automation.Language.StringConstantExpressionAst] -and
+                   $args[0].StringConstantType -eq 'SingleQuotedHereString' }, $true) | ForEach-Object {
+        $e2 = $null
+        [void][Management.Automation.Language.Parser]::ParseInput($_.Value, [ref]$t, [ref]$e2)
+        $parseo["here-string linea $($_.Extent.StartLineNumber)"] = @($e2 | ForEach-Object { $_.Message })
+    }
+}
+$r.parseo = $parseo
+
+$e = $null; $t = $null
+$astB = [Management.Automation.Language.Parser]::ParseFile($blindar, [ref]$t, [ref]$e)
+$r.param = @($astB.ParamBlock.Parameters | ForEach-Object { "$($_.StaticType.Name) $($_.Name.VariablePath.UserPath)" })
+$pasos = @{}
+foreach ($c in $astB.FindAll({ $args[0] -is [Management.Automation.Language.CommandAst] -and
+                               $args[0].Extent.Text -match '^Write-Host "(`n)?== (\d)/5' }, $true)) {
+    $null = $c.Extent.Text -match '== (\d)/5'
+    $n = $matches[1]
+    $conds = @()
+    $p = $c.Parent
+    while ($null -ne $p) {
+        if ($p -is [Management.Automation.Language.IfStatementAst]) {
+            $conds += @($p.Clauses | ForEach-Object { $_.Item1.Extent.Text })
+        }
+        $p = $p.Parent
+    }
+    $pasos[$n] = $conds
+}
+$r.pasos = $pasos
+
+# Regla del ini: la misma lectura que pos_core/config.py::leer_config_celular.
+foreach ($f in @(FuncionesDe $watchdog @('LeerConfigCelular', 'PuertoValido'))) { . ([scriptblock]::Create($f)) }
+$ini = @()
+foreach ($f in @(Get-ChildItem (Join-Path $carpeta 'ini_*.ini') | Sort-Object Name)) {
+    $x = LeerConfigCelular $f.FullName
+    $ini += [pscustomobject]@{ archivo = $f.Name; habilitado = [bool]$x.habilitado; puerto = [int]$x.puerto;
+                               puerto_remoto = [int]$x.puerto_remoto }
+}
+$r.ini = $ini
+
+# El freno: 3 reinicios en 24 hs y en la 4.a corrida ya no.
+foreach ($f in @(FuncionesDe $watchdog @('Frenado'))) { . ([scriptblock]::Create($f)) }
+$marcas = Join-Path $carpeta 'reinicios_celular.txt'
+$cuentas = @()
+for ($i = 1; $i -le 5; $i++) {
+    $rec = Frenado
+    $cuentas += $rec.Count
+    if ($rec.Count -lt 3) { (@($rec) + (Get-Date).AddSeconds($i).ToString("o")) | Set-Content $marcas }
+}
+$r.freno = $cuentas
+@((Get-Date).AddHours(-30).ToString("o"), (Get-Date).ToString("o")) | Set-Content $marcas
+$r.freno_vieja = (Frenado).Count
+
+# Paso 1 del blindaje sobre la API del celular, con dobles de Windows.
+$if1 = $astB.FindAll({ $args[0] -is [Management.Automation.Language.IfStatementAst] -and
+                       $args[0].Clauses[0].Item1.Extent.Text -eq '$svcCel' }, $true) | Select-Object -First 1
+function Set-Service { $global:hechos += "Set-Service $($args -join ' ')" }
+function ScFalso { $global:hechos += "sc $($args -join ' ')" }
+Set-Alias -Name sc.exe -Value ScFalso
+function Anotar($paso, $ok, $detalle) { $global:hechos += "Anotar|$paso|$ok|$detalle" }
+function Get-Service { return $global:svcFalso }
+$paso1 = @{}
+foreach ($modo in @('Disabled', 'Manual')) {
+    $global:hechos = @()
+    $global:svcFalso = [pscustomobject]@{ StartType = $modo; Status = 'Stopped' }
+    $svcCel = $global:svcFalso
+    if ($null -ne $if1) { . ([scriptblock]::Create($if1.Extent.Text)) }
+    $paso1[$modo] = @($global:hechos)
+}
+$r.paso1 = $paso1
+$r | ConvertTo-Json -Depth 6 -Compress
+'''
+
+# Flujo del watchdog con dobles (exp-diseno-final/f2_flujo.ps1): corre el
+# cuerpo del script con Windows simulado. Va un PowerShell por corrida
+# porque el cuerpo termina con "exit 0".
+FLUJO = r'''
+param($script, $dir)
+$e = $null; $t = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($script, [ref]$t, [ref]$e)
+foreach ($f in $ast.FindAll({ $args[0] -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+    . ([scriptblock]::Create($f.Extent.Text))
+}
+$base = $dir; $log = Join-Path $base "watchdog_celular.log"; $marcas = Join-Path $base "reinicios_celular.txt"
+$hora = "H"; $servicio = "SistemaDualApiCelular"
+$llamadas = Join-Path $base "llamadas.txt"
+# sc.exe con ALIAS (lo primero que mira PowerShell): en un Windows de verdad,
+# una función sola podría perder contra el sc.exe real y parar un servicio.
+function ScFalso { Add-Content $llamadas "sc $($args -join ' ')" }
+Set-Alias -Name sc.exe -Value ScFalso
+function Start-Sleep { }
+function Stop-Process { Add-Content $llamadas "Stop-Process $($args -join ' ')" }
+$estado = Get-Content (Join-Path $dir "estado.json") -Raw | ConvertFrom-Json
+function EstadoServicio { if ($estado.instalado) { return [pscustomobject]@{ State = $estado.State; StartMode = $estado.StartMode; ProcessId = 42 } } else { return $null } }
+function EsperarEstado($e, $s) { Add-Content $llamadas "ESPERA $e $s"; return (EstadoServicio) }
+function LeerConfigCelular($r) { return @{ habilitado = $estado.habilitado; puerto = 8766; puerto_remoto = $estado.puerto_remoto } }
+function CelularContesta($p) { return [bool]$estado.contesta }
+function QuienEscucha($p) { return $estado.quien }
+function AvisarUnaVezPorDia($clave, $texto) { Add-Content $llamadas "AVISO $clave" }
+$cuerpo = $ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.TryStatementAst] } | Select-Object -First 1
+. ([scriptblock]::Create($cuerpo.Extent.Text))
+'''
+
+BASE_FLUJO = dict(instalado=True, State="Running", StartMode="Auto", habilitado=True,
+                  puerto_remoto=8765, contesta=True, quien="")
+# Reiniciar es: sc stop, esperar a que pare, cerrarla a la fuerza si sigue (el doble nunca
+# para), esperar de nuevo y sc start. Nunca Restart-Service.
+REINICIO = ["sc stop", "ESPERA Stopped", "Stop-Process", "ESPERA Stopped", "sc start"]
+ESCENARIOS = [
+    ("no instalada", dict(BASE_FLUJO, instalado=False), [[]]),
+    ("Deshabilitada", dict(BASE_FLUJO, StartMode="Disabled", contesta=False), [["AVISO deshabilitada"]]),
+    ("habilitado = false", dict(BASE_FLUJO, habilitado=False, contesta=False), [[]]),
+    ("puerto igual al de [remoto]", dict(BASE_FLUJO, puerto_remoto=8766, contesta=False), [["AVISO puerto"]]),
+    ("parada", dict(BASE_FLUJO, State="Stopped"), [["sc start"]]),
+    ("corriendo y contesta", dict(BASE_FLUJO), [[]]),
+    ("otro programa en el puerto", dict(BASE_FLUJO, contesta=False, quien="python (PID 9)"), [["AVISO otro"]]),
+    ("5 corridas sin contestar", dict(BASE_FLUJO, contesta=False),
+     [REINICIO, REINICIO, REINICIO, ["AVISO freno"], ["AVISO freno"]]),
+    # Start/Stop Pending: primero se le dan 30 s para asentarse; si sigue trabada, pasa por el
+    # mismo freno y el mismo reinicio con Stop-Process.
+    ("Stop Pending trabado", dict(BASE_FLUJO, State="Stop Pending", contesta=False),
+     [["ESPERA Running"] + REINICIO]),
+]
+
+
+def correr_ps(script_ps, *argumentos, timeout=120):
+    comando = [PWSH, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script_ps]
+    return subprocess.run(comando + list(argumentos), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=timeout)
+
+
+def normalizar(linea):
+    partes = linea.split()
+    if not partes:
+        return ""
+    if partes[0] in ("sc", "AVISO", "ESPERA"):
+        return " ".join(partes[:2])
+    return partes[0]
+
+
+def correr_escenario(carpeta_ps, nombre, estado, esperado):
+    d = tempfile.mkdtemp(prefix="flujo_cel_")
+    with open(os.path.join(d, "estado.json"), "w", encoding="utf-8") as f:
+        json.dump(estado, f)
+    obtenido = []
+    for _ in esperado:
+        r = correr_ps(os.path.join(carpeta_ps, "flujo.ps1"), RUTA_WATCHDOG_CEL, d)
+        archivo = os.path.join(d, "llamadas.txt")
+        lineas = open(archivo, encoding="utf-8").read().split("\n") if os.path.exists(archivo) else []
+        if os.path.exists(archivo):
+            os.remove(archivo)
+        obtenido.append((r.returncode, [normalizar(l) for l in lineas if l.strip()], r.stderr.strip()))
+    shutil.rmtree(d, ignore_errors=True)
+    return nombre, esperado, obtenido
+
+
+if not PWSH:
+    saltear("los .ps1 con PowerShell (parseo, regla del ini, freno, flujo con dobles)",
+            "no hay pwsh ni powershell.exe en esta máquina")
+else:
+    carpeta_ps = tempfile.mkdtemp(prefix="blindaje_ps_")
+    with open(os.path.join(carpeta_ps, "revisar.ps1"), "w", encoding="utf-8") as f:
+        f.write(REVISAR)
+    with open(os.path.join(carpeta_ps, "flujo.ps1"), "w", encoding="utf-8") as f:
+        f.write(FLUJO)
+    # Los ini los escribe Python, en UTF-8 (como config.guardar_config): así
+    # el caso "sí" no depende de la codificación por defecto de cada PowerShell.
+    for k, (nombre, texto) in enumerate(CASOS_INI):
+        with open(os.path.join(carpeta_ps, f"ini_{k:02d}.ini"), "w", encoding="utf-8", newline="\n") as f:
+            f.write(texto)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futuros = [pool.submit(correr_escenario, carpeta_ps, n, e, esp) for n, e, esp in ESCENARIOS]
+        r = correr_ps(os.path.join(carpeta_ps, "revisar.ps1"), RUTA_BLINDAR, RUTA_WATCHDOG_CEL, carpeta_ps)
+        resultados_flujo = [fu.result() for fu in futuros]
+
+    try:
+        rev = json.loads(r.stdout.strip().splitlines()[-1])
+    except Exception:
+        rev = None
+        fallos.append(f"PowerShell no devolvió el resultado de la revisión de los .ps1:\n"
+                       f"{r.stdout[-1500:]}\n{r.stderr[-1500:]}")
+    if rev is not None:
+        # Parseo
+        con_error = {k: v for k, v in rev["parseo"].items() if v}
+        if con_error:
+            fallos.append(f"los .ps1 tienen errores de sintaxis: {con_error}")
+        if len(rev["parseo"]) < 3:
+            fallos.append(f"no se parsearon los dos .ps1 y el here-string del watchdog: {list(rev['parseo'])}")
+        print(f"PARSEO ({os.path.basename(PWSH)}): {len(rev['parseo'])} bloques, "
+              f"{sum(len(v) for v in rev['parseo'].values())} errores")
+        # Estructura, según el parser de PowerShell (no según el texto)
+        if rev["param"] != ["SwitchParameter SoloWatchdog"]:
+            fallos.append(f"el param() de blindar_local.ps1 no es [switch]$SoloWatchdog: {rev['param']}")
+        for paso in "012345":
+            conds = rev["pasos"].get(paso)
+            if conds is None:
+                fallos.append(f"PowerShell no encontró el Write-Host del paso {paso}/5")
+                continue
+            adentro = "-not $SoloWatchdog" in conds
+            if adentro != (paso in "0124"):
+                fallos.append(f"según el parser de PowerShell, el paso {paso}/5 "
+                               f"{'NO ' if not adentro else ''}está adentro de if (-not $SoloWatchdog)")
+        # Regla del ini: idéntica a la de Python
+        distintos = []
+        for k, (nombre, texto) in enumerate(CASOS_INI):
+            ruta = os.path.join(carpeta_ps, f"ini_{k:02d}.ini")
+            py = config_otter.leer_config_celular(ruta)
+            ps = next((x for x in rev["ini"] if x["archivo"] == f"ini_{k:02d}.ini"), None)
+            if ps is None or (bool(ps["habilitado"]), int(ps["puerto"]), int(ps["puerto_remoto"])) != \
+                    (py["habilitado"], py["puerto"], py["puerto_remoto"]):
+                distintos.append(f"{nombre}: python={py} watchdog={ps}")
+        if distintos:
+            fallos.append("LeerConfigCelular (watchdog) y config.leer_config_celular (Python) leen "
+                           "distinto: " + "; ".join(distintos))
+        print(f"REGLA DEL INI: {len(CASOS_INI) - len(distintos)}/{len(CASOS_INI)} casos iguales "
+              f"en el watchdog y en Python")
+        # Freno
+        if rev["freno"] != [0, 1, 2, 3, 3] or rev["freno_vieja"] != 1:
+            fallos.append(f"el freno del watchdog del celular no frena en la 4.a corrida: "
+                           f"cuentas {rev['freno']}, con una marca de hace 30 hs {rev['freno_vieja']}")
+        else:
+            print("FRENO: reinicia 3 veces y en la 4.a frena; una marca de hace 30 hs no cuenta")
+        # Paso 1: Deshabilitada no se toca
+        deshab = rev["paso1"].get("Disabled", [])
+        manual = rev["paso1"].get("Manual", [])
+        if any(h.startswith(("Set-Service", "sc ")) for h in deshab) or \
+                not any(h.startswith("Anotar|API del celular en Automatic|False|Deshabilitada") for h in deshab):
+            fallos.append(f"el paso 1 tocó una API del celular Deshabilitada (o no lo dijo): {deshab}")
+        if not any(h.startswith("Set-Service SistemaDualApiCelular") for h in manual) or \
+                not any(h.startswith("sc failure SistemaDualApiCelular") for h in manual) or \
+                not any(h.startswith("sc failureflag SistemaDualApiCelular 1") for h in manual):
+            fallos.append(f"el paso 1 no pone en Automatic con reintentos una API del celular en Manual: {manual}")
+        if deshab and manual:
+            print("PASO 1: una API del celular Deshabilitada no se toca; en Manual pasa a Automatic + reintentos")
+
+    malos = []
+    for nombre, esperado, obtenido in resultados_flujo:
+        llamadas = [o[1] for o in obtenido]
+        codigos = [o[0] for o in obtenido]
+        if llamadas != esperado or any(c != 0 for c in codigos):
+            malos.append(f"{nombre}: esperaba {esperado}, salió {llamadas} (códigos {codigos}) "
+                         f"{[o[2][-300:] for o in obtenido if o[2]]}")
+    if malos:
+        fallos.append("el flujo del watchdog del celular con dobles no da lo esperado: " + " | ".join(malos))
+    else:
+        print(f"FLUJO DEL WATCHDOG DEL CELULAR: {len(ESCENARIOS)} escenarios con lo esperado "
+              f"(Stop Pending trabado y freno incluidos)")
+    shutil.rmtree(carpeta_ps, ignore_errors=True)
+
+# ---------------------------------------------------------------- #
 # 5. La ventana abre de verdad, y el log es seguro entre hilos
 # ---------------------------------------------------------------- #
 # Que el .exe compile no dice nada: si _armar_ui explota, el usuario hace
@@ -138,6 +710,41 @@ from apps.blindaje.main import AppBlindaje
 ventana = AppBlindaje()
 ventana.update()
 print("VENTANA: abre y dibuja")
+
+# La casilla "Solo actualizar el watchdog": pasa -SoloWatchdog, no corre el
+# SSH, y el cierre no manda a hacer la prueba de apagado (no hace falta).
+if not hasattr(ventana, "var_solo_watchdog"):
+    fallos.append("OtterBlindaje no tiene la casilla «Solo actualizar el watchdog»")
+else:
+    ventana.var_ssh.set(True)
+    ventana._cambiar_ssh()
+    ventana.var_solo_watchdog.set(True)
+    ventana._cambiar_solo_watchdog()
+    ventana.update()
+    if ventana.var_ssh.get() or str(ventana.casilla_ssh.cget("state")) != "disabled":
+        fallos.append("con «Solo actualizar el watchdog» tildada, el SSH sigue disponible")
+    corridos = []
+    ventana._correr_script = lambda ruta, argumentos=None: corridos.append(
+        (os.path.basename(ruta), list(argumentos or []))) or True
+    ventana._guardar_informe = lambda: None      # no escribir en el Escritorio de quien prueba
+    ventana._trabajar(False, "", True)
+    texto_cierre = "\n".join(ventana._historial)
+    if corridos != [("blindar_local.ps1", ["-SoloWatchdog"])]:
+        fallos.append(f"«Solo actualizar el watchdog» no corrió solo blindar_local.ps1 -SoloWatchdog: {corridos}")
+    if "Watchdog actualizado. No hace falta la prueba de apagado." not in texto_cierre or \
+            "AHORA LA PRUEBA DE VERDAD" in texto_cierre:
+        fallos.append("con «Solo actualizar el watchdog» el cierre igual manda a hacer la prueba de apagado")
+    corridos.clear()
+    ventana._trabajar(False, "", False)
+    if corridos != [("blindar_local.ps1", [])]:
+        fallos.append(f"sin la casilla, el blindaje entero ya no corre como antes: {corridos}")
+    ventana.var_solo_watchdog.set(False)
+    ventana._cambiar_solo_watchdog()
+    if str(ventana.casilla_ssh.cget("state")) == "disabled":
+        fallos.append("al destildar «Solo actualizar el watchdog» el SSH queda deshabilitado")
+    print("CASILLA «Solo actualizar el watchdog»: corre blindar_local.ps1 -SoloWatchdog, sin SSH ni prueba de apagado")
+    ventana._bombear()
+
 
 if "self.texto.get(" in app:
     fallos.append("se lee el widget de Tk para armar el informe: eso corre en el hilo "

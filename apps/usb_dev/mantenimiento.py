@@ -13,7 +13,8 @@ las unidades conectadas (Maestro, USB Caja, USB Dueño), y en cada una:
 4. Corrige inconsistencias de datos que se puedan arreglar solas (por
    ejemplo, stock que quedó en negativo), dejando registro de auditoría.
 5. Verifica que el servicio oculto de stock esté corriendo (Maestro) y lo
-   reinstala si hace falta.
+   reinstala si hace falta. Si la PC tiene la API del celular (segundo
+   servicio, opcional), la revisa también, pero nunca la instala.
 6. Restaura config.ini desde una copia espejo guardada en este USB.
 7. Comprime y archiva logs viejos.
 8. Repone archivos del programa dañados/faltantes (ejecutables, DLLs)
@@ -57,17 +58,22 @@ ESPACIO_MINIMO_MB = 500
 # la raíz de la instalación (caso de los USB de emergencia).
 _MAPA_ESPEJO = {
     "MAESTRO": [("MaestroCaja", "MaestroCaja"), ("MaestroDueno", "MaestroDueno"),
-                ("StockService", "StockService")],
+                ("StockService", "StockService"), ("ApiCelular", "ApiCelular")],
     "USB_CAJA": [("", "USB_Caja")],
     "USB_DUENO": [("", "USB_Dueno")],
 }
+# Apps que no todas las instalaciones tienen. Si la carpeta no existe en el
+# destino se saltean: copiarle los archivos sería "instalar" un programa sin
+# su servicio, y instalar un servicio de red es una decisión, no una
+# reparación.
+_OPCIONALES_ESPEJO = {"ApiCelular"}
 # Lo que NUNCA se copia desde la copia de referencia a la instalación: son
 # datos del cliente, no programa. Vale para carpetas Y para archivos
 # sueltos (ver reparar_archivos_app: si solo se filtran las carpetas, el
 # config.ini del espejo termina pisando el del cliente).
 _EXCLUIR_DE_REPARACION_ARCHIVOS = {"database", "sync_data", "logs", "tickets", "backups",
                                     "config.ini", "reporte_mantenimiento.txt",
-                                    "sincronizacion_exitosa.txt"}
+                                    "sincronizacion_exitosa.txt", "api_celular"}
 
 
 def _timestamp() -> str:
@@ -377,7 +383,9 @@ def verificar_respaldos(carpeta_instalacion: str, log: list) -> None:
         log.append(f"[RESPALDO] Copias al día: {detalle}.")
 
 
-def _verificar_arranque_automatico(log: list) -> None:
+def _verificar_arranque_automatico(log: list, nombre: str = NOMBRE_SERVICIO_WINDOWS,
+                                   etiqueta: str = "El servicio",
+                                   corregir_deshabilitado: bool = True) -> None:
     """¿El servicio arranca solo con Windows, o solo cuando alguien lo pide?
 
     Esto es lo que rompió a El Galpón tres veces y costó dos visitas: el
@@ -387,6 +395,12 @@ def _verificar_arranque_automatico(log: list) -> None:
     la PC, cuando el Dueño Remoto deja de conectar sin que nadie haya
     tocado nada. Se corrige solo, acá, porque no hay ningún motivo para que
     esté en Manual.
+
+    Para la API del celular se llama con corregir_deshabilitado=False:
+    Deshabilitada en Windows es una decisión de alguien y se informa sin
+    tocarla (la forma documentada de apagarla es [api_celular] habilitado =
+    false; si esto la "corrigiera", habría dos interruptores y uno se
+    desharía solo).
     """
     # El cómo vive en pos_core/servicio_windows.py: la misma pregunta la
     # hacen también el Actualizador y lo que venga después, y tenerla
@@ -394,30 +408,73 @@ def _verificar_arranque_automatico(log: list) -> None:
     # arreglada y la otra no.
     from pos_core import servicio_windows
 
-    arranque = servicio_windows.tipo_de_arranque(NOMBRE_SERVICIO_WINDOWS)
+    es_stock = nombre == NOMBRE_SERVICIO_WINDOWS
+    pre = "" if es_stock else f"{etiqueta}: "
+    arranque = servicio_windows.tipo_de_arranque(nombre)
     if arranque == "auto":
-        log.append("[SERVICIO] Arranque automático: OK (levanta solo con Windows).")
+        log.append(f"[SERVICIO] {pre}Arranque automático: OK (levanta solo con Windows).")
         return
     if arranque == "desconocido":
-        log.append("[SERVICIO] No se pudo leer el tipo de arranque.")
+        log.append(f"[SERVICIO] {pre}No se pudo leer el tipo de arranque.")
         return
     if arranque not in ("manual", "deshabilitado"):
         return   # no está registrado; de eso se ocupa el paso siguiente
+    if arranque == "deshabilitado" and not corregir_deshabilitado:
+        log.append(f"[SERVICIO] {pre}Deshabilitada en Windows: no se toca (para apagarla se usa "
+                    f"[api_celular] habilitado = false).")
+        return
 
-    log.append("[SERVICIO] ¡PROBLEMA! El servicio está en arranque MANUAL: no levanta solo "
-                "cuando se reinicia la PC, y ahí el Dueño Remoto deja de conectar sin que "
-                "nadie haya tocado nada. Corrigiéndolo a automático...")
-    ok, detalle = servicio_windows.poner_en_automatico(NOMBRE_SERVICIO_WINDOWS)
-    if ok:
-        log.append("[SERVICIO] Corregido: ahora arranca solo con Windows.")
+    if es_stock:
+        log.append("[SERVICIO] ¡PROBLEMA! El servicio está en arranque MANUAL: no levanta solo "
+                    "cuando se reinicia la PC, y ahí el Dueño Remoto deja de conectar sin que "
+                    "nadie haya tocado nada. Corrigiéndolo a automático...")
     else:
-        log.append(f"[SERVICIO] NO se pudo corregir: {detalle}")
+        log.append(f"[SERVICIO] {pre}¡PROBLEMA! Está en arranque MANUAL: no levanta sola cuando "
+                    f"se reinicia la PC. Corrigiéndolo a automático...")
+    ok, detalle = servicio_windows.poner_en_automatico(nombre)
+    if ok:
+        log.append(f"[SERVICIO] {pre}Corregido: ahora arranca solo con Windows.")
+    else:
+        log.append(f"[SERVICIO] {pre}NO se pudo corregir: {detalle}")
 
 
 def verificar_servicio_windows(carpeta_instalacion: str, log: list) -> None:
     if os.name != "nt":
         log.append("[SERVICIO] Este paso solo aplica en Windows; se omite en este entorno.")
         return
+    _verificar_servicio_stock(carpeta_instalacion, log)
+    # Aparte y DESPUÉS: lo de la API del celular nunca puede impedir que se
+    # revise y se corrija el servicio de stock.
+    try:
+        _verificar_servicio_celular(carpeta_instalacion, log)
+    except Exception as e:
+        log.append(f"[SERVICIO] ERROR revisando la API del celular: {e}")
+
+
+def _verificar_servicio_celular(carpeta_instalacion: str, log: list) -> None:
+    """La API del celular (opcional): informa, la deja en automático y la
+    arranca si está parada. Deshabilitada no se toca. NUNCA la instala."""
+    from pos_core import config, servicio_windows
+    nombre = servicio_windows.SERVICIO_CELULAR
+    estado, _pid = servicio_windows.estado_y_pid(nombre)
+    if estado == "no_instalado":
+        return   # esta PC no tiene la API del celular, y está bien así
+    log.append(f"[SERVICIO] API del celular: estado {estado}.")
+    _verificar_arranque_automatico(log, nombre, "API del celular", corregir_deshabilitado=False)
+    if servicio_windows.tipo_de_arranque(nombre) == "deshabilitado":
+        return   # ya se informó arriba; no se arranca
+    if estado == "parado":
+        ok, detalle = servicio_windows.arrancar(nombre)
+        log.append("[SERVICIO] API del celular: estaba parada, arrancada." if ok
+                    else f"[SERVICIO] API del celular: estaba parada y NO arrancó: {detalle}")
+    cfg = config.leer_config_celular(os.path.join(carpeta_instalacion, "config.ini"))
+    ok, detalle = servicio_windows.api_celular_contesta(cfg["puerto"])
+    if not ok and not cfg["habilitado"]:
+        detalle += " (apagada a propósito: [api_celular] habilitado = false)"
+    log.append(f"[SERVICIO] API del celular en el {cfg['puerto']}: {'OK, ' if ok else ''}{detalle}.")
+
+
+def _verificar_servicio_stock(carpeta_instalacion: str, log: list) -> None:
     try:
         _verificar_arranque_automatico(log)
         estado = subprocess.run(["sc.exe", "query", NOMBRE_SERVICIO_WINDOWS],
@@ -482,6 +539,66 @@ def limpiar_logs_viejos(carpeta_instalacion: str, log: list, dias: int = 30) -> 
 # Reparación de archivos del programa (ejecutables/DLLs dañados o
 # faltantes) contra la copia de referencia que lleva este mismo USB.
 # ---------------------------------------------------------------------- #
+def _archivos_distintos(origen: str, destino: str) -> list:
+    """(origen_archivo, destino_dir, destino_archivo) de lo que falta o tiene
+    otro tamaño que la copia de referencia. No copia nada."""
+    distintos = []
+    for raiz, carpetas, archivos in os.walk(origen):
+        carpetas[:] = [c for c in carpetas if c.lower() not in _EXCLUIR_DE_REPARACION_ARCHIVOS]
+        rel = os.path.relpath(raiz, origen)
+        for nombre_archivo in archivos:
+            # El filtro va también archivo por archivo, no solo por
+            # carpeta: el config.ini del cliente vive suelto en la raíz
+            # de la instalación y tiene el token y la IP REALES del
+            # Dueño Remoto. Pisarlo con el del espejo (que es el de
+            # prueba del build) deja al dueño sin conexión al local, y
+            # no se nota hasta que alguien lo intenta usar.
+            if nombre_archivo.lower() in _EXCLUIR_DE_REPARACION_ARCHIVOS:
+                continue
+            origen_archivo = os.path.join(raiz, nombre_archivo)
+            destino_dir = os.path.join(destino, rel) if rel != "." else destino
+            destino_archivo = os.path.join(destino_dir, nombre_archivo)
+            if not os.path.isfile(destino_archivo) or \
+                    os.path.getsize(destino_archivo) != os.path.getsize(origen_archivo):
+                distintos.append((origen_archivo, destino_dir, destino_archivo))
+    return distintos
+
+
+def _copiar_archivos(distintos: list) -> int:
+    for origen_archivo, destino_dir, destino_archivo in distintos:
+        os.makedirs(destino_dir, exist_ok=True)
+        shutil.copy2(origen_archivo, destino_archivo)
+    return len(distintos)
+
+
+def _reparar_api_celular(distintos: list, log: list) -> int:
+    """Repone archivos de la API del celular CON EL SERVICIO PARADO.
+
+    copy2 encima de un .exe o una DLL cargados falla en el primer archivo
+    bloqueado, y los que se copiaron antes quedan nuevos: versiones
+    mezcladas, que es peor que la versión vieja entera. Si no para, no se
+    toca ninguno.
+    """
+    from pos_core import servicio_windows
+    nombre = servicio_windows.SERVICIO_CELULAR
+    instalada = servicio_windows.estado_y_pid(nombre)[0] != "no_instalado"
+    deshabilitada = servicio_windows.tipo_de_arranque(nombre) == "deshabilitado"
+    ok, _detalle = servicio_windows.parar(nombre)
+    if not ok:
+        log.append("[ARCHIVOS] La API del celular no se pudo parar: no se repararon sus archivos "
+                    "(sin mezclar versiones).")
+        return 0
+    try:
+        repuestos = _copiar_archivos(distintos)
+        log.append(f"[ARCHIVOS] API del celular: {repuestos} archivo(s) repuesto(s) con el servicio parado.")
+        return repuestos
+    finally:
+        if instalada and not deshabilitada:
+            ok, detalle = servicio_windows.arrancar(nombre)
+            if not ok:
+                log.append(f"[ARCHIVOS] ATENCIÓN: la API del celular no volvió a arrancar: {detalle}")
+
+
 def reparar_archivos_app(carpeta_instalacion: str, tipo_instalacion: str,
                           carpeta_usb_dev: str, log: list) -> None:
     espejo_base = os.path.join(carpeta_usb_dev, "espejo_apps")
@@ -498,28 +615,16 @@ def reparar_archivos_app(carpeta_instalacion: str, tipo_instalacion: str,
             continue
         destino = os.path.join(carpeta_instalacion, subcarpeta_relativa) if subcarpeta_relativa \
             else carpeta_instalacion
+        if subcarpeta_relativa in _OPCIONALES_ESPEJO and not os.path.isdir(destino):
+            continue   # esta PC no la tiene instalada: no se instala desde acá
 
-        for raiz, carpetas, archivos in os.walk(origen):
-            carpetas[:] = [c for c in carpetas if c.lower() not in _EXCLUIR_DE_REPARACION_ARCHIVOS]
-            rel = os.path.relpath(raiz, origen)
-            for nombre_archivo in archivos:
-                # El filtro va también archivo por archivo, no solo por
-                # carpeta: el config.ini del cliente vive suelto en la raíz
-                # de la instalación y tiene el token y la IP REALES del
-                # Dueño Remoto. Pisarlo con el del espejo (que es el de
-                # prueba del build) deja al dueño sin conexión al local, y
-                # no se nota hasta que alguien lo intenta usar.
-                if nombre_archivo.lower() in _EXCLUIR_DE_REPARACION_ARCHIVOS:
-                    continue
-                origen_archivo = os.path.join(raiz, nombre_archivo)
-                destino_dir = os.path.join(destino, rel) if rel != "." else destino
-                destino_archivo = os.path.join(destino_dir, nombre_archivo)
-
-                if not os.path.isfile(destino_archivo) or \
-                        os.path.getsize(destino_archivo) != os.path.getsize(origen_archivo):
-                    os.makedirs(destino_dir, exist_ok=True)
-                    shutil.copy2(origen_archivo, destino_archivo)
-                    total_repuestos += 1
+        distintos = _archivos_distintos(origen, destino)
+        if not distintos:
+            continue
+        if subcarpeta_relativa == "ApiCelular":
+            total_repuestos += _reparar_api_celular(distintos, log)
+        else:
+            total_repuestos += _copiar_archivos(distintos)
 
     if total_repuestos:
         log.append(f"[ARCHIVOS] Se repusieron {total_repuestos} archivo(s) del programa faltante(s) o "
