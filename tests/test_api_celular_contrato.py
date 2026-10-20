@@ -6,7 +6,7 @@ celular (desde una IP de Tailscale) y mira el efecto con las funciones de
 siempre de main, como lo vería el Panel de la PC:
 
 - que la forma de cada respuesta sea la del contrato compartido con la app
-  (apps/movil_dueno/test/fixtures/contrato_api_celular_v2.json): si la API
+  (apps/movil_dueno/test/fixtures/contrato_api_celular_v3.json): si la API
   cambia un campo y la app no, la app se rompe en el celular de Leo y acá
   no se ve;
 - que los precios guarden lo que vio el dueño y NO inventen costos, y que
@@ -153,14 +153,15 @@ class Contrato:
 
 
 def _ruta_normalizada(ruta: str) -> str:
-    return re.sub(r"/\d{5,}$", "/{codigo}", ruta.split("?")[0])
+    ruta = re.sub(r"^/api/filtros/.+$", "/api/filtros/{nombre}", ruta.split("?")[0])
+    return re.sub(r"/\d{5,}$", "/{codigo}", ruta)
 
 
 # --------------------------------------------------------------------- #
 # Preparación
 # --------------------------------------------------------------------- #
 
-from pos_core import acceso_celular, alerts, config, db, panel_celular, precios  # noqa: E402
+from pos_core import acceso_celular, alerts, config, db, filters, panel_celular, precios  # noqa: E402
 from pos_core import sales, stock_service  # noqa: E402
 from pos_core import telegram_bot  # noqa: E402
 
@@ -294,8 +295,8 @@ with B.cliente(app) as c:
     # ---------------- Salud ----------------
     r = pedir(c, "GET", "/api/salud", ejemplo="salud")
     s = r.json()
-    verificar(s.get("servicio") == "otter-api-celular" and s.get("contrato") == 2,
-              "salud trae la firma otter-api-celular y el contrato 2", f"salud no trae la firma: {s}")
+    verificar(s.get("servicio") == "otter-api-celular" and s.get("contrato") == 3,
+              "salud trae la firma otter-api-celular y el contrato 3", f"salud no trae la firma: {s}")
     verificar(s.get("nombre_local") == B.NOMBRE_LOCAL, "salud muestra el nombre del local del config.ini real",
               f"salud mostró nombre_local={s.get('nombre_local')!r}")
     verificar(s.get("compilado") == "desarrollo", "sin congelar, salud dice compilado = desarrollo",
@@ -835,6 +836,168 @@ with B.cliente(app) as c:
     verificar(r.status_code == 200, "otra factura con el mismo nombre y renglones distintos no da 409",
               f"otra factura: {r.status_code}")
 
+    # ---------------- Alta de productos ----------------
+    NUEVO, NUEVO_SIN_STOCK = "7790100", "7790101"
+    ALTA = {"codigo": NUEVO, "nombre": "Galletitas de Agua 300g", "precio_venta": 1500, "stock_inicial": 24,
+            "marca": "Criollitas", "proveedor": "Distribuidora Sur", "categoria": "ALMACEN"}
+    r = pedir(c, "POST", "/api/productos", ejemplo="producto_alta", headers=H, json=ALTA)
+    prod = fila("SELECT * FROM Productos WHERE codigo = ?", (NUEVO,))
+    movs = filas("SELECT * FROM Movimientos_Stock WHERE producto_codigo = ?", (NUEVO,))
+    verificar(prod and prod["nombre"] == "Galletitas de Agua 300g" and prod["precio_venta"] == 1500
+              and prod["stock"] == 24 and prod["marca"] == "Criollitas" and prod["proveedor"] == "Distribuidora Sur"
+              and prod["categoria"] == "ALMACEN" and prod["activo"] == 1 and prod["origen"] == "MAESTRO"
+              and prod["sincronizado"] == 1 and len(prod["uuid_unico"] or "") == 36,
+              "dar de alta desde el celular deja el producto como el alta del Panel (uuid_unico, origen MAESTRO)",
+              f"producto nuevo: {prod}")
+    verificar(len(movs) == 1 and movs[0]["tipo"] == "ENTRADA_MANUAL" and movs[0]["cantidad"] == 24
+              and movs[0]["stock_resultante"] == 24 and movs[0]["motivo"] == "Alta de producto nuevo"
+              and movs[0]["usuario"] == "dueño (celular)" and len(movs[0]["uuid_unico"] or "") == 36,
+              "el stock inicial queda como una ENTRADA_MANUAL firmada 'dueño (celular)'", f"movimientos: {movs}")
+    verificar(r.json()["codigo"] == NUEVO and r.json()["stock"] == 24 and len(r.json()["movimientos"]) == 1,
+              "la respuesta es el producto con su movimiento de alta (la app abre el detalle)", f"alta: {r.text[:300]}")
+    caja = [x for x in sales.buscar_productos(NUEVO) if x["codigo"] == NUEVO]
+    db.cerrar_conexion()
+    verificar(caja and caja[0]["precio_venta"] == 1500, "la Caja ya lo encuentra y lo cobra a $ 1.500",
+              f"la Caja ve: {caja}")
+    r = pedir(c, "POST", "/api/productos", ejemplo="producto_alta", headers=H,
+              json={"codigo": f"  {NUEVO_SIN_STOCK} ", "nombre": " Pan rallado 500g ", "precio_venta": 0,
+                    "marca": "  ", "proveedor": None})
+    prod = fila("SELECT * FROM Productos WHERE codigo = ?", (NUEVO_SIN_STOCK,))
+    verificar(prod and prod["nombre"] == "Pan rallado 500g" and prod["stock"] == 0 and prod["marca"] is None
+              and not filas("SELECT 1 FROM Movimientos_Stock WHERE producto_codigo = ?", (NUEVO_SIN_STOCK,))
+              and r.json()["movimientos"] == [],
+              "sin stock inicial no deja movimiento (como el Panel); se recortan los espacios y una marca vacía "
+              "queda vacía", f"pan rallado: {prod}")
+
+    # El mismo alta otra vez (un "incierto" con datos móviles): 409 con el
+    # producto, para que la app vea que es el que mandó. Nada se duplica.
+    movs_antes = fila("SELECT COUNT(*) n FROM Movimientos_Stock")["n"]
+    r = pedir(c, "POST", "/api/productos", ejemplo="error_409_producto_existe", headers=H, esperado=409, json=ALTA)
+    verificar(r.json().get("codigo") == "producto_existe" and (r.json().get("producto") or {}).get("codigo") == NUEVO
+              and r.json()["producto"]["stock"] == 24
+              and fila("SELECT COUNT(*) n FROM Productos WHERE codigo = ?", (NUEVO,))["n"] == 1
+              and fila("SELECT COUNT(*) n FROM Movimientos_Stock")["n"] == movs_antes,
+              "repetir el alta da 409 producto_existe con el producto y no duplica ni el producto ni el stock",
+              f"alta repetida: {r.text[:300]}")
+    r = pedir(c, "POST", "/api/productos", ejemplo="error_409_producto_existe", headers=H, esperado=409,
+              json=dict(ALTA, codigo=B.CAFE))
+    verificar((r.json().get("producto") or {}).get("nombre") == "Café Molido 500g"
+              and fila("SELECT nombre, marca FROM Productos WHERE codigo = ?", (B.CAFE,))
+              == {"nombre": "Café Molido 500g", "marca": "Colombia"},
+              "un código que ya existe no se pisa: 409 con el producto que hay", f"café: {r.text[:200]}")
+    r = pedir(c, "POST", "/api/productos", ejemplo="error_409_producto_existe", headers=H, esperado=409,
+              json=dict(ALTA, codigo=B.INACTIVO))
+    verificar(r.json().get("producto", "falta") is None and "dado de baja" in r.json().get("detail", "")
+              and fila("SELECT activo FROM Productos WHERE codigo = ?", (B.INACTIVO,))["activo"] == 0,
+              "un código dado de baja da 409 con producto null (se revisa en el Panel) y sigue de baja",
+              f"dado de baja: {r.text}")
+
+    r = pedir(c, "GET", "/api/catalogo/valores?campo=marca&q=co", ejemplo="catalogo_valores", headers=H)
+    verificar(r.json() == ["Coca-Cola", "Colombia"], "sugiere las marcas que ya se usan mientras se escribe",
+              f"marcas: {r.json()}")
+    pedir(c, "GET", "/api/catalogo/valores?campo=marca&q=zzz", ejemplo="catalogo_valores", headers=H)
+    r = pedir(c, "GET", "/api/catalogo/valores?campo=categoria", headers=H)
+    verificar(r.json()[:1] == ["ALMACEN"], "sin texto, de la más usada a la menos", f"categorías: {r.json()}")
+    r = pedir(c, "GET", "/api/catalogo/valores?campo=nombre", headers=H, esperado=400)
+    verificar(r.json().get("codigo") == "dato_invalido", "un campo que no es del catálogo da 400",
+              f"campo nombre: {r.text}")
+
+    # ---------------- Filtros guardados (los mismos del Panel) ----------------
+    r = pedir(c, "GET", "/api/filtros", ejemplo="filtros", headers=H)
+    verificar(r.json() == [], "sin filtros guardados, la lista viene vacía", f"filtros: {r.text}")
+    r = pedir(c, "POST", "/api/filtros", ejemplo="filtro_crear", headers=H,
+              json={"nombre": " Promo verano ", "codigos": [B.COCA, B.CAFE, NUEVO, B.COCA]})
+    creado = r.json()
+    guardados = filters.listar_filtros_guardados()      # lo que ve el Panel
+    db.cerrar_conexion()
+    verificar(creado.get("nombre") == "Promo verano" and creado.get("cantidad") == 3 and creado.get("tipo") == "manual"
+              and [g["nombre"] for g in guardados] == ["Promo verano"]
+              and guardados[0]["definicion"] == {"tipo": "manual", "codigos": [B.COCA, B.CAFE, NUEVO]},
+              "crear un filtro desde el celular lo deja como uno manual del Panel, en el orden elegido y sin repetidos",
+              f"creado {creado}, Panel {guardados}")
+    en_panel = [p["codigo"] for p in filters.aplicar_filtro(guardados[0]["definicion"])] if guardados else []
+    db.cerrar_conexion()
+    verificar(en_panel == [B.COCA, B.CAFE, NUEVO], "y el Panel lo aplica con esos mismos productos",
+              f"el Panel aplica: {en_panel}")
+    r = pedir(c, "POST", "/api/filtros", ejemplo="error_409_filtro_existe", headers=H, esperado=409,
+              json={"nombre": "Promo verano", "codigos": [B.YERBA]})
+    verificar(r.json().get("codigo") == "filtro_existe"
+              and filters.obtener_filtro("Promo verano")["definicion"]["codigos"] == [B.COCA, B.CAFE, NUEVO],
+              "crear con un nombre que ya existe da 409 filtro_existe y NO pisa el guardado (el Panel sí pisaría)",
+              f"crear repetido: {r.text}")
+    db.cerrar_conexion()
+    # Uno armado en el Panel con un producto que después se dio de baja y uno
+    # que no existe, y uno viejo de condiciones (el formato de antes).
+    filters.guardar_filtro_manual("Kiosco", [B.CHICLE, B.INACTIVO, "9999999"])
+    filters.guardar_filtro("Almacén (condiciones)", {"op": "AND", "conditions": [
+        {"campo": "categoria", "operador": "=", "valor": "ALMACEN"}]})
+    db.cerrar_conexion()
+    r = pedir(c, "GET", "/api/filtros", ejemplo="filtros", headers=H)
+    lista_f = {f["nombre"]: f for f in r.json()}
+    verificar([f["nombre"] for f in r.json()] == ["Almacén (condiciones)", "Kiosco", "Promo verano"]
+              and lista_f["Kiosco"]["cantidad"] == 1 and lista_f["Almacén (condiciones)"]["tipo"] == "condiciones"
+              and lista_f["Almacén (condiciones)"]["cantidad"] == 5,
+              "la lista trae también los del Panel, por nombre, y cuenta solo los productos activos",
+              f"lista: {r.json()}")
+    r = pedir(c, "GET", "/api/filtros/Promo%20verano", ejemplo="filtro", headers=H)
+    detalle = r.json()
+    verificar([p["codigo"] for p in detalle["productos"]] == [B.COCA, B.CAFE, NUEVO] and detalle["faltantes"] == []
+              and detalle["recortado"] is False and detalle["huella"] == creado["huella"],
+              "el detalle trae los productos en el orden elegido, con la huella de lo guardado",
+              f"detalle: {r.text[:300]}")
+    cafe_detalle = {k: v for k, v in pedir(c, "GET", f"/api/productos/{B.CAFE}", headers=H).json().items()
+                    if k != "movimientos"}
+    verificar(detalle["productos"][1] == cafe_detalle,
+              "cada producto del filtro viene igual que en el detalle (precio de hoy con la oferta, umbral efectivo)",
+              f"café en el filtro: {detalle['productos'][1]}")
+    r = pedir(c, "GET", "/api/filtros/Kiosco", ejemplo="filtro", headers=H)
+    verificar([p["codigo"] for p in r.json()["productos"]] == [B.CHICLE]
+              and r.json()["faltantes"] == [B.INACTIVO, "9999999"],
+              "los dados de baja o inexistentes van aparte en faltantes (se avisan, no se pierden en silencio)",
+              f"kiosco: {r.text[:300]}")
+    r = pedir(c, "GET", "/api/filtros/Almac%C3%A9n%20(condiciones)", ejemplo="filtro", headers=H)
+    verificar(r.json()["tipo"] == "condiciones" and len(r.json()["productos"]) == 5,
+              "un filtro viejo de condiciones se resuelve como en el Panel", f"condiciones: {r.text[:300]}")
+
+    r = pedir(c, "PUT", "/api/filtros/Promo%20verano", ejemplo="filtro_cambiar", headers=H,
+              json={"codigos": [B.CAFE, B.YERBA], "huella": creado["huella"]})
+    cambiado = r.json()
+    verificar(cambiado.get("cantidad") == 2 and cambiado.get("huella") not in (None, creado["huella"])
+              and filters.obtener_filtro("Promo verano")["definicion"]["codigos"] == [B.CAFE, B.YERBA],
+              "cambiar los productos con la huella de lo cargado los guarda y devuelve la huella nueva",
+              f"cambiar: {r.text}")
+    db.cerrar_conexion()
+    r = pedir(c, "PUT", "/api/filtros/Promo%20verano", ejemplo="error_409_filtro_cambio", headers=H, esperado=409,
+              json={"codigos": [B.FIDEOS], "huella": creado["huella"]})
+    verificar(r.json().get("codigo") == "filtro_cambio"
+              and filters.obtener_filtro("Promo verano")["definicion"]["codigos"] == [B.CAFE, B.YERBA],
+              "con una huella vieja da 409 filtro_cambio y no pisa lo guardado", f"huella vieja: {r.text}")
+    db.cerrar_conexion()
+    # Guardado en el Panel entre que el celular lo cargó y lo guardó.
+    filters.guardar_filtro_manual("Promo verano", [B.CHICLE])
+    db.cerrar_conexion()
+    r = pedir(c, "PUT", "/api/filtros/Promo%20verano", headers=H, esperado=409,
+              json={"codigos": [B.FIDEOS], "huella": cambiado.get("huella", "")})
+    verificar(r.json().get("codigo") == "filtro_cambio"
+              and filters.obtener_filtro("Promo verano")["definicion"]["codigos"] == [B.CHICLE],
+              "si lo guardaron en el Panel mientras tanto, el celular no lo pisa", f"Panel en el medio: {r.text}")
+    db.cerrar_conexion()
+    r = pedir(c, "DELETE", f"/api/filtros/Promo%20verano?huella={cambiado.get('huella', '')}", headers=H,
+              esperado=409)
+    verificar(r.json().get("codigo") == "filtro_cambio" and filters.obtener_filtro("Promo verano") is not None,
+              "borrar con una huella vieja da 409 y no borra lo que guardó el Panel", f"borrar viejo: {r.text}")
+    db.cerrar_conexion()
+    huella_actual = pedir(c, "GET", "/api/filtros/Promo%20verano", headers=H).json()["huella"]
+    r = pedir(c, "DELETE", f"/api/filtros/Promo%20verano?huella={huella_actual}", ejemplo="filtro_borrar", headers=H)
+    verificar(r.json() == {"nombre": "Promo verano", "borrado": True} and filters.obtener_filtro("Promo verano") is None,
+              "borrar con la huella de lo cargado lo borra (también del Panel)", f"borrar: {r.text}")
+    db.cerrar_conexion()
+    r = pedir(c, "GET", "/api/filtros/Promo%20verano", ejemplo="error_404_filtro_no_existe", headers=H, esperado=404)
+    verificar(r.json().get("codigo") == "filtro_no_existe", "uno borrado da 404 filtro_no_existe", f"404: {r.text}")
+    pedir(c, "PUT", "/api/filtros/Promo%20verano", headers=H, esperado=404,
+          json={"codigos": [B.CAFE], "huella": huella_actual})
+    pedir(c, "DELETE", f"/api/filtros/Promo%20verano?huella={huella_actual}", headers=H, esperado=404)
+
     # ---------------- Red ----------------
     with B.cliente(app, ip="192.168.1.5", servidor="192.168.1.2") as lan:
         r = pedir(lan, "GET", "/api/productos", ejemplo="error_403_red", headers=H, esperado=403)
@@ -905,7 +1068,12 @@ with B.cliente(app) as c:
                ("GET", "/api/alertas", None), ("GET", "/api/config/alertas", None),
                ("PUT", "/api/config/telegram", {"habilitado": True}),
                ("PUT", "/api/config/umbrales", {"stock_minimo": 1, "stock_maximo": 1}),
-               ("DELETE", "/api/config/umbral-global", None)]
+               ("DELETE", "/api/config/umbral-global", None),
+               ("POST", "/api/productos", {"codigo": "7790200", "nombre": "Nuevo", "precio_venta": 100}),
+               ("GET", "/api/catalogo/valores?campo=marca", None), ("GET", "/api/filtros", None),
+               ("GET", "/api/filtros/Kiosco", None), ("POST", "/api/filtros", {"nombre": "Otro", "codigos": [B.CAFE]}),
+               ("PUT", "/api/filtros/Kiosco", {"codigos": [B.CAFE], "huella": "0" * 64}),
+               ("DELETE", f"/api/filtros/Kiosco?huella={'0' * 64}", None)]
     huella = B.volcado_base(RUTA_VIEJA)
     malos = []
     for metodo, ruta, cuerpo in PEDIDOS:
@@ -987,7 +1155,7 @@ verificar(not errores_fixture, "el fixture del contrato es válido (cada anulabl
           f"errores del fixture: {errores_fixture}")
 fx = contrato.fixture
 verificar(fx.get("contrato") == api_celular.CONTRATO and fx.get("firma") == api_celular.FIRMA,
-          "el fixture es del contrato 2 y de la firma otter-api-celular", f"fixture: {fx.get('contrato')} {fx.get('firma')}")
+          "el fixture es del contrato 3 y de la firma otter-api-celular", f"fixture: {fx.get('contrato')} {fx.get('firma')}")
 sin_probar = sorted(set(fx["ejemplos"]) - set(respuestas))
 verificar(not sin_probar, f"se compararon de verdad los {len(fx['ejemplos'])} ejemplos del contrato",
           f"ejemplos del fixture que la prueba no ejercitó: {sin_probar}")

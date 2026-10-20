@@ -1073,7 +1073,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('100.101.102.103'), findsNothing);
     expect(find.textContaining('100.•••.•••.•••'), findsOneWidget);
-    expect(find.text('Versión 2.0.0 · compilado 4c01dfc · contrato 2'), findsOneWidget);
+    expect(find.text('Versión 2.1.0 · compilado 4c01dfc · contrato 3'), findsOneWidget);
     expect(find.textContaining('ApiCelular.exe cerrar-sesiones'), findsOneWidget);
 
     final gesto = await tester.startGesture(tester.getCenter(renglon));

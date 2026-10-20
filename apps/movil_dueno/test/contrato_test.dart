@@ -1,6 +1,6 @@
 // El contrato de la API del celular, del lado de la app.
 //
-// test/fixtures/contrato_api_celular_v2.json lo escribe el backend y lo
+// test/fixtures/contrato_api_celular_v3.json lo escribe el backend y lo
 // valida tests/test_api_celular_contrato.py contra la API de verdad. Acá se
 // pasa CADA variante de CADA respuesta por el cliente real (ClienteApi →
 // modelos.dart): si la API cambia una clave, un tipo o una ruta y nadie
@@ -170,6 +170,29 @@ void _verificarItem(ItemFactura i, Map<String, dynamic> j) {
   }
 }
 
+void _verificarFiltro(FiltroResumen f, Map<String, dynamic> j) {
+  expect(f.nombre, j['nombre']);
+  expect(f.tipo, j['tipo']);
+  expect(f.deCondiciones, j['tipo'] == 'condiciones');
+  expect(f.cantidad, j['cantidad']);
+  expect(f.creadoEn, j['creado_en']);
+  expect(f.huella, j['huella']);
+}
+
+const _altaGalletitas = ProductoNuevo(
+    codigo: '7790100',
+    nombre: 'Galletitas de Agua 300g',
+    precioVenta: 1500,
+    stockInicial: 24,
+    marca: 'Criollitas',
+    proveedor: 'Distribuidora Sur',
+    categoria: 'ALMACEN');
+
+/// Las huellas que trae el fixture para cambiar y borrar "Promo verano".
+String get _huellaCargada => ((_ejemplos['filtro_cambiar'] as Map)['pedido'] as Map)['huella'] as String;
+String get _huellaGuardada =>
+    Uri.parse((_ejemplos['filtro_borrar'] as Map)['ruta'] as String).queryParameters['huella']!;
+
 final _itemsFactura = [
   ItemFactura(codigo: '7790002', nombre: 'CAFE MOLIDO X 500', cantidad: 12, precioCompra: 3000, existe: true),
   ItemFactura(codigo: '7790999', nombre: '?', cantidad: 1, precioCompra: null, existe: true),
@@ -298,6 +321,36 @@ final _casos = <String, _Caso>{
     expect([for (final x in lista) [x.codigo, x.ok, x.stockNuevo, x.error]],
         [for (final x in j as List) [x['codigo'], x['ok'], x['stock_nuevo'], x['error']]]);
   }),
+  'producto_alta': _Caso((api) => api.crearProducto(_altaGalletitas), (r, j) {
+    _verificarProducto(r as Producto, j as Map<String, dynamic>);
+    for (final m in j['movimientos'] as List) {
+      _verificarMovimiento(Movimiento.fromJson(m as Map<String, dynamic>), m);
+    }
+  }),
+  'catalogo_valores': _Caso((api) => api.valoresCatalogo('marca', q: 'co'), (r, j) => expect(r, j)),
+  'filtros': _Caso((api) => api.filtros(), (r, j) {
+    final lista = r as List<FiltroResumen>;
+    expect(lista, hasLength((j as List).length));
+    for (var i = 0; i < lista.length; i++) {
+      _verificarFiltro(lista[i], j[i] as Map<String, dynamic>);
+    }
+  }),
+  'filtro': _Caso((api) => api.filtro('Promo verano'), (r, j) {
+    final f = r as FiltroDetalle;
+    _verificarFiltro(f, j as Map<String, dynamic>);
+    final productos = j['productos'] as List;
+    expect(f.productos, hasLength(productos.length));
+    for (var i = 0; i < f.productos.length; i++) {
+      _verificarProducto(f.productos[i], productos[i] as Map<String, dynamic>);
+    }
+    expect(f.faltantes, j['faltantes']);
+    expect(f.recortado, j['recortado']);
+  }),
+  'filtro_crear': _Caso((api) => api.crearFiltro('Promo verano', ['7790003', '7790002', '7790100']),
+      (r, j) => _verificarFiltro(r as FiltroResumen, j as Map<String, dynamic>)),
+  'filtro_cambiar': _Caso((api) => api.guardarFiltro('Promo verano', ['7790002', '7790001'], huella: _huellaCargada),
+      (r, j) => _verificarFiltro(r as FiltroResumen, j as Map<String, dynamic>)),
+  'filtro_borrar': _Caso((api) => api.borrarFiltro('Promo verano', huella: _huellaGuardada)),
   // errores: lo que importa es que lleguen como ApiError con su código y extras
   'error_404_no_existe': _Caso((api) => api.producto('0000000')),
   'error_409_stock': _Caso((api) => api.movimiento('7790003', 1, sumar: false)),
@@ -308,6 +361,11 @@ final _casos = <String, _Caso>{
   'error_503_pin': _Caso((api) => api.login('1234')),
   'error_503_base_desactualizada': _Caso((api) => api.productos()),
   'error_403_red': _Caso((api) => api.productos()),
+  'error_409_producto_existe': _Caso((api) => api.crearProducto(_altaGalletitas)),
+  'error_409_filtro_existe': _Caso((api) => api.crearFiltro('Promo verano', ['7790003', '7790002', '7790100'])),
+  'error_409_filtro_cambio':
+      _Caso((api) => api.guardarFiltro('Promo verano', ['7790002', '7790001'], huella: _huellaCargada)),
+  'error_404_filtro_no_existe': _Caso((api) => api.filtro('Promo verano')),
 };
 
 /// Las rutas de tipos_anulables ("productos[].oferta", "precios_guardar.antes.margen"…)
@@ -337,7 +395,8 @@ List<Object?> _valoresDe(String ruta) {
 
 void main() {
   test('el fixture es el del contrato que entiende la app, con la misma firma', () {
-    expect(fixture['contrato'], contratoMinimo);
+    expect(fixture['contrato'], contratoApp);
+    expect(contratoMinimo, lessThanOrEqualTo(contratoApp));
     expect(fixture['firma'], firmaApi);
   });
 
@@ -405,6 +464,12 @@ void main() {
           expect(error.haceMin, json['hace_min']);
           expect(error.renglonesIguales, json['renglones_iguales']);
           expect(error.reintentarEnS, json['reintentar_en_s']);
+          // 409 producto_existe: el producto que ya tiene ese código (o null si está dado de baja)
+          if (json['producto'] == null) {
+            expect(error.producto, isNull);
+          } else {
+            _verificarProducto(error.producto!, json['producto'] as Map<String, dynamic>);
+          }
           expect(error.incierto, isFalse, reason: 'la PC contestó: se sabe que no se aplicó');
         }
       });

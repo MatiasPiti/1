@@ -1,5 +1,5 @@
 {
- "contrato": 2,
+ "contrato": 3,
  "firma": "otter-api-celular",
  "ejemplos": {
   "salud": {
@@ -10,8 +10,8 @@
     {
      "ok": true,
      "servicio": "otter-api-celular",
-     "contrato": 2,
-     "version_api": "2.0.0",
+     "contrato": 3,
+     "version_api": "2.1.0",
      "compilado": "4c01dfc",
      "nombre_local": "El Galpón Del Nono",
      "hora_servidor": "2026-10-06T21:40:00",
@@ -27,8 +27,8 @@
     {
      "ok": true,
      "servicio": "otter-api-celular",
-     "contrato": 2,
-     "version_api": "2.0.0",
+     "contrato": 3,
+     "version_api": "2.1.0",
      "compilado": "desconocido",
      "nombre_local": "El Galpón Del Nono",
      "hora_servidor": "2026-10-06T21:40:00",
@@ -44,8 +44,8 @@
     {
      "ok": true,
      "servicio": "otter-api-celular",
-     "contrato": 2,
-     "version_api": "2.0.0",
+     "contrato": 3,
+     "version_api": "2.1.0",
      "compilado": "desarrollo",
      "nombre_local": "",
      "hora_servidor": "2026-10-06T21:40:00",
@@ -1047,6 +1047,401 @@
     ]
    ]
   },
+  "producto_alta": {
+   "metodo": "POST",
+   "ruta": "/api/productos",
+   "status": 200,
+   "pedido": {
+    "codigo": "7790100",
+    "nombre": "Galletitas de Agua 300g",
+    "precio_venta": 1500,
+    "stock_inicial": 24,
+    "marca": "Criollitas",
+    "proveedor": "Distribuidora Sur",
+    "categoria": "ALMACEN"
+   },
+   "respuestas": [
+    {
+     "codigo": "7790100",
+     "nombre": "Galletitas de Agua 300g",
+     "marca": "Criollitas",
+     "proveedor": "Distribuidora Sur",
+     "categoria": "ALMACEN",
+     "subrubro": null,
+     "stock": 24,
+     "stock_minimo": 20,
+     "stock_maximo": 20,
+     "umbral_propio": false,
+     "precio_venta": 1500.0,
+     "precio_efectivo": 1500.0,
+     "oferta": null,
+     "precio_compra": 0.0,
+     "costo_sin_iva": 0.0,
+     "margen_ganancia": 0.0,
+     "actualizado_en": "2026-10-06T21:12:40.205",
+     "movimientos": [
+      {
+       "fecha_hora": "2026-10-06T21:12:40.214",
+       "codigo": "7790100",
+       "nombre": "Galletitas de Agua 300g",
+       "tipo": "ENTRADA_MANUAL",
+       "cantidad": 24,
+       "stock_resultante": 24,
+       "motivo": "Alta de producto nuevo",
+       "usuario": "dueño (celular)"
+      }
+     ]
+    },
+    {
+     "codigo": "7790101",
+     "nombre": "Pan rallado 500g",
+     "marca": null,
+     "proveedor": null,
+     "categoria": null,
+     "subrubro": null,
+     "stock": 0,
+     "stock_minimo": 20,
+     "stock_maximo": 20,
+     "umbral_propio": false,
+     "precio_venta": 0.0,
+     "precio_efectivo": 0.0,
+     "oferta": null,
+     "precio_compra": 0.0,
+     "costo_sin_iva": 0.0,
+     "margen_ganancia": 0.0,
+     "actualizado_en": "2026-10-06T21:15:02.880",
+     "movimientos": []
+    },
+    {
+     "codigo": "7790102",
+     "nombre": "Leche Entera 1L",
+     "marca": "La Serenísima",
+     "proveedor": null,
+     "categoria": "LACTEOS",
+     "subrubro": "LECHES",
+     "stock": 12,
+     "stock_minimo": 6,
+     "stock_maximo": 0,
+     "umbral_propio": true,
+     "precio_venta": 1250.0,
+     "precio_efectivo": 1100.0,
+     "oferta": {
+      "id": 9,
+      "tipo_descuento": "PRECIO_FIJO",
+      "valor": 1100.0,
+      "descripcion": "",
+      "fecha_fin": "2026-10-09"
+     },
+     "precio_compra": 0.0,
+     "costo_sin_iva": 0.0,
+     "margen_ganancia": 0.0,
+     "actualizado_en": "2026-10-06T21:20:11.004",
+     "movimientos": [
+      {
+       "fecha_hora": "2026-10-06T21:20:11.010",
+       "codigo": "7790102",
+       "nombre": "Leche Entera 1L",
+       "tipo": "ENTRADA_MANUAL",
+       "cantidad": 12,
+       "stock_resultante": 12,
+       "motivo": "Alta de producto nuevo",
+       "usuario": "dueño (celular)"
+      }
+     ]
+    }
+   ]
+  },
+  "catalogo_valores": {
+   "metodo": "GET",
+   "ruta": "/api/catalogo/valores?campo=marca&q=co",
+   "status": 200,
+   "respuestas": [
+    [
+     "Coca-Cola",
+     "Colombia"
+    ],
+    []
+   ]
+  },
+  "filtros": {
+   "metodo": "GET",
+   "ruta": "/api/filtros",
+   "status": 200,
+   "respuestas": [
+    [
+     {
+      "nombre": "Almacén (condiciones)",
+      "tipo": "condiciones",
+      "cantidad": 3,
+      "creado_en": "2026-08-14T10:11:12.000",
+      "huella": "cd47db3977f54b03e7a964ef51ef3c83462b04f247967aea32e492a7a560e8db"
+     },
+     {
+      "nombre": "Kiosco",
+      "tipo": "manual",
+      "cantidad": 1,
+      "creado_en": "2026-09-28T18:02:44.350",
+      "huella": "e84cefd7a1a0348c9730d6d4ef0919c50bf4eeda3036c1c1ae748fc737fb59eb"
+     },
+     {
+      "nombre": "Promo verano",
+      "tipo": "manual",
+      "cantidad": 3,
+      "creado_en": "2026-10-06T21:30:05.118",
+      "huella": "e526ef6480cf87c429562cfd437197da94a99962cc1ed23cf11ebbee96c4bc61"
+     }
+    ],
+    []
+   ]
+  },
+  "filtro": {
+   "metodo": "GET",
+   "ruta": "/api/filtros/Promo%20verano",
+   "status": 200,
+   "respuestas": [
+    {
+     "nombre": "Promo verano",
+     "tipo": "manual",
+     "cantidad": 3,
+     "creado_en": "2026-10-06T21:30:05.118",
+     "huella": "e526ef6480cf87c429562cfd437197da94a99962cc1ed23cf11ebbee96c4bc61",
+     "productos": [
+      {
+       "codigo": "7790003",
+       "nombre": "Coca Cola 2,25 L",
+       "marca": "Coca-Cola",
+       "proveedor": null,
+       "categoria": "BEBIDAS",
+       "subrubro": null,
+       "stock": 6,
+       "stock_minimo": 20,
+       "stock_maximo": 20,
+       "umbral_propio": false,
+       "precio_venta": 2500.0,
+       "precio_efectivo": 2000.0,
+       "oferta": {
+        "id": 5,
+        "tipo_descuento": "PRECIO_FIJO",
+        "valor": 2000.0,
+        "descripcion": "",
+        "fecha_fin": "2026-10-08"
+       },
+       "precio_compra": 0.0,
+       "costo_sin_iva": 0.0,
+       "margen_ganancia": 0.0,
+       "actualizado_en": "2026-10-06T09:30:00.000"
+      },
+      {
+       "codigo": "7790002",
+       "nombre": "Café Molido 500g",
+       "marca": "Colombia",
+       "proveedor": null,
+       "categoria": "ALMACEN",
+       "subrubro": null,
+       "stock": 3,
+       "stock_minimo": 5,
+       "stock_maximo": 0,
+       "umbral_propio": false,
+       "precio_venta": 4300.0,
+       "precio_efectivo": 3870.0,
+       "oferta": {
+        "id": 4,
+        "tipo_descuento": "PORCENTAJE",
+        "valor": 10.0,
+        "descripcion": "Semana del café",
+        "fecha_fin": "2026-10-09"
+       },
+       "precio_compra": 3000.0,
+       "costo_sin_iva": 2479.34,
+       "margen_ganancia": 43.33,
+       "actualizado_en": "2026-10-06T10:00:00.000"
+      },
+      {
+       "codigo": "7790100",
+       "nombre": "Galletitas de Agua 300g",
+       "marca": "Criollitas",
+       "proveedor": "Distribuidora Sur",
+       "categoria": "ALMACEN",
+       "subrubro": null,
+       "stock": 24,
+       "stock_minimo": 20,
+       "stock_maximo": 20,
+       "umbral_propio": false,
+       "precio_venta": 1500.0,
+       "precio_efectivo": 1500.0,
+       "oferta": null,
+       "precio_compra": 0.0,
+       "costo_sin_iva": 0.0,
+       "margen_ganancia": 0.0,
+       "actualizado_en": "2026-10-06T21:12:40.205"
+      }
+     ],
+     "faltantes": [],
+     "recortado": false
+    },
+    {
+     "nombre": "Kiosco",
+     "tipo": "manual",
+     "cantidad": 1,
+     "creado_en": "2026-09-28T18:02:44.350",
+     "huella": "e84cefd7a1a0348c9730d6d4ef0919c50bf4eeda3036c1c1ae748fc737fb59eb",
+     "productos": [
+      {
+       "codigo": "7790009",
+       "nombre": "Chicle de menta",
+       "marca": null,
+       "proveedor": null,
+       "categoria": "KIOSCO",
+       "subrubro": null,
+       "stock": 25,
+       "stock_minimo": 0,
+       "stock_maximo": 20,
+       "umbral_propio": true,
+       "precio_venta": 300.0,
+       "precio_efectivo": 300.0,
+       "oferta": null,
+       "precio_compra": 0.0,
+       "costo_sin_iva": 0.0,
+       "margen_ganancia": 0.0,
+       "actualizado_en": "2026-10-06T09:31:00.000"
+      }
+     ],
+     "faltantes": [
+      "7790006",
+      "9999999"
+     ],
+     "recortado": false
+    },
+    {
+     "nombre": "Almacén (condiciones)",
+     "tipo": "condiciones",
+     "cantidad": 3,
+     "creado_en": "2026-08-14T10:11:12.000",
+     "huella": "cd47db3977f54b03e7a964ef51ef3c83462b04f247967aea32e492a7a560e8db",
+     "productos": [
+      {
+       "codigo": "7790001",
+       "nombre": "Yerba Mate 1kg",
+       "marca": null,
+       "proveedor": "Distribuidora Sur",
+       "categoria": null,
+       "subrubro": "INFUSIONES",
+       "stock": 20,
+       "stock_minimo": 20,
+       "stock_maximo": 20,
+       "umbral_propio": true,
+       "precio_venta": 3500.0,
+       "precio_efectivo": 3500.0,
+       "oferta": null,
+       "precio_compra": 2420.0,
+       "costo_sin_iva": 2000.0,
+       "margen_ganancia": 44.63,
+       "actualizado_en": "2026-10-06T01:04:51.533"
+      },
+      {
+       "codigo": "7790002",
+       "nombre": "Café Molido 500g",
+       "marca": "Colombia",
+       "proveedor": null,
+       "categoria": "ALMACEN",
+       "subrubro": null,
+       "stock": 3,
+       "stock_minimo": 5,
+       "stock_maximo": 0,
+       "umbral_propio": false,
+       "precio_venta": 4300.0,
+       "precio_efectivo": 3870.0,
+       "oferta": {
+        "id": 4,
+        "tipo_descuento": "PORCENTAJE",
+        "valor": 10.0,
+        "descripcion": "Semana del café",
+        "fecha_fin": "2026-10-09"
+       },
+       "precio_compra": 3000.0,
+       "costo_sin_iva": 2479.34,
+       "margen_ganancia": 43.33,
+       "actualizado_en": "2026-10-06T10:00:00.000"
+      },
+      {
+       "codigo": "7790101",
+       "nombre": "Pan rallado 500g",
+       "marca": null,
+       "proveedor": null,
+       "categoria": null,
+       "subrubro": null,
+       "stock": 0,
+       "stock_minimo": 20,
+       "stock_maximo": 20,
+       "umbral_propio": false,
+       "precio_venta": 0.0,
+       "precio_efectivo": 0.0,
+       "oferta": null,
+       "precio_compra": 0.0,
+       "costo_sin_iva": 0.0,
+       "margen_ganancia": 0.0,
+       "actualizado_en": "2026-10-06T21:15:02.880"
+      }
+     ],
+     "faltantes": [],
+     "recortado": false
+    }
+   ]
+  },
+  "filtro_crear": {
+   "metodo": "POST",
+   "ruta": "/api/filtros",
+   "status": 200,
+   "pedido": {
+    "nombre": "Promo verano",
+    "codigos": [
+     "7790003",
+     "7790002",
+     "7790100"
+    ]
+   },
+   "respuestas": [
+    {
+     "nombre": "Promo verano",
+     "tipo": "manual",
+     "cantidad": 3,
+     "creado_en": "2026-10-06T21:30:05.118",
+     "huella": "e526ef6480cf87c429562cfd437197da94a99962cc1ed23cf11ebbee96c4bc61"
+    }
+   ]
+  },
+  "filtro_cambiar": {
+   "metodo": "PUT",
+   "ruta": "/api/filtros/Promo%20verano",
+   "status": 200,
+   "pedido": {
+    "codigos": [
+     "7790002",
+     "7790001"
+    ],
+    "huella": "e526ef6480cf87c429562cfd437197da94a99962cc1ed23cf11ebbee96c4bc61"
+   },
+   "respuestas": [
+    {
+     "nombre": "Promo verano",
+     "tipo": "manual",
+     "cantidad": 2,
+     "creado_en": "2026-10-06T21:30:05.118",
+     "huella": "231cd5c8c0504cbfbc17f0de61d333600988c652e86919964bb1fa892b362911"
+    }
+   ]
+  },
+  "filtro_borrar": {
+   "metodo": "DELETE",
+   "ruta": "/api/filtros/Promo%20verano?huella=231cd5c8c0504cbfbc17f0de61d333600988c652e86919964bb1fa892b362911",
+   "status": 200,
+   "respuestas": [
+    {
+     "nombre": "Promo verano",
+     "borrado": true
+    }
+   ]
+  },
   "error_404_no_existe": {
    "metodo": "GET",
    "ruta": "/api/productos/0000000",
@@ -1158,6 +1553,150 @@
      "codigo": "red_no_permitida"
     }
    ]
+  },
+  "error_409_producto_existe": {
+   "metodo": "POST",
+   "ruta": "/api/productos",
+   "status": 409,
+   "pedido": {
+    "codigo": "7790100",
+    "nombre": "Galletitas de Agua 300g",
+    "precio_venta": 1500,
+    "stock_inicial": 24,
+    "marca": "Criollitas",
+    "proveedor": "Distribuidora Sur",
+    "categoria": "ALMACEN"
+   },
+   "respuestas": [
+    {
+     "detail": "Ya hay un producto con el código 7790100: «Galletitas de Agua 300g».",
+     "codigo": "producto_existe",
+     "producto": {
+      "codigo": "7790100",
+      "nombre": "Galletitas de Agua 300g",
+      "marca": "Criollitas",
+      "proveedor": "Distribuidora Sur",
+      "categoria": "ALMACEN",
+      "subrubro": null,
+      "stock": 24,
+      "stock_minimo": 20,
+      "stock_maximo": 20,
+      "umbral_propio": false,
+      "precio_venta": 1500.0,
+      "precio_efectivo": 1500.0,
+      "oferta": null,
+      "precio_compra": 0.0,
+      "costo_sin_iva": 0.0,
+      "margen_ganancia": 0.0,
+      "actualizado_en": "2026-10-06T21:12:40.205"
+     }
+    },
+    {
+     "detail": "Ya hay un producto con el código 7790002: «Café Molido 500g».",
+     "codigo": "producto_existe",
+     "producto": {
+      "codigo": "7790002",
+      "nombre": "Café Molido 500g",
+      "marca": "Colombia",
+      "proveedor": null,
+      "categoria": "ALMACEN",
+      "subrubro": null,
+      "stock": 3,
+      "stock_minimo": 5,
+      "stock_maximo": 0,
+      "umbral_propio": false,
+      "precio_venta": 4300.0,
+      "precio_efectivo": 3870.0,
+      "oferta": {
+       "id": 4,
+       "tipo_descuento": "PORCENTAJE",
+       "valor": 10.0,
+       "descripcion": "Semana del café",
+       "fecha_fin": "2026-10-09"
+      },
+      "precio_compra": 3000.0,
+      "costo_sin_iva": 2479.34,
+      "margen_ganancia": 43.33,
+      "actualizado_en": "2026-10-06T10:00:00.000"
+     }
+    },
+    {
+     "detail": "Ya hay un producto con el código 7790001: «Yerba Mate 1kg».",
+     "codigo": "producto_existe",
+     "producto": {
+      "codigo": "7790001",
+      "nombre": "Yerba Mate 1kg",
+      "marca": null,
+      "proveedor": "Distribuidora Sur",
+      "categoria": null,
+      "subrubro": "INFUSIONES",
+      "stock": 20,
+      "stock_minimo": 20,
+      "stock_maximo": 20,
+      "umbral_propio": true,
+      "precio_venta": 3500.0,
+      "precio_efectivo": 3500.0,
+      "oferta": null,
+      "precio_compra": 2420.0,
+      "costo_sin_iva": 2000.0,
+      "margen_ganancia": 44.63,
+      "actualizado_en": "2026-10-06T01:04:51.533"
+     }
+    },
+    {
+     "detail": "Ya hay un producto con el código 7790006, pero está dado de baja: revisalo en el Panel de la PC.",
+     "codigo": "producto_existe",
+     "producto": null
+    }
+   ]
+  },
+  "error_409_filtro_existe": {
+   "metodo": "POST",
+   "ruta": "/api/filtros",
+   "status": 409,
+   "pedido": {
+    "nombre": "Promo verano",
+    "codigos": [
+     "7790003",
+     "7790002",
+     "7790100"
+    ]
+   },
+   "respuestas": [
+    {
+     "detail": "Ya hay un filtro que se llama «Promo verano». Elegí otro nombre o cargalo para cambiarlo.",
+     "codigo": "filtro_existe"
+    }
+   ]
+  },
+  "error_409_filtro_cambio": {
+   "metodo": "PUT",
+   "ruta": "/api/filtros/Promo%20verano",
+   "status": 409,
+   "pedido": {
+    "codigos": [
+     "7790002",
+     "7790001"
+    ],
+    "huella": "e526ef6480cf87c429562cfd437197da94a99962cc1ed23cf11ebbee96c4bc61"
+   },
+   "respuestas": [
+    {
+     "detail": "El filtro «Promo verano» cambió mientras tanto (lo guardaron desde otro lado). Cargalo de nuevo antes de cambiarlo.",
+     "codigo": "filtro_cambio"
+    }
+   ]
+  },
+  "error_404_filtro_no_existe": {
+   "metodo": "GET",
+   "ruta": "/api/filtros/Promo%20verano",
+   "status": 404,
+   "respuestas": [
+    {
+     "detail": "El filtro «Promo verano» no existe: lo borraron desde otro lado.",
+     "codigo": "filtro_no_existe"
+    }
+   ]
   }
  },
  "tipos_anulables": {
@@ -1206,6 +1745,22 @@
   "factura_analizar.items[].stock_actual": "number|null",
   "factura_analizar.items[].precio_compra_actual": "number|null",
   "factura_analizar.items[].emparejamiento": "object|null",
-  "factura_analizar.items[].emparejamiento.sugerido": "object|null"
+  "factura_analizar.items[].emparejamiento.sugerido": "object|null",
+  "producto_alta.marca": "string|null",
+  "producto_alta.proveedor": "string|null",
+  "producto_alta.categoria": "string|null",
+  "producto_alta.subrubro": "string|null",
+  "producto_alta.oferta": "object|null",
+  "error_409_producto_existe.producto": "object|null",
+  "error_409_producto_existe.producto.marca": "string|null",
+  "error_409_producto_existe.producto.proveedor": "string|null",
+  "error_409_producto_existe.producto.categoria": "string|null",
+  "error_409_producto_existe.producto.subrubro": "string|null",
+  "error_409_producto_existe.producto.oferta": "object|null",
+  "filtro.productos[].marca": "string|null",
+  "filtro.productos[].proveedor": "string|null",
+  "filtro.productos[].categoria": "string|null",
+  "filtro.productos[].subrubro": "string|null",
+  "filtro.productos[].oferta": "object|null"
  }
 }

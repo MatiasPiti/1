@@ -32,7 +32,7 @@ CHAT_ID = "-987650"
 NOMBRE_LOCAL = "El Galpón Del Nono (prueba)"
 IP_CELULAR = "100.101.102.103"
 IP_PC = "100.80.1.2"
-FIXTURE = os.path.join(RAIZ, "apps", "movil_dueno", "test", "fixtures", "contrato_api_celular_v2.json")
+FIXTURE = os.path.join(RAIZ, "apps", "movil_dueno", "test", "fixtures", "contrato_api_celular_v3.json")
 
 # Códigos de la base de prueba
 YERBA = "7790001"       # con costo 2000/2420/44,63/3500

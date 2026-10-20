@@ -17,6 +17,10 @@ class CampoCodigo extends StatelessWidget {
     this.autofocus = false,
     this.alEscanear,
     this.escanearAbre,
+    this.icono = Icons.search,
+    this.accion = TextInputAction.search,
+    this.error,
+    this.focusNode,
   });
 
   final TextEditingController controller;
@@ -30,6 +34,13 @@ class CampoCodigo extends StatelessWidget {
   /// Para tests: reemplaza la apertura de la cámara.
   final Future<String?> Function(BuildContext)? escanearAbre;
 
+  /// En un formulario (el alta de un producto) el campo no busca: otro
+  /// ícono, la tecla "siguiente" y el error de validación abajo.
+  final IconData icono;
+  final TextInputAction accion;
+  final String? error;
+  final FocusNode? focusNode;
+
   Future<void> _escanear(BuildContext context) async {
     final codigo = await (escanearAbre ?? escanearCodigo)(context);
     if (codigo == null) return;
@@ -41,12 +52,14 @@ class CampoCodigo extends StatelessWidget {
   Widget build(BuildContext context) {
     return TextField(
       controller: controller,
+      focusNode: focusNode,
       autofocus: autofocus,
-      textInputAction: TextInputAction.search,
+      textInputAction: accion,
       onSubmitted: (t) => alEnviar(t.trim()),
       decoration: InputDecoration(
         labelText: etiqueta,
-        prefixIcon: const Icon(Icons.search),
+        errorText: error,
+        prefixIcon: Icon(icono),
         suffixIcon: IconButton(
           key: const Key('boton_escanear'),
           tooltip: 'Escanear con la cámara',
@@ -67,6 +80,31 @@ void mostrarMensaje(BuildContext context, String texto, {bool error = false}) {
       backgroundColor: error ? esquema.error : null,
       duration: Duration(seconds: error ? 5 : 3),
     ));
+}
+
+/// Un aviso en el cuerpo de la pantalla (un corte, un conflicto, algo para
+/// revisar), con una acción opcional. Mismo estilo que el de las ventas
+/// pendientes y los del ajuste masivo.
+class Aviso extends StatelessWidget {
+  const Aviso({super.key, required this.texto, required this.color, required this.icono, this.accion});
+  final String texto;
+  final Color color;
+  final IconData icono;
+  final Widget? accion;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(color: color.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(12)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(icono, color: color),
+            const SizedBox(width: 10),
+            Expanded(child: Text(texto)),
+          ]),
+          if (accion != null) Align(alignment: Alignment.centerRight, child: accion),
+        ]),
+      );
 }
 
 class EstadoVacio extends StatelessWidget {

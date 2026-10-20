@@ -1,5 +1,5 @@
-// Modelos del contrato 2 de ApiCelular (services/api_celular.py). La forma
-// exacta de cada respuesta está en test/fixtures/contrato_api_celular_v2.json,
+// Modelos del contrato 3 de ApiCelular (services/api_celular.py). La forma
+// exacta de cada respuesta está en test/fixtures/contrato_api_celular_v3.json,
 // que escribe el backend y que test/contrato_test.dart parsea entero con estos
 // fromJson: cambiar un campo acá sin cambiar el fixture (o al revés) rompe esa
 // prueba, que es lo que se quiere.
@@ -860,4 +860,139 @@ class ResultadoFactura {
   final bool ok;
   final int? stockNuevo;
   final String? error;
+}
+
+// --------------------------------------------------------------------- //
+// Contrato 3: alta de productos y filtros guardados
+// --------------------------------------------------------------------- //
+
+/// El código que la Caja usa para los artículos sin código de barras
+/// (pos_core/sales.CODIGO_SIN_BARRA): nunca descuenta stock, así que no
+/// puede ser el de un producto.
+const codigoSinBarra = '1';
+
+/// Lo que se manda en POST /api/productos: los mismos campos que el alta del
+/// Panel de la PC. El costo y el % de ganancia se cargan después, en Precios.
+class ProductoNuevo {
+  const ProductoNuevo({
+    required this.codigo,
+    required this.nombre,
+    required this.precioVenta,
+    this.stockInicial = 0,
+    this.marca,
+    this.proveedor,
+    this.categoria,
+  });
+
+  final String codigo;
+  final String nombre;
+  final double precioVenta;
+  final int stockInicial;
+  final String? marca;
+  final String? proveedor;
+  final String? categoria;
+
+  static String? _texto(String? t) {
+    final v = t?.trim();
+    return v == null || v.isEmpty ? null : v;
+  }
+
+  Map<String, dynamic> toJson() => {
+        'codigo': codigo.trim(),
+        'nombre': nombre.trim(),
+        'precio_venta': precioVenta,
+        'stock_inicial': stockInicial,
+        // vacío = sin marca (null), igual que el Panel
+        'marca': _texto(marca),
+        'proveedor': _texto(proveedor),
+        'categoria': _texto(categoria),
+      };
+
+  /// ¿El producto que la PC dice que ya existe es este mismo? Pasa cuando el
+  /// alta llegó pero la respuesta se cortó (datos móviles) y Leo la mandó de
+  /// nuevo: no es un error, es el que acaba de dar de alta.
+  bool esElMismo(Producto p) =>
+      p.codigo == codigo.trim() &&
+      p.nombre == nombre.trim() &&
+      p.precioVenta == precioVenta &&
+      p.marca == _texto(marca) &&
+      p.proveedor == _texto(proveedor) &&
+      p.categoria == _texto(categoria);
+}
+
+/// Un filtro guardado: una lista de productos con nombre ("Gaseosas", "Promo
+/// verano") para ajustarles el precio juntos. Son los mismos del Panel de la
+/// PC (tabla Filtros_Guardados): lo que se guarda acá se ve allá y al revés.
+class FiltroResumen {
+  FiltroResumen({
+    required this.nombre,
+    required this.tipo,
+    required this.cantidad,
+    required this.creadoEn,
+    required this.huella,
+  });
+
+  factory FiltroResumen.fromJson(Map<String, dynamic> j) => FiltroResumen(
+        nombre: j['nombre'] as String,
+        tipo: j['tipo'] as String? ?? 'manual',
+        cantidad: _i(j['cantidad']),
+        creadoEn: j['creado_en'] as String? ?? '',
+        huella: j['huella'] as String? ?? '',
+      );
+
+  final String nombre;
+
+  /// manual (elegidos uno por uno) | condiciones (el formato viejo del Panel:
+  /// "marca = X", etc.; trae los productos que cumplen eso HOY).
+  final String tipo;
+
+  /// Productos activos que trae hoy.
+  final int cantidad;
+  final String creadoEn;
+
+  /// Versión de lo guardado. Se devuelve al cambiarlo o borrarlo: si alguien
+  /// lo guardó mientras tanto (en el Panel o en otro celular), la PC contesta
+  /// 409 `filtro_cambio` y no pisa nada.
+  final String huella;
+
+  bool get deCondiciones => tipo == 'condiciones';
+}
+
+/// GET /api/filtros/{nombre}: el filtro con sus productos, en el orden en que
+/// se eligieron.
+class FiltroDetalle extends FiltroResumen {
+  FiltroDetalle({
+    required super.nombre,
+    required super.tipo,
+    required super.cantidad,
+    required super.creadoEn,
+    required super.huella,
+    required this.productos,
+    this.faltantes = const [],
+    this.recortado = false,
+  });
+
+  factory FiltroDetalle.fromJson(Map<String, dynamic> j) {
+    final r = FiltroResumen.fromJson(j);
+    return FiltroDetalle(
+      nombre: r.nombre,
+      tipo: r.tipo,
+      cantidad: r.cantidad,
+      creadoEn: r.creadoEn,
+      huella: r.huella,
+      productos: [for (final p in j['productos'] as List) Producto.fromJson(p as Map<String, dynamic>)],
+      faltantes: [for (final c in j['faltantes'] as List? ?? const []) c as String],
+      recortado: j['recortado'] as bool? ?? false,
+    );
+  }
+
+  final List<Producto> productos;
+
+  /// Códigos guardados que ya no existen o están dados de baja: se avisan
+  /// (no se pierden en silencio) y al guardar desde el celular salen del filtro.
+  final List<String> faltantes;
+
+  /// El filtro tiene más productos de los que se pueden traer (lo armaron en
+  /// el Panel): se ven los primeros y no se puede guardar desde el celular.
+  final bool recortado;
 }

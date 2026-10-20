@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -6,7 +8,9 @@ import 'package:provider/provider.dart';
 import '../api/cliente_api.dart';
 import '../estado.dart';
 import '../tema.dart';
+import '../widgets/comunes.dart';
 import '../widgets/escaner.dart';
+import 'producto_nuevo.dart';
 import 'stock.dart';
 
 /// Decide si una lectura de la cámara cuenta como un "disparo" nuevo.
@@ -93,13 +97,16 @@ class ColaLecturas {
 }
 
 class _Lectura {
-  _Lectura({required this.codigo, required this.ok, required this.texto, this.aviso});
+  _Lectura({required this.codigo, required this.ok, required this.texto, this.aviso, this.noExiste = false});
   final String codigo;
   final bool ok;
   final String texto;
 
   /// Ventas de ese producto que el StockService todavía va a descontar.
   final String? aviso;
+
+  /// El código no está en el sistema: se ofrece darlo de alta.
+  final bool noExiste;
 }
 
 /// El sistema dice que no hay stock porque el inventario todavía no se
@@ -134,7 +141,38 @@ class _PantallaModoLectorState extends State<PantallaModoLector> {
     // se reanuda sola al volver del segundo plano: lo que vea no descuenta
     // nada hasta desbloquear.
     if (!mounted || context.read<SesionEstado>().estado != EstadoSesion.activa) return;
+    // Lo mismo con el alta de un producto abierta encima (la cámara se apaga
+    // al abrirla, pero mobile_scanner la reanuda sola al volver del fondo).
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return;
     _cola.detectados(codigosDe(captura), sumar: _sumar);
+  }
+
+  /// Un código que no existe se da de alta sin salir del lector. La cámara
+  /// se apaga mientras tanto: no descuenta nada de fondo ni se pelea con la
+  /// del botón de escanear del alta.
+  Future<void> _darDeAlta(String codigo) async {
+    try {
+      await _control.stop().timeout(const Duration(seconds: 2));
+    } catch (_) {
+      // si no se pudo parar, lo que vea no cuenta igual (ver _alDetectar)
+    }
+    if (!mounted) return;
+    final r = await abrirAltaProducto(context, codigo: codigo);
+    if (!mounted) return;
+    // Sin esperarla: si la cámara no arranca, el visor muestra el error.
+    unawaited(_control.start().catchError((Object _) {}));
+    if (r == null) return;
+    final p = r.producto;
+    setState(() {
+      for (var i = 0; i < _lecturas.length; i++) {
+        final l = _lecturas[i];
+        if (l.noExiste && l.codigo == codigo) {
+          _lecturas[i] = _Lectura(
+              codigo: codigo, ok: true, texto: '${p.nombre}: ${r.nuevo ? 'dado de alta' : 'ya existía'} con ${p.stock} u.');
+        }
+      }
+    });
+    if (r.nuevo) mostrarMensaje(context, '${p.nombre}: dado de alta. Ya está en la Caja.');
   }
 
   /// [sumar] es el modo de cuando se leyó el código: si Leo lo cambia
@@ -161,7 +199,7 @@ class _PantallaModoLectorState extends State<PantallaModoLector> {
         ApiError(incierto: true) => 'Código $codigo: ${e.mensaje}',
         _ => e.mensaje,
       };
-      _agregar(_Lectura(codigo: codigo, ok: false, texto: texto));
+      _agregar(_Lectura(codigo: codigo, ok: false, texto: texto, noExiste: e.codigo == 'no_existe'));
     } finally {
       if (mounted) setState(() => _procesando = null);
     }
@@ -235,6 +273,8 @@ class _PantallaModoLectorState extends State<PantallaModoLector> {
                   ),
               ]),
             ),
+            if (ultima != null && ultima.noExiste)
+              TextButton(onPressed: () => _darDeAlta(ultima.codigo), child: const Text('Dar de alta')),
           ]),
         ),
         Padding(
@@ -269,6 +309,9 @@ class _PantallaModoLectorState extends State<PantallaModoLector> {
                 leading: Icon(l.ok ? Icons.check : Icons.close, color: l.ok ? c.ok : c.peligro),
                 title: Text(l.texto, maxLines: 2),
                 subtitle: l.aviso == null ? null : Text(l.aviso!, style: TextStyle(color: c.aviso)),
+                trailing: l.noExiste
+                    ? TextButton(onPressed: () => _darDeAlta(l.codigo), child: const Text('Dar de alta'))
+                    : null,
               );
             },
           ),

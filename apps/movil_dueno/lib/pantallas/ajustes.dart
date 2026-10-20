@@ -7,7 +7,7 @@ import '../estado.dart';
 import '../widgets/comunes.dart';
 import 'login.dart';
 
-const versionApp = '2.0.0';
+const versionApp = '2.1.0';
 
 /// "http://100.101.102.103:8766" -> "100.•••.•••.•••". Una captura de esta
 /// pantalla es un chat igual (regla 4): la IP de la PC no se muestra entera

@@ -10,7 +10,7 @@ import 'package:panel_dueno/formato.dart';
 /// El contrato que escribe el backend (fuente de verdad, §8.4 de la espec).
 /// Lo leen test_api_celular_contrato.py, contrato_test.dart y este servidor.
 final Map<String, dynamic> fixture =
-    jsonDecode(File('test/fixtures/contrato_api_celular_v2.json').readAsStringSync()) as Map<String, dynamic>;
+    jsonDecode(File('test/fixtures/contrato_api_celular_v3.json').readAsStringSync()) as Map<String, dynamic>;
 
 /// Copia (para poder modificarla) de la respuesta [i] del ejemplo [nombre].
 dynamic ejemplo(String nombre, [int i = 0]) =>
@@ -83,9 +83,9 @@ num nuevoPrecioComoLaPc(double anterior, {double? porcentaje, double? montoFijo,
   return redondear ? (nuevo / 100).ceil() * 100 : (nuevo * 100).round() / 100;
 }
 
-/// Imita a services/api_celular.py (contrato 2): las formas salen del
+/// Imita a services/api_celular.py (contrato 3): las formas salen del
 /// fixture y el estado (stock, precios crudos, umbrales, Telegram, facturas
-/// aplicadas) vive en memoria.
+/// aplicadas, filtros) vive en memoria.
 class ServidorFalso {
   static const pin = '482915';
   static const direccion = '100.101.102.103';
@@ -109,6 +109,11 @@ class ServidorFalso {
 
   /// Simula que se corta la conexión DESPUÉS de que la PC aplicó la escritura.
   bool cortarEscrituras = false;
+
+  /// Después de ese corte la señal no vuelve: todo pedido falla (hasta poner
+  /// [sinSenal] en false).
+  bool sinSenalDespuesDelCorte = false;
+  bool sinSenal = false;
 
   /// Catálogo: café (con oferta %), yerba (umbral propio), coca (oferta de
   /// precio fijo, stock 0) y un alfajor que está en $ 0.
@@ -154,6 +159,23 @@ class ServidorFalso {
   final itemsFacturaAplicados = <Map<String, dynamic>>[];
   final _facturasAplicadas = <({String nombre, Set<String> renglones})>[];
 
+  // --- alta de productos y filtros (contrato 3) ---
+  /// Códigos que existen pero están dados de baja (no salen en las búsquedas).
+  final inactivos = {'7790006'};
+
+  /// Nombre -> productos en el orden elegido y la huella de lo guardado.
+  final filtros = <String, ({List<String> codigos, String huella, String tipo})>{};
+  int _versionFiltros = 0;
+
+  /// false: la PC tiene el contrato 2 (no conoce las rutas nuevas).
+  bool contrato3 = true;
+
+  String _huellaNueva() => (++_versionFiltros).toRadixString(16).padLeft(64, '0');
+
+  /// Guarda un filtro "desde el Panel" (cambia la huella).
+  void guardarFiltroPorFuera(String nombre, List<String> codigos, {String tipo = 'manual'}) =>
+      filtros[nombre] = (codigos: codigos, huella: _huellaNueva(), tipo: tipo);
+
   int get stockCafe => catalogo['7790002']!['stock'] as int;
   set stockCafe(int v) => catalogo['7790002']!['stock'] = v;
 
@@ -181,12 +203,88 @@ class ServidorFalso {
       };
 
   http.Response _escritura(http.Response r) {
-    if (cortarEscrituras) throw http.ClientException('Connection closed while receiving data');
+    if (cortarEscrituras) {
+      if (sinSenalDespuesDelCorte) sinSenal = true;
+      throw http.ClientException('Connection closed while receiving data');
+    }
     return r;
   }
 
   http.Response _noExiste(String codigo) =>
       errorApi(404, 'no_existe', "Producto con código '$codigo' no existe o está inactivo");
+
+  http.Response _filtroNoExiste(String nombre) =>
+      errorApi(404, 'filtro_no_existe', 'El filtro «$nombre» no existe: lo borraron desde otro lado.');
+
+  /// products.crear_producto + el endpoint: 409 con el producto si ya existe.
+  http.Response _alta(Map<String, dynamic> d) {
+    final codigo = (d['codigo'] as String).trim();
+    if (codigo == '1') {
+      return errorApi(400, 'dato_invalido',
+          'El código 1 lo usa la Caja para los artículos sin código de barras: elegí otro.');
+    }
+    final existente = catalogo[codigo];
+    if (existente != null) {
+      return errorApi(409, 'producto_existe', 'Ya hay un producto con el código $codigo: «${existente['nombre']}».',
+          {'producto': existente});
+    }
+    if (inactivos.contains(codigo)) {
+      return errorApi(409, 'producto_existe',
+          'Ya hay un producto con el código $codigo, pero está dado de baja: revisalo en el Panel de la PC.',
+          {'producto': null});
+    }
+    final stock = d['stock_inicial'] as int? ?? 0;
+    final p = <String, dynamic>{
+      'codigo': codigo, 'nombre': (d['nombre'] as String).trim(), 'marca': d['marca'], 'proveedor': d['proveedor'],
+      'categoria': d['categoria'], 'subrubro': null, 'stock': stock, 'stock_minimo': umbralMinimo,
+      'stock_maximo': umbralMaximo, 'umbral_propio': false, 'precio_venta': _d(d['precio_venta']),
+      'precio_efectivo': _d(d['precio_venta']), 'oferta': null, 'precio_compra': 0.0, 'costo_sin_iva': 0.0,
+      'margen_ganancia': 0.0, 'actualizado_en': '2026-10-06T12:40:00.000',
+    };
+    catalogo[codigo] = p;
+    if (stock > 0) {
+      movimientos.insert(0, {
+        'fecha_hora': '2026-10-06T12:40:00.000', 'codigo': codigo, 'nombre': p['nombre'], 'tipo': 'ENTRADA_MANUAL',
+        'cantidad': stock, 'stock_resultante': stock, 'motivo': 'Alta de producto nuevo', 'usuario': 'dueño (celular)',
+      });
+    }
+    return _escritura(respuesta({...p, 'movimientos': movimientos.where((m) => m['codigo'] == codigo).toList()}));
+  }
+
+  List<String> _activosDe(List<String> codigos) => [for (final c in codigos) if (catalogo.containsKey(c)) c];
+
+  Map<String, dynamic> _resumenFiltro(String nombre) {
+    final f = filtros[nombre]!;
+    return {
+      'nombre': nombre, 'tipo': f.tipo, 'cantidad': _activosDe(f.codigos).length,
+      'creado_en': '2026-10-06T21:30:05.118', 'huella': f.huella,
+    };
+  }
+
+  /// filters._validar_codigos: sin repetidos, en orden, y todos activos.
+  Object _codigosValidos(Object? lista) {
+    final codigos = <String>[];
+    for (final c in (lista as List).cast<String>()) {
+      if (!codigos.contains(c.trim())) codigos.add(c.trim());
+    }
+    if (codigos.isEmpty) return errorApi(400, 'dato_invalido', 'Agregá al menos un producto al filtro.');
+    final faltan = [for (final c in codigos) if (!catalogo.containsKey(c)) c];
+    if (faltan.isNotEmpty) {
+      return errorApi(400, 'dato_invalido',
+          'Estos productos no existen o están dados de baja: ${faltan.join(', ')}. Sacalos del filtro.');
+    }
+    return codigos;
+  }
+
+  http.Response? _huellaVieja(String nombre, String? huella) {
+    final f = filtros[nombre];
+    if (f == null) return _filtroNoExiste(nombre);
+    if (f.huella != huella) {
+      return errorApi(409, 'filtro_cambio',
+          'El filtro «$nombre» cambió mientras tanto (lo guardaron desde otro lado). Cargalo de nuevo antes de cambiarlo.');
+    }
+    return null;
+  }
 
   List<Map<String, dynamic>> get _alertas {
     final previas = {for (final a in ejemplo('alertas') as List) (a as Map)['codigo']: a};
@@ -390,6 +488,7 @@ class ServidorFalso {
     final esJson = (r.headers['Content-Type'] ?? r.headers['content-type'] ?? '').startsWith('application/json');
     final datos = esJson && r.body.isNotEmpty ? jsonDecode(r.body) : null;
     cuerpos.putIfAbsent(clave, () => []).add(datos);
+    if (sinSenal) throw http.ClientException('Network is unreachable');
     if (ocupada) return http.Response('Service Unavailable', 503, headers: {'content-type': 'text/plain'});
 
     final ruta = r.url.path;
@@ -409,6 +508,12 @@ class ServidorFalso {
     }
     final q = r.url.queryParameters;
     String resto(String prefijo) => Uri.decodeComponent(ruta.substring(prefijo.length));
+
+    final nuevas = ruta == '/api/catalogo/valores' || ruta == '/api/filtros' || ruta.startsWith('/api/filtros/') ||
+        (r.method == 'POST' && ruta == '/api/productos');
+    if (nuevas && !contrato3) {
+      return errorApi(404, 'ruta_inexistente', 'Esa función no existe en la PC del local: hay que actualizarla.');
+    }
 
     switch ((r.method, ruta)) {
       case ('GET', '/api/auth/yo'):
@@ -443,6 +548,63 @@ class ServidorFalso {
         final p = catalogo[codigo];
         if (p == null) return _noExiste(codigo);
         return respuesta({...p, 'movimientos': movimientos.where((m) => m['codigo'] == codigo).take(15).toList()});
+      case ('POST', '/api/productos'):
+        return _alta(datos as Map<String, dynamic>);
+      case ('GET', '/api/catalogo/valores'):
+        final campo = q['campo'] ?? '';
+        if (!const ['marca', 'proveedor', 'categoria', 'subrubro'].contains(campo)) {
+          return errorApi(400, 'dato_invalido', 'Campo no permitido: $campo');
+        }
+        final texto = (q['q'] ?? '').trim().toLowerCase();
+        final veces = <String, int>{};
+        for (final p in catalogo.values) {
+          final v = (p[campo] as String?)?.trim() ?? '';
+          if (v.isEmpty || (texto.isNotEmpty && !v.toLowerCase().contains(texto))) continue;
+          veces[v] = (veces[v] ?? 0) + 1;
+        }
+        final valores = veces.keys.toList()
+          ..sort((a, b) => veces[b]! != veces[a]! ? veces[b]!.compareTo(veces[a]!) : a.compareTo(b));
+        return respuesta(valores.take(int.tryParse(q['limite'] ?? '') ?? 20).toList());
+      case ('GET', '/api/filtros'):
+        final nombres = filtros.keys.toList()
+          ..sort((a, b) => a.toLowerCase() != b.toLowerCase() ? a.toLowerCase().compareTo(b.toLowerCase()) : a.compareTo(b));
+        return respuesta([for (final n in nombres) _resumenFiltro(n)]);
+      case ('POST', '/api/filtros'):
+        final d = datos as Map<String, dynamic>;
+        final nombre = (d['nombre'] as String).trim();
+        if (filtros.containsKey(nombre)) {
+          return errorApi(409, 'filtro_existe',
+              'Ya hay un filtro que se llama «$nombre». Elegí otro nombre o cargalo para cambiarlo.');
+        }
+        final codigos = _codigosValidos(d['codigos']);
+        if (codigos is http.Response) return codigos;
+        filtros[nombre] = (codigos: codigos as List<String>, huella: _huellaNueva(), tipo: 'manual');
+        return _escritura(respuesta(_resumenFiltro(nombre)));
+      case ('GET', final String camino) when camino.startsWith('/api/filtros/'):
+        final nombre = resto('/api/filtros/');
+        final f = filtros[nombre];
+        if (f == null) return _filtroNoExiste(nombre);
+        return respuesta({
+          ..._resumenFiltro(nombre),
+          'productos': [for (final c in f.codigos) ?catalogo[c]],
+          'faltantes': [for (final c in f.codigos) if (!catalogo.containsKey(c)) c],
+          'recortado': false,
+        });
+      case ('PUT', final String camino) when camino.startsWith('/api/filtros/'):
+        final nombre = resto('/api/filtros/');
+        final d = datos as Map<String, dynamic>;
+        final problema = _huellaVieja(nombre, d['huella'] as String?);
+        if (problema != null) return problema;
+        final codigos = _codigosValidos(d['codigos']);
+        if (codigos is http.Response) return codigos;
+        filtros[nombre] = (codigos: codigos as List<String>, huella: _huellaNueva(), tipo: 'manual');
+        return _escritura(respuesta(_resumenFiltro(nombre)));
+      case ('DELETE', final String camino) when camino.startsWith('/api/filtros/'):
+        final nombre = resto('/api/filtros/');
+        final problema = _huellaVieja(nombre, q['huella']);
+        if (problema != null) return problema;
+        filtros.remove(nombre);
+        return _escritura(respuesta({'nombre': nombre, 'borrado': true}));
       case ('GET', '/api/movimientos'):
         final limite = int.tryParse(q['limite'] ?? '') ?? 30;
         return respuesta(movimientos.where((m) => q['codigo'] == null || m['codigo'] == q['codigo']).take(limite).toList());

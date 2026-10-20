@@ -199,7 +199,7 @@ void main() {
     test('la API del celular de Otter pasa', () async {
       final s = await ServidorFalso().crear(pc).salud();
       expect(s.servicio, firmaApi);
-      expect(s.contrato, 2);
+      expect(s.contrato, 3);
       expect(s.nombreLocal, 'El Galpón Del Nono');
     });
 
@@ -405,5 +405,113 @@ void main() {
                 .having((e) => e.mensaje, 'mensaje', contains('Tailscale'))));
       });
     }
+  });
+
+  group('alta de productos y filtros (contrato 3)', () {
+    ClienteApi conServidor(ServidorFalso s) => s.crear(pc)..token = ServidorFalso.token;
+
+    test('una PC de contrato 2 sigue entrando; lo nuevo dice que hay que actualizarla', () async {
+      final s = ServidorFalso()
+        ..salud = {...ejemplo('salud') as Map<String, dynamic>, 'contrato': 2}
+        ..contrato3 = false;
+      final api = conServidor(s);
+      expect((await api.salud()).contrato, 2);
+      await expectLater(
+          api.crearProducto(const ProductoNuevo(codigo: '779', nombre: 'X', precioVenta: 1)),
+          throwsA(isA<ApiError>()
+              .having((e) => e.pcVieja, 'pcVieja', isTrue)
+              .having((e) => e.incierto, 'incierto', isFalse)));
+      await expectLater(api.filtros(), throwsA(isA<ApiError>().having((e) => e.pcVieja, 'pcVieja', isTrue)));
+    });
+
+    test('el alta manda los 7 campos: recortados, vacío = null, y números de verdad (no "2.500")', () async {
+      late http.Request enviado;
+      final api = ClienteApi(
+          servidor: pc,
+          client: MockClient((r) async {
+            enviado = r;
+            return json(ejemplo('producto_alta', 1));
+          }));
+      await api.crearProducto(const ProductoNuevo(
+          codigo: ' 7790101 ', nombre: ' Pan rallado 500g ', precioVenta: 2500.5, marca: '  ', categoria: 'ALMACEN'));
+      expect(enviado.method, 'POST');
+      expect(enviado.url.path, '/api/productos');
+      final cuerpo = jsonDecode(enviado.body) as Map<String, dynamic>;
+      expect(cuerpo, {
+        'codigo': '7790101',
+        'nombre': 'Pan rallado 500g',
+        'precio_venta': 2500.5,
+        'stock_inicial': 0,
+        'marca': null,
+        'proveedor': null,
+        'categoria': 'ALMACEN',
+      });
+      expect(cuerpo['precio_venta'], isA<num>(), reason: 'la PC rechaza un precio en texto');
+      expect(cuerpo['stock_inicial'], isA<int>(), reason: 'y un stock con coma');
+    });
+
+    test('409 producto_existe trae el producto, y esElMismo separa el reintento de otro producto', () async {
+      final s = ServidorFalso();
+      final api = conServidor(s);
+      const mio = ProductoNuevo(codigo: '7790500', nombre: 'Leche 1L', precioVenta: 1250, stockInicial: 6);
+      final creado = await api.crearProducto(mio);
+      expect(creado.stock, 6);
+      // el reintento después de un corte
+      final repetido = await api.crearProducto(mio).then<ApiError?>((_) => null, onError: (Object e) => e as ApiError);
+      expect(repetido?.codigo, 'producto_existe');
+      expect(mio.esElMismo(repetido!.producto!), isTrue);
+      // otro producto con el mismo código
+      final otro = await api
+          .crearProducto(const ProductoNuevo(codigo: '7790002', nombre: 'Otra cosa', precioVenta: 1))
+          .then<ApiError?>((_) => null, onError: (Object e) => e as ApiError);
+      expect(otro?.producto?.nombre, 'Café Molido 500g');
+      expect(const ProductoNuevo(codigo: '7790002', nombre: 'Otra cosa', precioVenta: 1).esElMismo(otro!.producto!),
+          isFalse);
+      // uno dado de baja: 409 sin producto
+      final deBaja = await api
+          .crearProducto(const ProductoNuevo(codigo: '7790006', nombre: 'X', precioVenta: 1))
+          .then<ApiError?>((_) => null, onError: (Object e) => e as ApiError);
+      expect(deBaja?.codigo, 'producto_existe');
+      expect(deBaja?.producto, isNull);
+      expect(s.pedidos.where((p) => p == 'POST /api/productos'), hasLength(4));
+    });
+
+    test('el nombre de un filtro viaja codificado (espacios, barra, %, ¿?) y llega entero', () async {
+      final s = ServidorFalso();
+      final api = conServidor(s);
+      const nombre = '¿Bebidas/Gaseosas 50%?';
+      final creado = await api.crearFiltro(nombre, ['7790003', '7790002']);
+      expect(creado.nombre, nombre);
+      final f = await api.filtro(nombre);
+      expect([for (final p in f.productos) p.codigo], ['7790003', '7790002']);
+      expect(s.pedidos, contains('GET /api/filtros/%C2%BFBebidas%2FGaseosas%2050%25%3F'));
+      final cambiado = await api.guardarFiltro(nombre, ['7790001'], huella: f.huella);
+      await api.borrarFiltro(nombre, huella: cambiado.huella);
+      expect(s.filtros, isEmpty);
+    });
+
+    test('cambiar o borrar con una huella vieja da filtro_cambio y no toca lo que guardó el Panel', () async {
+      final s = ServidorFalso()..guardarFiltroPorFuera('Promo', ['7790002']);
+      final api = conServidor(s);
+      final cargado = await api.filtro('Promo');
+      s.guardarFiltroPorFuera('Promo', ['7790001']); // lo guardaron en el Panel mientras tanto
+      await expectLater(api.guardarFiltro('Promo', ['7790003'], huella: cargado.huella),
+          throwsA(isA<ApiError>().having((e) => e.codigo, 'codigo', 'filtro_cambio')));
+      await expectLater(api.borrarFiltro('Promo', huella: cargado.huella),
+          throwsA(isA<ApiError>().having((e) => e.codigo, 'codigo', 'filtro_cambio')));
+      expect(s.filtros['Promo']!.codigos, ['7790001']);
+    });
+
+    test('un corte al guardar un filtro o dar de alta es incierto: nunca se reintenta solo', () async {
+      final s = ServidorFalso()..cortarEscrituras = true;
+      final api = conServidor(s);
+      await expectLater(api.crearFiltro('Promo', ['7790002']),
+          throwsA(isA<ApiError>().having((e) => e.incierto, 'incierto', isTrue)));
+      await expectLater(api.crearProducto(const ProductoNuevo(codigo: '7790500', nombre: 'X', precioVenta: 1)),
+          throwsA(isA<ApiError>().having((e) => e.incierto, 'incierto', isTrue)));
+      expect(s.pedidos.where((p) => p == 'POST /api/filtros'), hasLength(1));
+      expect(s.pedidos.where((p) => p == 'POST /api/productos'), hasLength(1));
+      expect(s.filtros.keys, ['Promo'], reason: 'la PC lo aplicó antes del corte');
+    });
   });
 }

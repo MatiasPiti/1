@@ -19,6 +19,7 @@ from pos_core import paths
 from pos_core.db import columnas_faltantes, get_connection
 
 CAMPOS_BUSQUEDA = ("codigo", "nombre", "marca", "proveedor", "categoria", "subrubro")
+CAMPOS_CATALOGO = ("marca", "proveedor", "categoria", "subrubro")   # los que sugiere el alta de producto
 PERIODOS_TOP = ("hoy", "7dias", "30dias", "historico")
 # Copia de services/stock_daemon_windows.DIAS_VENTANA_WATCHDOG: la API no puede
 # importar el demonio (al importarse fija la carpeta base y arma su log). Una
@@ -280,6 +281,33 @@ def obtener_producto(codigo: str):
     return _producto(filas[0]) if filas else None
 
 
+def productos_por_codigo(codigos: list) -> dict:
+    """{codigo: producto} de los activos de la lista (en tandas: SQLite tiene
+    tope de variables por sentencia)."""
+    salida = {}
+    for lote in _en_lotes(list(codigos)):
+        marcas = ",".join("?" * len(lote))
+        for f in _consultar(f"p.codigo IN ({marcas})", lote):
+            salida[f["codigo"]] = _producto(f)
+    return salida
+
+
+def valores_catalogo(campo: str, q: str = "", limite: int = 20) -> list:
+    """Marcas, proveedores o rubros que ya se usan, de los más usados a los
+    menos, para sugerirlos al dar de alta un producto (así no aparecen
+    "Coca Cola" y "CocaCola" como dos marcas distintas en los filtros)."""
+    if campo not in CAMPOS_CATALOGO:
+        raise ValueError(f"Campo no permitido: {campo}")
+    termino = (q or "").strip()
+    filtro = f"AND p.{campo} LIKE ? ESCAPE '\\'" if termino else ""
+    params = [f"%{_escapar_like(termino)}%"] if termino else []
+    filas = get_connection().execute(
+        f"SELECT TRIM(p.{campo}) AS valor, COUNT(*) AS veces FROM Productos p "
+        f"WHERE p.activo = 1 AND p.{campo} IS NOT NULL AND TRIM(p.{campo}) <> '' {filtro} "
+        f"GROUP BY TRIM(p.{campo}) ORDER BY veces DESC, valor LIMIT ?", params + [int(limite)]).fetchall()
+    return [f["valor"] for f in filas]
+
+
 def movimientos(codigo: str = None, limite: int = 30) -> list:
     sql = ("SELECT m.fecha_hora, m.producto_codigo codigo, p.nombre, m.tipo, m.cantidad, "
            "m.stock_resultante, m.motivo, m.usuario FROM Movimientos_Stock m "
@@ -426,6 +454,83 @@ def previsualizar_ajuste(codigos: list, *, porcentaje: float = None, monto_fijo:
                           "precio_nuevo": nuevo, "queda_en_cero": anterior > 0 and nuevo <= 0,
                           "en_oferta": codigo in en_oferta})
     return resultado
+
+
+# --------------------------------------------------------------------- #
+# Filtros guardados (los mismos del Panel: tabla Filtros_Guardados)
+# --------------------------------------------------------------------- #
+
+MAX_PRODUCTOS_FILTRO = 5000     # lo mismo que acepta un ajuste masivo
+
+
+def _codigos_del_filtro(definicion: dict) -> list:
+    """Los códigos que el filtro tiene HOY, en su orden. Un filtro manual
+    trae su lista tal cual (con los que ya no existen, para avisarlos); uno
+    de condiciones (el formato viejo del Panel) se resuelve con la misma
+    función que usa el Panel. Uno que no se puede resolver da []."""
+    from pos_core import filters
+    if definicion.get("tipo") == "manual":
+        codigos = definicion.get("codigos") or []
+        return [str(c) for c in codigos if isinstance(c, (str, int)) and str(c).strip()]
+    try:
+        return [p["codigo"] for p in filters.aplicar_filtro(definicion)]
+    except (ValueError, TypeError, KeyError):
+        return []
+
+
+def _resumen_filtro(f: dict, cantidad: int) -> dict:
+    return {"nombre": f["nombre"], "tipo": "manual" if f["definicion"].get("tipo") == "manual" else "condiciones",
+            "cantidad": cantidad, "creado_en": f["creado_en"], "huella": f["huella"]}
+
+
+def _activos(codigos: list) -> set:
+    conn, salida = get_connection(), set()
+    for lote in _en_lotes(list(codigos)):
+        marcas = ",".join("?" * len(lote))
+        salida.update(r["codigo"] for r in conn.execute(
+            f"SELECT codigo FROM Productos WHERE activo = 1 AND codigo IN ({marcas})", lote))
+    return salida
+
+
+def _resumen_con_cantidad(f: dict) -> dict:
+    # `cantidad` = productos activos que el filtro trae hoy (de los primeros
+    # MAX_PRODUCTOS_FILTRO, igual que ver_filtro).
+    codigos = list(dict.fromkeys(_codigos_del_filtro(f["definicion"])))[:MAX_PRODUCTOS_FILTRO]
+    activos = _activos(codigos)
+    return _resumen_filtro(f, sum(1 for c in codigos if c in activos))
+
+
+def listar_filtros() -> list:
+    """Forma FiltroResumen del contrato, ordenados por nombre (sin importar
+    mayúsculas)."""
+    from pos_core import filters
+    salida = [_resumen_con_cantidad(f) for f in filters.listar_filtros_guardados()]
+    salida.sort(key=lambda r: (r["nombre"].casefold(), r["nombre"]))
+    return salida
+
+
+def resumen_filtro(nombre: str):
+    """FiltroResumen de uno solo (lo que contesta guardar); None si no existe."""
+    from pos_core import filters
+    f = filters.obtener_filtro(nombre)
+    return None if f is None else _resumen_con_cantidad(f)
+
+
+def ver_filtro(nombre: str):
+    """Forma FiltroDetalle del contrato; None si no existe. Los productos van
+    en el orden en que se eligieron; los que ya no existen (o están dados de
+    baja) van aparte en `faltantes`, para avisarlos y no perderlos en silencio."""
+    from pos_core import filters
+    f = filters.obtener_filtro(nombre)
+    if f is None:
+        return None
+    codigos = list(dict.fromkeys(_codigos_del_filtro(f["definicion"])))
+    recortado = len(codigos) > MAX_PRODUCTOS_FILTRO
+    codigos = codigos[:MAX_PRODUCTOS_FILTRO]
+    encontrados = productos_por_codigo(codigos)
+    productos = [encontrados[c] for c in codigos if c in encontrados]
+    faltantes = [c for c in codigos if c not in encontrados]
+    return dict(_resumen_filtro(f, len(productos)), productos=productos, faltantes=faltantes, recortado=recortado)
 
 
 # --------------------------------------------------------------------- #

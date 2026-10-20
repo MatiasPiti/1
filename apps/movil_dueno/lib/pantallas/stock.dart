@@ -9,6 +9,7 @@ import '../tema.dart';
 import '../widgets/comunes.dart';
 import 'inicio.dart';
 import 'modo_lector.dart';
+import 'producto_nuevo.dart';
 
 /// Aviso de ventas pendientes (D22). Con el catálogo en 0, las ventas
 /// quedan con el descuento pendiente y el StockService lo aplica apenas hay
@@ -47,6 +48,9 @@ class _PantallaStockState extends State<PantallaStock> {
 
   /// Aviso del último movimiento si quedaron ventas sin descontar.
   String? _avisoPendientes;
+
+  /// Lo último que se buscó y no trajo nada: se ofrece darlo de alta.
+  String? _noEncontrado;
   bool _buscando = false;
   bool _moviendo = false;
 
@@ -92,8 +96,8 @@ class _PantallaStockState extends State<PantallaStock> {
         _producto = exacto.isNotEmpty ? exacto.first : (r.length == 1 ? r.first : null);
         _cantidad = 1;
         _avisoPendientes = null;
+        _noEncontrado = r.isEmpty ? texto : null;
       });
-      if (r.isEmpty) mostrarMensaje(context, 'No se encontró ningún producto con "$texto".', error: true);
     } on ApiError catch (e) {
       if (mounted) mostrarMensaje(context, e.mensaje, error: true);
     } finally {
@@ -127,6 +131,22 @@ class _PantallaStockState extends State<PantallaStock> {
     }
   }
 
+  /// Alta de un producto que no estaba (vacío, o con lo que se buscó). Al
+  /// volver queda abierto para cargarle stock o mirarlo.
+  Future<void> _darDeAlta({String codigo = '', String nombre = ''}) async {
+    final r = await abrirAltaProducto(context, codigo: codigo, nombre: nombre);
+    if (r == null || !mounted) return;
+    setState(() {
+      _producto = r.producto;
+      _resultados = [];
+      _noEncontrado = null;
+      _cantidad = 1;
+      _avisoPendientes = null;
+    });
+    if (r.nuevo) mostrarMensaje(context, '${r.producto.nombre}: dado de alta. Ya está en la Caja.');
+    _cargarMovimientos();
+  }
+
   /// Después de un movimiento que no se sabe si se aplicó: trae el stock
   /// real y los últimos movimientos, para que Leo vea cómo quedó antes de repetir.
   Future<void> _refrescar(String codigo) async {
@@ -143,7 +163,15 @@ class _PantallaStockState extends State<PantallaStock> {
   Widget build(BuildContext context) {
     final p = _producto;
     return Scaffold(
-      appBar: AppBar(title: const Text('Stock'), actions: const [BotonAjustes()]),
+      appBar: AppBar(title: const Text('Stock'), actions: [
+        IconButton(
+          key: const Key('boton_producto_nuevo'),
+          tooltip: 'Producto nuevo',
+          icon: const Icon(Icons.add_box_outlined),
+          onPressed: () => _darDeAlta(),
+        ),
+        const BotonAjustes(),
+      ]),
       body: RefreshIndicator(
         onRefresh: _cargarMovimientos,
         child: ListView(
@@ -153,6 +181,16 @@ class _PantallaStockState extends State<PantallaStock> {
             if (_buscando) const LinearProgressIndicator(),
             const SizedBox(height: 12),
             _BotonModoLector(alVolver: _cargarMovimientos),
+            if (_noEncontrado != null && p == null) ...[
+              const SizedBox(height: 16),
+              _TarjetaNoEncontrado(
+                texto: _noEncontrado!,
+                alDarDeAlta: () {
+                  final datos = datosDeBusqueda(_noEncontrado!);
+                  _darDeAlta(codigo: datos.codigo, nombre: datos.nombre);
+                },
+              ),
+            ],
             if (p == null && _resultados.length > 1) ...[
               Seccion('${_resultados.length} resultados'),
               Card(
@@ -194,6 +232,40 @@ class _PantallaStockState extends State<PantallaStock> {
               Card(child: Column(children: [for (final m in _movimientos) FilaMovimiento(m: m)])),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// La búsqueda no trajo nada: puede ser un producto que todavía no está.
+class _TarjetaNoEncontrado extends StatelessWidget {
+  const _TarjetaNoEncontrado({required this.texto, required this.alDarDeAlta});
+  final String texto;
+  final VoidCallback alDarDeAlta;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context);
+    return Card(
+      key: const Key('no_encontrado'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            Icon(Icons.search_off_rounded, color: t.colorScheme.onSurfaceVariant),
+            const SizedBox(width: 10),
+            Expanded(child: Text('No hay ningún producto con «$texto».', style: t.textTheme.titleMedium)),
+          ]),
+          const SizedBox(height: 6),
+          Text('Si es nuevo, dalo de alta desde acá: queda en la Caja apenas lo guardás.',
+              style: t.textTheme.bodyMedium?.copyWith(color: t.colorScheme.onSurfaceVariant)),
+          const SizedBox(height: 12),
+          FilledButton.tonalIcon(
+            onPressed: alDarDeAlta,
+            icon: const Icon(Icons.add_box_outlined),
+            label: const Text('Darlo de alta'),
+          ),
+        ]),
       ),
     );
   }

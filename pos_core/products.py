@@ -1,6 +1,6 @@
-"""Alta manual de productos nuevos desde el Panel del Dueño (sin pasar
-por un Excel), para cuando llega un solo artículo nuevo y no vale la
-pena armar una planilla entera.
+"""Alta manual de productos nuevos (sin pasar por un Excel), para cuando
+llega un solo artículo nuevo y no vale la pena armar una planilla entera.
+La usan el Panel del Dueño, el Dueño Remoto y la app del celular.
 """
 
 import uuid
@@ -9,13 +9,27 @@ from datetime import datetime
 from pos_core.db import get_connection, transaction
 
 
+class ProductoExistenteError(ValueError):
+    """El código ya está en Productos (activo o dado de baja). Es ValueError
+    para que el Panel y el Dueño Remoto lo sigan mostrando como siempre; la
+    API del celular lo distingue para contestar 409 con el producto."""
+
+
 def crear_producto(*, codigo: str, nombre: str, precio_venta: float, stock_inicial: int = 0,
                     proveedor: str = None, marca: str = None, categoria: str = None,
                     usuario: str, origen: str = "MAESTRO") -> None:
+    from pos_core.sales import CODIGO_SIN_BARRA
+
     codigo = (codigo or "").strip()
     nombre = (nombre or "").strip()
     if not codigo or not nombre:
         raise ValueError("Código y nombre son obligatorios")
+    if codigo == CODIGO_SIN_BARRA:
+        # La Caja usa este código para los artículos sin código de barras y
+        # cerrar_ticket() nunca le descuenta stock: un producto con este código
+        # quedaría con el stock clavado y chocaría con el botón de la Caja.
+        raise ValueError(f"El código {CODIGO_SIN_BARRA} lo usa la Caja para los artículos sin código de "
+                         f"barras: elegí otro.")
     if precio_venta < 0 or stock_inicial < 0:
         raise ValueError("Precio y stock no pueden ser negativos")
 
@@ -25,7 +39,7 @@ def crear_producto(*, codigo: str, nombre: str, precio_venta: float, stock_inici
     with transaction() as conn:
         existente = conn.execute("SELECT 1 FROM Productos WHERE codigo = ?", (codigo,)).fetchone()
         if existente:
-            raise ValueError(
+            raise ProductoExistenteError(
                 f"Ya existe un producto con código '{codigo}'. "
                 f"Usá 'Carga Excel' o la edición masiva si querés actualizarlo.")
 

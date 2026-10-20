@@ -150,6 +150,17 @@ def autoprueba(carpeta: str = None, conservar: bool = False) -> tuple:
         _esperar(any(i["existe"] for i in factura["items"]), "la factura no reconoció el renglón con código")
         _esperar(any(i["emparejamiento"] for i in factura["items"]), "la factura no emparejó por nombre")
 
+        st, alta = _pedir(url, "POST", "/api/productos", token=token,
+                          cuerpo={"codigo": "7790003000035", "nombre": "GALLETITAS DE AGUA 300G", "precio_venta": 1500,
+                                  "stock_inicial": 3})
+        _esperar(st == 200 and alta and alta.get("stock") == 3, f"el alta de un producto dio {st} ({alta})")
+        st, filtro = _pedir(url, "POST", "/api/filtros", token=token,
+                            cuerpo={"nombre": "Autoprueba", "codigos": ["7790001000011", "7790003000035"]})
+        _esperar(st == 200 and filtro and filtro.get("cantidad") == 2, f"crear un filtro dio {st} ({filtro})")
+        st, filtros = _pedir(url, "GET", "/api/filtros", token=token)
+        _esperar(st == 200 and [f.get("nombre") for f in filtros or []] == ["Autoprueba"],
+                 f"la lista de filtros dio {st} ({filtros})")
+
         inicio = time.perf_counter()
         hashlib.pbkdf2_hmac("sha256", b"x" * 32, b"y" * 16, acceso_celular.ITERACIONES, 32)
         ms = (time.perf_counter() - inicio) * 1000

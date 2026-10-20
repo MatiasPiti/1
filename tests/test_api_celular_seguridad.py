@@ -601,8 +601,10 @@ verificar("BOT-DE-PRUEBA" not in texto and "abc.def" not in texto and "Traceback
 # ===================================================================== #
 IMPORTS_PROHIBIDOS = {"services.remote_api", "services.stock_daemon_windows", "pos_core.respaldo",
                       "pos_core.instancia_unica", "pos_core.excel_import"}
+# crear_producto no está: desde el contrato 3 el celular da de alta productos,
+# con la misma función que el Panel y SOLO desde POST /api/productos (se mira abajo).
 LLAMADAS_PROHIBIDAS = {"init_db", "preparar_base", "aplicar_migraciones", "MonitorAlertas",
-                       "revisar_umbrales_y_alertar", "token_remoto", "obtener_config_dict", "crear_producto",
+                       "revisar_umbrales_y_alertar", "token_remoto", "obtener_config_dict",
                        "facturar_venta_arca", "crear_oferta", "cancelar_oferta", "quitar_todos_los_umbrales_propios",
                        "db_path", "data_dir"}
 
@@ -649,6 +651,47 @@ verificar(prohibidos_en(trampa) == ["llamada a preparar_base (línea 6)"] and pr
           and prohibidos_en("from services import remote_api\n") and prohibidos_en("import pos_core.respaldo\n"),
           "la lectura del código detecta una llamada prohibida metida a propósito y no se confunde con textos",
           f"detector: trampa {prohibidos_en(trampa)}, inocente {prohibidos_en(inocente)}")
+
+
+class _QuienLlama(ast.NodeVisitor):
+    """Para cada llamada a `nombre`, la función más de adentro que la hace."""
+
+    def __init__(self, nombre):
+        self.nombre, self.pila, self.hallados = nombre, [], []
+
+    def visit_FunctionDef(self, nodo):
+        self.pila.append(nodo.name)
+        self.generic_visit(nodo)
+        self.pila.pop()
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_Call(self, nodo):
+        f = nodo.func
+        final = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+        if final == self.nombre:
+            self.hallados.append(self.pila[-1] if self.pila else "<módulo>")
+        self.generic_visit(nodo)
+
+
+def quienes_llaman(codigo: str, nombre: str) -> list:
+    visitante = _QuienLlama(nombre)
+    visitante.visit(ast.parse(codigo))
+    return visitante.hallados
+
+
+altas = {}
+for rel in MODULOS:
+    with open(os.path.join(RAIZ, rel), encoding="utf-8") as f:
+        quienes = quienes_llaman(f.read(), "crear_producto")
+    if quienes:
+        altas[rel] = quienes
+verificar(altas == {"services/api_celular.py": ["alta_producto"]},
+          "la API da de alta productos SOLO desde POST /api/productos (aplicar una factura o el lector nunca crean uno)",
+          f"quién llama a crear_producto: {altas}")
+verificar(quienes_llaman("def a():\n    def b():\n        products.crear_producto()\n    crear_producto()\n",
+                         "crear_producto") == ["b", "a"],
+          "la lectura de quién llama a qué distingue funciones anidadas", "detector de quién llama")
 with open(os.path.join(RAIZ, "services", "api_celular_autoprueba.py"), encoding="utf-8") as f:
     en_autoprueba = prohibidos_en(f.read())
 verificar(set(x.split(" ")[2] for x in en_autoprueba if x.startswith("llamada")) <= {"preparar_base", "crear_producto"},

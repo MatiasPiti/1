@@ -19,8 +19,14 @@ const puertoDuenoRemoto = 8765;
 /// engañara al diagnóstico.
 const firmaApi = 'otter-api-celular';
 
-/// Versión del contrato HTTP que entiende esta app.
+/// El contrato más viejo con el que la app todavía anda: con una PC de
+/// contrato 2 funciona todo menos lo nuevo del 3.
 const contratoMinimo = 2;
+
+/// El contrato que habla esta app entera: el 3 suma el alta de productos y
+/// los filtros guardados. Una PC de contrato 2 contesta `ruta_inexistente`
+/// solo en eso (ver [ApiError.pcVieja]).
+const contratoApp = 3;
 
 const mensajeNoTailscale =
     'Esa dirección no es de Tailscale: tiene que empezar con 100. Copiala de la app de Tailscale.';
@@ -79,6 +85,7 @@ class ApiError implements Exception {
     this.campo,
     this.haceMin,
     this.renglonesIguales,
+    this.producto,
   });
 
   final String mensaje;
@@ -105,13 +112,21 @@ class ApiError implements Exception {
   final int? haceMin;
   final int? renglonesIguales;
 
+  /// 409 `producto_existe`: el producto que ya tiene ese código (null si
+  /// está dado de baja, que se revisa en el Panel).
+  final Producto? producto;
+
   bool get sesionVencida => status == 401;
+
+  /// La PC tiene una versión anterior que no conoce esta función (alta de
+  /// productos y filtros son del contrato 3).
+  bool get pcVieja => codigo == 'ruta_inexistente';
   bool get sinConexion => status == null && codigo == null;
   @override
   String toString() => mensaje;
 }
 
-/// Cliente HTTP de la API del celular (services/api_celular.py, contrato 2).
+/// Cliente HTTP de la API del celular (services/api_celular.py, contrato 3).
 class ClienteApi {
   ClienteApi({
     required String servidor,
@@ -223,6 +238,9 @@ class ClienteApi {
           campo: cuerpo['campo']?.toString(),
           haceMin: _entero(cuerpo['hace_min']),
           renglonesIguales: _entero(cuerpo['renglones_iguales']),
+          producto: cuerpo['producto'] is Map<String, dynamic>
+              ? Producto.fromJson(cuerpo['producto'] as Map<String, dynamic>)
+              : null,
         );
       }
       // {"ok": false, "error": "..."} es la forma del remote_api (8765).
@@ -249,8 +267,8 @@ class ClienteApi {
   Future<dynamic> _put(String ruta, Object cuerpo) =>
       _enviar(() => _http.put(_uri(ruta), headers: _headers, body: jsonEncode(cuerpo)), escritura: true);
 
-  Future<dynamic> _delete(String ruta) =>
-      _enviar(() => _http.delete(_uri(ruta), headers: _headers), escritura: true);
+  Future<dynamic> _delete(String ruta, [Map<String, String>? query]) =>
+      _enviar(() => _http.delete(_uri(ruta, query), headers: _headers), escritura: true);
 
   static String _ruta(String base, String codigo) => '$base/${Uri.encodeComponent(codigo)}';
 
@@ -307,6 +325,22 @@ class ClienteApi {
 
   Future<Producto> producto(String codigo) async =>
       Producto.fromJson(await _get(_ruta('/api/productos', codigo)) as Map<String, dynamic>);
+
+  /// Da de alta un producto que no existía (contrato 3), con la misma función
+  /// que el alta del Panel: el stock inicial queda como una entrada firmada
+  /// "dueño (celular)". Si el código ya existe, ApiError 409 `producto_existe`
+  /// con [ApiError.producto]: mandarlo dos veces nunca crea dos productos, así
+  /// que después de un corte se puede repetir sin miedo.
+  Future<Producto> crearProducto(ProductoNuevo nuevo) async =>
+      Producto.fromJson(await _post('/api/productos', nuevo.toJson()) as Map<String, dynamic>);
+
+  /// Marcas, proveedores o rubros (`categoria`) que ya se usan, de los más
+  /// usados a los menos: se sugieren al escribir para no inventar "CocaCola"
+  /// al lado de "Coca-Cola".
+  Future<List<String>> valoresCatalogo(String campo, {String q = ''}) async {
+    final lista = await _get('/api/catalogo/valores', {'campo': campo, 'q': q}) as List;
+    return [for (final v in lista) v as String];
+  }
 
   // ------------------------------- stock ------------------------------ //
 
@@ -398,6 +432,31 @@ class ClienteApi {
         timeout: timeoutAplicar(codigos.length)) as List;
     return [for (final c in lista) CambioPrecio.fromJson(c as Map<String, dynamic>)];
   }
+
+  // ------------------------------ filtros ----------------------------- //
+
+  Future<List<FiltroResumen>> filtros() async {
+    final lista = await _get('/api/filtros') as List;
+    return [for (final f in lista) FiltroResumen.fromJson(f as Map<String, dynamic>)];
+  }
+
+  Future<FiltroDetalle> filtro(String nombre) async =>
+      FiltroDetalle.fromJson(await _get(_ruta('/api/filtros', nombre)) as Map<String, dynamic>);
+
+  /// Crea un filtro. NO pisa uno que ya se llame así (409 `filtro_existe`):
+  /// el Panel sí lo haría, y desde el celular se llevaría puesto uno de la PC.
+  Future<FiltroResumen> crearFiltro(String nombre, List<String> codigos) async => FiltroResumen.fromJson(
+      await _post('/api/filtros', {'nombre': nombre, 'codigos': codigos}) as Map<String, dynamic>);
+
+  /// Cambia los productos de un filtro solo si sigue siendo el que se cargó
+  /// ([huella]); si lo guardaron en otro lado mientras tanto, 409 `filtro_cambio`.
+  Future<FiltroResumen> guardarFiltro(String nombre, List<String> codigos, {required String huella}) async =>
+      FiltroResumen.fromJson(
+          await _put(_ruta('/api/filtros', nombre), {'codigos': codigos, 'huella': huella}) as Map<String, dynamic>);
+
+  /// Lo borra (también del Panel) solo si sigue siendo el que se cargó.
+  Future<void> borrarFiltro(String nombre, {required String huella}) async =>
+      await _delete(_ruta('/api/filtros', nombre), {'huella': huella});
 
   // ------------------------------ alertas ----------------------------- //
 

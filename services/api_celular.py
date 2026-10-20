@@ -43,12 +43,17 @@ from logging.handlers import RotatingFileHandler
 from pos_core import acceso_celular, config, db, panel_celular, paths
 
 FIRMA = "otter-api-celular"
-CONTRATO = 2
-VERSION_API = "2.0.0"
+# 3: alta de productos (POST /api/productos, /api/catalogo/valores) y filtros
+# guardados (/api/filtros). Todo lo del 2 sigue igual: una app de contrato 2
+# anda contra esta API, y una app nueva contra una PC de contrato 2 recibe
+# "ruta_inexistente" solo en lo nuevo.
+CONTRATO = 3
+VERSION_API = "2.1.0"
 PUERTO_POR_DEFECTO = 8766
 SERVICIO = "SistemaDualApiCelular"
 
 ORIGEN = "MAESTRO"
+PATRON_SIN_ESPACIOS = r"^\S+$"   # el código de un producto nuevo (la cámara nunca lee espacios)
 LIMITE_JSON = 1024 * 1024
 LIMITE_PDF = 20 * 1024 * 1024
 RUTA_ANALIZAR = "/api/facturas/analizar"
@@ -195,6 +200,10 @@ def _no_existe(codigo: str) -> ErrorApi:
     return ErrorApi(404, "no_existe", f"Producto con código '{codigo}' no existe o está inactivo")
 
 
+def _filtro_no_existe(nombre: str) -> ErrorApi:
+    return ErrorApi(404, "filtro_no_existe", f"El filtro «{nombre}» no existe: lo borraron desde otro lado.")
+
+
 def _numero_ar(valor: float) -> str:
     """2420 -> '2.420'; 2479.34 -> '2.479,34' (a la argentina, como la app)."""
     valor = round(float(valor), 2)
@@ -251,6 +260,8 @@ def traducir_error_validacion(errores: list) -> tuple:
         mensaje = "largo inválido"
     elif tipo == "literal_error":
         mensaje = "valor no permitido"
+    elif tipo == "string_pattern_mismatch":
+        mensaje = "no puede tener espacios" if ctx.get("pattern") == PATRON_SIN_ESPACIOS else "formato inválido"
     elif tipo in ("bool_parsing", "bool_type"):
         mensaje = "tiene que ser verdadero o falso"
     elif tipo == "value_error":
@@ -643,7 +654,7 @@ def crear_app(estado: EstadoApi = None, permitir_loopback_total: bool = False):
     from starlette.exceptions import HTTPException as StarletteHTTPException
     from starlette.middleware import Middleware
 
-    from pos_core import alerts, bulk_edit, precios, stock_service
+    from pos_core import alerts, bulk_edit, filters, precios, products, stock_service
 
     db.usar_solo_base_existente(panel_celular.ruta_base_datos())
     estado = estado or EstadoApi()
@@ -849,6 +860,35 @@ def crear_app(estado: EstadoApi = None, permitir_loopback_total: bool = False):
         items: List[ItemFacturaIn] = Field(min_length=1, max_length=500)
         forzar: bool = False
 
+    CodigoNuevo = Annotated[str, Field(min_length=1, max_length=64, pattern=PATRON_SIN_ESPACIOS)]
+    TextoOpcional = Optional[Annotated[str, Field(max_length=80)]]
+    ListaCodigos = Annotated[List[Codigo], Field(min_length=1, max_length=filters.MAXIMO_CODIGOS)]
+
+    class ProductoNuevoIn(BaseModel):
+        # Lo mismo que el alta del Panel (Código, Nombre, Precio, Stock inicial,
+        # Proveedor, Marca, Categoría). El costo y la ganancia se cargan después
+        # en la hoja de precios.
+        model_config = ConfigDict(str_strip_whitespace=True)
+        codigo: CodigoNuevo
+        nombre: Annotated[str, Field(min_length=1, max_length=120)]
+        # Números de verdad (strict): un "1.500" mandado como texto se leería
+        # 1,5 y el producto quedaría a $ 1,50 en la Caja.
+        precio_venta: Annotated[float, Field(ge=0, le=1e9, allow_inf_nan=False, strict=True)]
+        stock_inicial: Annotated[int, Field(ge=0, le=100000, strict=True)] = 0
+        marca: TextoOpcional = None
+        proveedor: TextoOpcional = None
+        categoria: TextoOpcional = None
+
+    class FiltroNuevoIn(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True)
+        nombre: Annotated[str, Field(min_length=1, max_length=filters.LARGO_MAXIMO_NOMBRE)]
+        codigos: ListaCodigos
+
+    class FiltroCambioIn(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True)
+        codigos: ListaCodigos
+        huella: Annotated[str, Field(min_length=64, max_length=64)]
+
     # ------------------------------------------------------------------ #
     # Endpoints
     # ------------------------------------------------------------------ #
@@ -928,6 +968,44 @@ def crear_app(estado: EstadoApi = None, permitir_loopback_total: bool = False):
         if p is None:
             raise _no_existe(codigo)
         return dict(p, movimientos=panel_celular.movimientos(codigo, 15))
+
+    @app.post("/api/productos")
+    @con_base
+    def alta_producto(datos: ProductoNuevoIn, request: Request, sesion: dict = Depends(autenticar)):
+        nuevo = {"nombre": datos.nombre, "precio_venta": datos.precio_venta, "stock_inicial": datos.stock_inicial,
+                 "marca": datos.marca or None, "proveedor": datos.proveedor or None,
+                 "categoria": datos.categoria or None}
+        try:
+            # La misma función que el Panel: el stock inicial queda como una
+            # ENTRADA_MANUAL firmada "dueño (celular)", con su uuid_unico.
+            products.crear_producto(codigo=datos.codigo, usuario=acceso_celular.autor(sesion["usuario"]),
+                                    origen=ORIGEN, **nuevo)
+        except products.ProductoExistenteError as e:
+            # Repetir el alta tras un "incierto" con datos móviles cae acá: con
+            # el producto en la respuesta, la app ve que es el que mandó.
+            existente = panel_celular.obtener_producto(datos.codigo)
+            _cambio(request, sesion, "producto_alta", datos.codigo, None, nuevo, "ya_existia")
+            if existente is None:
+                raise ErrorApi(409, "producto_existe",
+                               f"Ya hay un producto con el código {datos.codigo}, pero está dado de baja: revisalo "
+                               f"en el Panel de la PC.", producto=None) from e
+            raise ErrorApi(409, "producto_existe",
+                           f"Ya hay un producto con el código {datos.codigo}: «{existente['nombre']}».",
+                           producto=existente) from e
+        except ValueError as e:
+            raise ErrorApi(400, "dato_invalido", str(e)) from e
+        _cambio(request, sesion, "producto_alta", datos.codigo, None, nuevo)
+        p = panel_celular.obtener_producto(datos.codigo)
+        if p is None:      # lo dieron de baja en el Panel en ese mismo instante
+            raise _no_existe(datos.codigo)
+        return dict(p, movimientos=panel_celular.movimientos(datos.codigo, 15))
+
+    @app.get("/api/catalogo/valores")
+    @con_base
+    def catalogo_valores(campo: str = Query(..., max_length=20), q: str = Query("", max_length=80),
+                         limite: int = Query(20, ge=1, le=100), sesion: dict = Depends(autenticar)):
+        with _como_dato_invalido():
+            return panel_celular.valores_catalogo(campo, q, limite)
 
     @app.get("/api/movimientos")
     @con_base
@@ -1048,6 +1126,73 @@ def crear_app(estado: EstadoApi = None, permitir_loopback_total: bool = False):
                 {"porcentaje": datos.porcentaje, "monto_fijo": datos.monto_fijo, "redondear": datos.redondear,
                  "codigos": len(codigos)}, {"ok": aplicados, "error": len(resultado) - aplicados})
         return resultado
+
+    # ------------------------------------------------------------------ #
+    # Filtros guardados: los mismos del Panel (tabla Filtros_Guardados)
+    # ------------------------------------------------------------------ #
+
+    @app.get("/api/filtros")
+    @con_base
+    def ver_filtros(sesion: dict = Depends(autenticar)):
+        return panel_celular.listar_filtros()
+
+    @app.get("/api/filtros/{nombre:path}")
+    @con_base
+    def ver_filtro(nombre: str, sesion: dict = Depends(autenticar)):
+        f = panel_celular.ver_filtro(nombre)
+        if f is None:
+            raise _filtro_no_existe(nombre)
+        return f
+
+    def _guardado(nombre: str) -> dict:
+        r = panel_celular.resumen_filtro(nombre)
+        if r is None:      # lo borraron justo después de guardarlo
+            raise _filtro_no_existe(nombre)
+        return r
+
+    @app.post("/api/filtros")
+    @con_base
+    def crear_filtro(datos: FiltroNuevoIn, request: Request, sesion: dict = Depends(autenticar)):
+        # Crear NO pisa: el Panel guarda encima de uno con el mismo nombre, y
+        # desde el celular eso se llevaría puesto un filtro armado en la PC.
+        try:
+            hecho = filters.crear_filtro_manual(datos.nombre, datos.codigos)
+        except filters.FiltroExistenteError as e:
+            raise ErrorApi(409, "filtro_existe", str(e)) from e
+        except ValueError as e:
+            raise ErrorApi(400, "dato_invalido", str(e)) from e
+        _cambio(request, sesion, "filtro_crear", None, None, {"nombre": hecho["nombre"], "codigos": len(datos.codigos)})
+        return _guardado(hecho["nombre"])
+
+    @app.put("/api/filtros/{nombre:path}")
+    @con_base
+    def cambiar_filtro(nombre: str, datos: FiltroCambioIn, request: Request, sesion: dict = Depends(autenticar)):
+        # Solo si sigue siendo el que se cargó (huella): si lo guardaron desde
+        # el Panel mientras tanto, 409 y no se pisa nada.
+        try:
+            hecho = filters.reemplazar_filtro_manual(nombre, datos.codigos, datos.huella)
+        except filters.FiltroNoExisteError as e:
+            raise _filtro_no_existe(nombre) from e
+        except filters.FiltroCambiadoError as e:
+            raise ErrorApi(409, "filtro_cambio", str(e)) from e
+        except ValueError as e:
+            raise ErrorApi(400, "dato_invalido", str(e)) from e
+        _cambio(request, sesion, "filtro_cambiar", None, {"nombre": nombre, "huella": datos.huella},
+                {"codigos": len(datos.codigos), "huella": hecho["huella"]})
+        return _guardado(hecho["nombre"])
+
+    @app.delete("/api/filtros/{nombre:path}")
+    @con_base
+    def borrar_filtro(nombre: str, request: Request, huella: str = Query(..., min_length=64, max_length=64),
+                      sesion: dict = Depends(autenticar)):
+        try:
+            filters.eliminar_filtro(nombre, huella_esperada=huella)
+        except filters.FiltroNoExisteError as e:
+            raise _filtro_no_existe(nombre) from e
+        except filters.FiltroCambiadoError as e:
+            raise ErrorApi(409, "filtro_cambio", str(e)) from e
+        _cambio(request, sesion, "filtro_borrar", None, {"nombre": nombre, "huella": huella}, None)
+        return {"nombre": nombre, "borrado": True}
 
     @app.get("/api/alertas")
     @con_base

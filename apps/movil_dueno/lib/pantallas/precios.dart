@@ -8,6 +8,7 @@ import '../estado.dart';
 import '../formato.dart';
 import '../tema.dart';
 import '../widgets/comunes.dart';
+import 'filtros.dart';
 import 'inicio.dart';
 import 'stock.dart' show ChipOferta;
 
@@ -113,6 +114,20 @@ class _PantallaPreciosState extends State<PantallaPrecios> {
         '${cambio.despues.nombre}: ${moneda(cambio.antes.precioVenta)} → ${moneda(cambio.despues.precioVenta)}');
   }
 
+  Future<void> _abrirFiltros() async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PantallaFiltros()));
+    // desde un filtro se pueden haber cambiado precios
+    if (mounted && _cargadoUnaVez) _buscar(_busqueda.text);
+  }
+
+  /// La selección (o el resultado entero) como un filtro nuevo, para
+  /// volver a encontrar esos productos juntos la próxima vez.
+  Future<void> _guardarComoFiltro() async {
+    final elegidos = [for (final p in _productos) if (_seleccion.contains(p.codigo)) p];
+    await Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => PantallaFiltro(productosIniciales: elegidos)));
+  }
+
   Future<void> _ajusteMasivo() async {
     final resumen = await Navigator.of(context).push<String>(
       MaterialPageRoute(builder: (_) => PantallaAjusteMasivo(codigos: _afectados)),
@@ -128,7 +143,15 @@ class _PantallaPreciosState extends State<PantallaPrecios> {
     final t = Theme.of(context);
     final todosSeleccionados = _productos.isNotEmpty && _seleccion.length == _productos.length;
     return Scaffold(
-      appBar: AppBar(title: const Text('Precios'), actions: const [BotonAjustes()]),
+      appBar: AppBar(title: const Text('Precios'), actions: [
+        IconButton(
+          key: const Key('boton_filtros'),
+          tooltip: 'Filtros',
+          icon: const Icon(Icons.filter_list),
+          onPressed: _abrirFiltros,
+        ),
+        const BotonAjustes(),
+      ]),
       body: Column(children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -197,6 +220,15 @@ class _PantallaPreciosState extends State<PantallaPrecios> {
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
                 child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                   if (_recortado) const Padding(padding: EdgeInsets.only(bottom: 8), child: _AvisoRecorte()),
+                  if (_seleccion.isNotEmpty) ...[
+                    OutlinedButton.icon(
+                      key: const Key('guardar_como_filtro'),
+                      onPressed: _guardarComoFiltro,
+                      icon: const Icon(Icons.playlist_add),
+                      label: Text(_seleccion.length == 1 ? 'Guardar como filtro' : 'Guardar los ${_seleccion.length} como filtro'),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   FilledButton.icon(
                     onPressed: _ajusteMasivo,
                     icon: const Icon(Icons.trending_up),
