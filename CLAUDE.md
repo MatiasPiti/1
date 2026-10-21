@@ -639,6 +639,11 @@ código → "Quitar umbral propio" → cargar 5 y 0 → "Guardar umbral de este 
 - **`float()` y `askfloat` sobre lo que tipea alguien leen "1.500" como 1,5.** La plata tipeada se lee
   con `precios.leer_numero` (el criterio de la hoja de precios). Estaba mal en el alta, el ajuste por
   monto fijo y las ofertas del Panel, y en el artículo sin código de la Caja.
+- **Un candado cuya espera es más corta que lo que puede tardar quien lo tiene no protege nada.** El
+  de config.ini esperaba 2 s y un guardado vivo puede tenerlo 11,5 s (reintentos del `os.replace` con
+  el antivirus encima): en la laptop de Matías el que esperaba se cansaba, guardaba sin candado y
+  perdía claves (152 de 160). Ahora espera `_ESPERA_CANDADO_S` = 20 s, y la prueba exige que pase por
+  3 s al peor guardado, calculado con las mismas constantes.
 
 **Sin verificar en Windows real** (lo cubren en parte los jobs de Windows del CI): uvicorn adentro de
 un servicio de pywin32, que `update` conserve los reintentos, PowerShell 5.1 como SYSTEM, el firewall
