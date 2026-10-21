@@ -49,6 +49,10 @@ APPS_REMOTO = ["DuenoRemoto"]
 APPS_LOCAL_OPCIONALES = ["ApiCelular"]
 APP_CELULAR = "ApiCelular"
 
+# Los programas que toman el candado de instancia única (pos_core/instancia_unica)
+# sobre la base de la instalación. Abiertos, Windows no deja reemplazar su carpeta.
+PROGRAMAS_CON_CANDADO = (("caja", "la Caja"), ("dueno", "el Panel del Dueño"))
+
 TEXTO_CASILLA_CELULAR = "Instalar también la API del celular (app del dueño, puerto 8766)"
 TEXTO_CELULAR_YA_INSTALADA = "La API del celular ya está instalada: se actualiza junto con lo demás."
 AVISO_PIN = ("Se abrió una ventana negra: que Leo escriba ahí su PIN, dos veces. Nadie más lo "
@@ -181,6 +185,69 @@ def _tapar_ips(texto) -> str:
     Windows la trae puesta.
     """
     return _RE_IPV4.sub("x.x.x.x", str(texto or ""))
+
+
+def _antivirus_de_terceros() -> list:
+    """Los antivirus que Windows tiene registrados en el Centro de seguridad y
+    no son Defender. [] si no se puede saber (en Windows Server no existe)."""
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                            "Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct "
+                            "-ErrorAction Stop | ForEach-Object { $_.displayName }"],
+                           capture_output=True, text=True, timeout=30,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        return []
+    if r.returncode != 0:
+        return []
+    nombres = []
+    for linea in (r.stdout or "").splitlines():
+        nombre = linea.strip()
+        if nombre and "defender" not in nombre.lower() and nombre not in nombres:
+            nombres.append(nombre)
+    return nombres
+
+
+class ProgramasAbiertosError(RuntimeError):
+    """La Caja o el Panel están abiertos: hay que cerrarlos antes. No se tocó nada."""
+
+
+class ActualizacionCortada(Exception):
+    """La actualización se cortó después de parar servicios, y ya se intentó
+    volver a arrancarlos: `no_volvieron` dice cuáles quedaron parados."""
+
+    def __init__(self, causa: Exception, no_volvieron: list):
+        super().__init__(f"{type(causa).__name__}: {causa}")
+        self.causa, self.no_volvieron = causa, list(no_volvieron)
+
+
+def programas_abiertos(destino: str) -> list:
+    """Cuáles de la Caja y el Panel están abiertos en esta instalación (los
+    que tienen tomado su candado). Se pregunta ANTES de parar nada: con la
+    Caja abierta, reemplazar su carpeta falla, y antes eso pasaba con la API
+    del celular y el servicio de stock ya parados, que quedaban así."""
+    from pos_core import instancia_unica
+    carpeta = os.path.join(destino, "database")
+    return [texto for nombre, texto in PROGRAMAS_CON_CANDADO if instancia_unica.esta_abierta(nombre, carpeta)]
+
+
+def texto_error_actualizacion(e: Exception) -> str:
+    """Lo que se le dice al cliente cuando la actualización se detiene, sin
+    prometer que "sigue funcionando" si algo quedó parado."""
+    if isinstance(e, ProgramasAbiertosError):
+        return f"{e}\nNo se tocó nada."
+    causa = e.causa if isinstance(e, ActualizacionCortada) else e
+    texto = f"{type(causa).__name__}: {causa}"
+    # 5 = acceso denegado, 32 = lo está usando otro proceso (solo los arma
+    # Windows: el PermissionError de "falta administrador" no los trae).
+    if getattr(causa, "winerror", None) in (5, 32):
+        texto += ("\nWindows no dejó reemplazar un archivo: casi siempre es un programa de Otter abierto (la "
+                  "Caja o el Panel, también en otra sesión de Windows) o el antivirus revisándolo. Cerralos y "
+                  "tocá ACTUALIZAR de nuevo.")
+    if isinstance(e, ActualizacionCortada) and e.no_volvieron:
+        return texto + (f"\nATENCIÓN: quedó parado {' y '.join(e.no_volvieron)}. Reiniciá la PC (arranca "
+                        f"solo con Windows) o tocá ACTUALIZAR de nuevo con todo cerrado.")
+    return texto + "\nLa instalación anterior sigue funcionando: no se borró nada."
 
 
 # ---------------------------------------------------------------------- #
@@ -686,9 +753,8 @@ class Actualizador(tk.Tk):
         try:
             self._hacer_actualizacion(datos)
         except Exception as e:
-            self._log(f"\n*** LA ACTUALIZACIÓN SE DETUVO ***\n{type(e).__name__}: {e}\n"
-                       f"La instalación anterior sigue funcionando: no se borró nada.")
-            mensaje = f"{type(e).__name__}: {e}"
+            mensaje = texto_error_actualizacion(e)
+            self._log(f"\n*** LA ACTUALIZACIÓN SE DETUVO ***\n{mensaje}")
             self._cola.put(lambda: messagebox.showerror("Error al actualizar", mensaje))
         finally:
             self._cola.put(lambda: self.boton.config(state="normal"))
@@ -705,6 +771,15 @@ class Actualizador(tk.Tk):
             raise FileNotFoundError(
                 f"No se encontraron los programas nuevos: {', '.join(faltantes)}.\n"
                 f"¿Copiaste la carpeta 'dist' completa al pendrive?")
+
+        # Antes de respaldar o parar nada: con la Caja o el Panel abiertos
+        # Windows no deja reemplazarlos.
+        if modo == "local":
+            abiertos = programas_abiertos(destino)
+            if abiertos:
+                raise ProgramasAbiertosError(
+                    f"Primero cerrá {' y '.join(abiertos)} (fijate también en la barra de tareas) y después "
+                    f"tocá ACTUALIZAR de nuevo.")
 
         # La API del celular es OPCIONAL. Se decide todo ANTES de copiar nada.
         # "pedida_ahora" y no la casilla sola: con la API ya instalada la
@@ -726,53 +801,61 @@ class Actualizador(tk.Tk):
         if datos["backup"] and modo == "local":
             self._respaldar_base(destino)
 
-        # 2a) La API del celular se para ANTES que el servicio de stock, y
-        #     de verdad: que el proceso ya no exista (STOP_PENDING no es
-        #     parado). Si no para, se deja en su versión anterior y la caja
-        #     sigue: nunca frena la actualización.
-        if actualizar_cel and cel_instalada:
-            actualizar_cel = _parar_celular(self._log)
+        # Desde acá se paran servicios. Si algo falla antes de volver a
+        # arrancarlos (Windows no deja reemplazar una carpeta, la migración
+        # de la base), se arrancan de nuevo tal como quedaron: antes la API
+        # del celular y el servicio de stock quedaban parados con un cartel
+        # que decía "la instalación anterior sigue funcionando".
+        celular_parado = servicio_estaba = False
+        try:
+            # 2a) La API del celular se para ANTES que el servicio de stock,
+            #     y de verdad: que el proceso ya no exista (STOP_PENDING no es
+            #     parado). Si no para, se deja en su versión anterior y la
+            #     caja sigue: nunca frena la actualización.
+            if actualizar_cel and cel_instalada:
+                actualizar_cel = celular_parado = _parar_celular(self._log)
 
-        # 2) El servicio tiene el .exe abierto: hay que pararlo para poder
-        #    reemplazarlo (si no, Windows no deja escribir encima).
-        servicio_estaba = False
-        if modo == "local":
-            servicio_estaba = self._parar_servicio(destino)
+            # 2) El servicio tiene el .exe abierto: hay que pararlo para poder
+            #    reemplazarlo (si no, Windows no deja escribir encima).
+            if modo == "local":
+                servicio_estaba = self._parar_servicio(destino)
 
-        # 3) Reemplazar los programas. Se copia solo el programa (ver
-        #    _DATOS_DEL_CLIENTE) y se repone después lo que hubiera de
-        #    datos adentro de la carpeta. En el Maestro la base y el config
-        #    viven en la carpeta padre y esto no cambia nada; en el Dueño
-        #    Remoto el config vive ADENTRO, y sin esto se perdía.
-        for app in apps:
-            self._log(f"Actualizando {app}...")
-            origen_app = os.path.join(self.origen, app)
-            destino_app = os.path.join(destino, app)
-            anterior = destino_app + ".anterior"
-            if os.path.exists(anterior):
+            # 3) Reemplazar los programas. Se copia solo el programa (ver
+            #    _DATOS_DEL_CLIENTE) y se repone después lo que hubiera de
+            #    datos adentro de la carpeta. En el Maestro la base y el
+            #    config viven en la carpeta padre y esto no cambia nada; en el
+            #    Dueño Remoto el config vive ADENTRO, y sin esto se perdía.
+            for app in apps:
+                self._log(f"Actualizando {app}...")
+                origen_app = os.path.join(self.origen, app)
+                destino_app = os.path.join(destino, app)
+                anterior = destino_app + ".anterior"
+                if os.path.exists(anterior):
+                    shutil.rmtree(anterior, ignore_errors=True)
+                if os.path.isdir(destino_app):
+                    # Se mueve la vieja en vez de borrarla: si la copia nueva
+                    # falla a la mitad, todavía existe con qué volver atrás.
+                    os.rename(destino_app, anterior)
+                try:
+                    shutil.copytree(origen_app, destino_app, ignore=_ignorar_datos)
+                except Exception:
+                    if os.path.isdir(anterior) and not os.path.isdir(destino_app):
+                        os.rename(anterior, destino_app)   # volver a la anterior
+                    raise
+                _devolver_datos_del_cliente(anterior, destino_app, self._log)
                 shutil.rmtree(anterior, ignore_errors=True)
-            if os.path.isdir(destino_app):
-                # Se mueve la vieja en vez de borrarla: si la copia nueva
-                # falla a la mitad, todavía existe con qué volver atrás.
-                os.rename(destino_app, anterior)
-            try:
-                shutil.copytree(origen_app, destino_app, ignore=_ignorar_datos)
-            except Exception:
-                if os.path.isdir(anterior) and not os.path.isdir(destino_app):
-                    os.rename(anterior, destino_app)   # volver a la anterior
-                raise
-            _devolver_datos_del_cliente(anterior, destino_app, self._log)
-            shutil.rmtree(anterior, ignore_errors=True)
-        self._log("Programas actualizados.\n")
+            self._log("Programas actualizados.\n")
 
-        # 3b) La API del celular, adentro de su propio try (ver
-        #     _reemplazar_celular): si falla, la caja ya quedó actualizada.
-        if actualizar_cel:
-            _reemplazar_celular(self.origen, destino, self._log)
+            # 3b) La API del celular, adentro de su propio try (ver
+            #     _reemplazar_celular): si falla, la caja ya quedó actualizada.
+            if actualizar_cel:
+                _reemplazar_celular(self.origen, destino, self._log)
 
-        # 4) Poner la base al día (agrega columnas nuevas; no borra datos).
-        if modo == "local":
-            self._migrar_base(destino)
+            # 4) Poner la base al día (agrega columnas nuevas; no borra datos).
+            if modo == "local":
+                self._migrar_base(destino)
+        except Exception as e:
+            raise ActualizacionCortada(e, self._volver_a_arrancar(celular_parado, servicio_estaba)) from e
 
         # 5) Volver a dejar el servicio como estaba.
         if modo == "local" and servicio_estaba:
@@ -962,6 +1045,12 @@ class Actualizador(tk.Tk):
         if destino.lower() in listado.lower():
             return True, "confirmado en la lista de exclusiones"
         if "Get-MpPreference" in (r.stderr or "") or not listado.strip():
+            # Con otro antivirus (Avast, en el local) Defender queda apagado y
+            # no acepta exclusiones: se nombra el que hay, que es donde va.
+            otros = _antivirus_de_terceros()
+            if otros:
+                return False, (f"el antivirus de esta PC es {', '.join(otros)} (Windows Defender está "
+                               f"apagado): agregá a mano {destino} a sus excepciones")
             return False, "no parece haber Windows Defender: revisá a mano el antivirus que usen"
         return False, "el comando corrió pero la carpeta no quedó en la lista"
 
@@ -1064,6 +1153,26 @@ class Actualizador(tk.Tk):
         except Exception:
             pass
         return "desconocido"
+
+    def _volver_a_arrancar(self, celular: bool, stock: bool) -> list:
+        """La actualización se cortó con servicios parados: se vuelven a
+        arrancar como quedaron (cada carpeta quedó entera, la nueva o la
+        anterior). Devuelve los que no volvieron. Nunca lanza."""
+        from pos_core import servicio_windows as sw
+        no_volvieron = []
+        for parado, nombre, texto in ((stock, sw.NOMBRE_SERVICIO, "el servicio de stock"),
+                                      (celular, sw.SERVICIO_CELULAR, "la API del celular")):
+            if not parado:
+                continue
+            self._log(f"Volviendo a arrancar {texto}...")
+            try:
+                ok, detalle = sw.arrancar(nombre)
+            except Exception as e:
+                ok, detalle = False, str(e)
+            self._log(f"   {'Corriendo de nuevo' if ok else 'ATENCIÓN: no volvió a arrancar'} ({detalle}).")
+            if not ok:
+                no_volvieron.append(texto)
+        return no_volvieron
 
     def _parar_servicio(self, destino) -> bool:
         """Para el servicio para poder reemplazar su .exe. True si estaba corriendo."""

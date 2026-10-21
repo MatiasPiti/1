@@ -728,8 +728,20 @@ def asegurar_regla_firewall_celular(exe: str, puerto: int = PUERTO_CELULAR,
 # Mapas InstanceID -> filtro, armados una vez: preguntar regla por regla
 # (cientos de reglas x tres cmdlets) tarda minutos.
 _PS_FILTROS = (
-    "$apps = @{}; Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue | "
+    "$apps = @{}; Get-NetFirewallApplicationFilter -ErrorAction Stop | "
     "ForEach-Object { $apps[$_.InstanceID] = $_.Program }\n"
+)
+
+# Todas las reglas, filtradas ACÁ y no con -Action/-Direction/-Enabled: con un
+# filtro, si ninguna regla lo cumple (en muchas PCs no hay NINGUNA regla Block)
+# Get-NetFirewallRule avisa "no se encontraron objetos", deja $? en falso y
+# PowerShell sale con 1. Eso se leía como "no se pudo saber" y la revisión
+# final del Actualizador daba NO en el firewall sin ningún motivo. Sin filtro
+# no hay "no encontrado", y un error de verdad (-ErrorAction Stop) sigue
+# saliendo con 1.
+_PS_REGLAS_ENTRANTES = (
+    "Get-NetFirewallRule -ErrorAction Stop | Where-Object { [string]$_.Direction -eq 'Inbound' -and "
+    "[string]$_.Enabled -eq 'True' -and [string]$_.Action -eq "
 )
 
 
@@ -739,9 +751,8 @@ def reglas_que_bloquean(exe: str, estricto: bool = False) -> list:
     saber (con estricto=True, None si no se pudo saber)."""
     try:
         script = (
-            f"$exe = {_comillas_ps(exe)}\n" + _PS_FILTROS +
-            "Get-NetFirewallRule -Direction Inbound -Action Block -Enabled True -ErrorAction SilentlyContinue | "
-            "Where-Object { $apps[$_.InstanceID] -eq $exe } | "
+            f"$exe = {_comillas_ps(exe)}\n" + _PS_FILTROS + _PS_REGLAS_ENTRANTES +
+            "'Block' -and $apps[$_.InstanceID] -eq $exe } | "
             "ForEach-Object { Write-Output $_.DisplayName }\n")
         return _lista_de_powershell(script, 120, estricto)
     except Exception:
@@ -757,9 +768,9 @@ def reglas_que_abren_de_mas(exe: str, puerto: int = PUERTO_CELULAR, estricto: bo
             f"$exe = {_comillas_ps(exe)}; $puerto = {int(puerto)}\n"
             f"$propia = {_comillas_ps(REGLA_FIREWALL_CELULAR)}\n"
             "$rango = @('100.64.0.0/10', '100.64.0.0/255.192.0.0')\n" + _PS_FILTROS +
-            "$puertos = @{}; Get-NetFirewallPortFilter -ErrorAction SilentlyContinue | "
+            "$puertos = @{}; Get-NetFirewallPortFilter -ErrorAction Stop | "
             "ForEach-Object { $puertos[$_.InstanceID] = @($_.LocalPort) }\n"
-            "$remotas = @{}; Get-NetFirewallAddressFilter -ErrorAction SilentlyContinue | "
+            "$remotas = @{}; Get-NetFirewallAddressFilter -ErrorAction Stop | "
             "ForEach-Object { $remotas[$_.InstanceID] = @($_.RemoteAddress) }\n"
             "function TocaPuerto($lista) {\n"
             "  foreach ($p in @($lista)) {\n"
@@ -768,8 +779,7 @@ def reglas_que_abren_de_mas(exe: str, puerto: int = PUERTO_CELULAR, estricto: bo
             "  }\n"
             "  return $false\n"
             "}\n"
-            "Get-NetFirewallRule -Direction Inbound -Action Allow -Enabled True -ErrorAction SilentlyContinue | "
-            "Where-Object { $_.Name -ne $propia } | ForEach-Object {\n"
+            + _PS_REGLAS_ENTRANTES + "'Allow' -and $_.Name -ne $propia } | ForEach-Object {\n"
             "  $id = $_.InstanceID\n"
             "  if (($apps[$id] -eq $exe) -or (TocaPuerto $puertos[$id])) {\n"
             "    $r = @($remotas[$id])\n"

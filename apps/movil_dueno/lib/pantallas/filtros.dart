@@ -249,24 +249,33 @@ class _PantallaFiltroState extends State<PantallaFiltro> {
 
   bool _contiene(String codigo) => _productos.any((p) => p.codigo == codigo);
 
-  void _agregar(Producto p) {
-    if (_contiene(p.codigo)) return;
+  static final _textoTope = 'Un filtro puede tener hasta ${numero(maximoProductosFiltro)} productos.';
+
+  /// false si no entró (ya estaba, o el filtro está lleno: eso se avisa).
+  bool _agregar(Producto p) {
+    if (_contiene(p.codigo)) return false;
     if (_productos.length >= maximoProductosFiltro) {
-      mostrarMensaje(context, 'Un filtro puede tener hasta ${numero(maximoProductosFiltro)} productos.', error: true);
-      return;
+      mostrarMensaje(context, _textoTope, error: true);
+      return false;
     }
     setState(() {
       _productos.add(p);
       _cambios = true;
     });
+    return true;
   }
 
   void _agregarResultados() {
-    for (final p in _resultados) {
-      _agregar(p);
-    }
-    setState(() => _resultados = []);
+    final enFiltro = {for (final p in _productos) p.codigo};
+    final nuevos = [for (final p in _resultados) if (!enFiltro.contains(p.codigo)) p];
+    final entran = nuevos.take(maximoProductosFiltro - _productos.length).toList();
+    setState(() {
+      _productos.addAll(entran);
+      _cambios = _cambios || entran.isNotEmpty;
+      _resultados = [];
+    });
     _busqueda.clear();
+    if (entran.length < nuevos.length) mostrarMensaje(context, _textoTope, error: true);
   }
 
   void _sacar(Producto p) => setState(() {
@@ -289,6 +298,7 @@ class _PantallaFiltroState extends State<PantallaFiltro> {
       if (!mounted) return;
       // un código completo (tipeado o del lector) se agrega directo
       if (r.length == 1 && r.first.codigo == t) {
+        if (_contiene(t)) mostrarMensaje(context, '${r.first.nombre} ya estaba en el filtro.');
         _agregar(r.first);
         _busqueda.clear();
         setState(() {

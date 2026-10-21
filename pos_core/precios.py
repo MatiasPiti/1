@@ -110,6 +110,14 @@ def _num(valor):
         return None
 
 
+def leer_numero(texto):
+    """Lo que escribió el dueño en un campo de plata, con el criterio de _num:
+    "1.500" es mil quinientos y "1.500,50" lleva centavos. None si está vacío
+    o no es un número. Lo usan el alta, el ajuste por monto fijo y las ofertas
+    del Panel: con float(), "1.500" quedaba en 1,5 y la Caja cobraba $ 1,50."""
+    return _num(texto)
+
+
 def _redondear(valor):
     return None if valor is None else round(valor + 0.0, 2)
 

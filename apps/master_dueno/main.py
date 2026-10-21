@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from pos_core.db import preparar_base
 from pos_core import arranque
 from pos_core.dueno_backend import LocalBackend, RemoteError
+from pos_core.precios import leer_numero
 from pos_core import arca
 from apps.theme import (aplicar_tema, estriar_treeview, tag_fila,
                          habilitar_copiar_pegar_global, ajustar_ventana, MarcoDesplazable,
@@ -733,10 +734,14 @@ class AppDueno(tk.Tk):
             messagebox.showerror("Error con el lector", f"{codigo}: {e}")
 
     def _crear_producto_nuevo(self):
+        # "1.500" es mil quinientos (como en la pestaña Precios), no 1,5.
+        texto_precio = self.alta_precio.get().strip()
+        precio = leer_numero(texto_precio) if texto_precio else 0.0
         try:
-            precio = float(self.alta_precio.get() or 0)
             stock_inicial = int(self.alta_stock.get() or 0)
         except ValueError:
+            stock_inicial = None
+        if precio is None or stock_inicial is None:
             messagebox.showerror("Error", "Precio y stock inicial tienen que ser números.")
             return
         codigo = self.alta_codigo.get().strip()
@@ -945,9 +950,8 @@ class AppDueno(tk.Tk):
         if not codigos:
             messagebox.showwarning("Nada para aplicar", "Agregá productos al filtro primero.")
             return
-        try:
-            monto = float(self.bulk_fijo.get())
-        except ValueError:
+        monto = leer_numero(self.bulk_fijo.get())   # "1.000" son mil pesos, no uno
+        if monto is None:
             messagebox.showerror("Error", "Monto inválido")
             return
         resultados = self.backend.bulk_edit.aplicar_ajuste_masivo(codigos, monto_fijo=monto, usuario=USUARIO, origen=ORIGEN)
@@ -1667,10 +1671,14 @@ class AppDueno(tk.Tk):
                 "Precio fijo promocional": "PRECIO_FIJO"}[self.oferta_tipo.get()]
 
     def _crear_oferta_nueva(self):
+        # Un precio fijo de "1.500" es mil quinientos: con float() quedaba en
+        # 1,5 y la Caja cobraba $ 1,50 toda la semana de la oferta.
+        valor = leer_numero(self.oferta_valor.get())
         try:
-            valor = float(self.oferta_valor.get())
             dias = int(self.oferta_dias.get())
         except ValueError:
+            dias = None
+        if valor is None or dias is None:
             messagebox.showerror("Error", "Valor y duración tienen que ser números.")
             return
         try:

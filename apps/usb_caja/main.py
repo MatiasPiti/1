@@ -11,7 +11,7 @@ Idéntico en función a la Caja Maestra, pero:
 import os
 import sys
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog, filedialog
+from tkinter import ttk, messagebox, filedialog
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -21,7 +21,7 @@ from pos_core import sales, sync_export, audit, ticket_printer, excel_import
 from apps.theme import (COLORS, aplicar_tema, estriar_treeview, tag_fila,
                          habilitar_copiar_pegar_global, abrir_dialogo_impresora,
                          ajustar_ventana)
-from apps.caja_carrito import CarritoTecladoMixin
+from apps.caja_carrito import CarritoTecladoMixin, pedir_importe
 
 ORIGEN = "USB_CAJA"
 USUARIO = os.environ.get("USERNAME", "cajero_emergencia")
@@ -166,8 +166,7 @@ class AppUsbCaja(CarritoTecladoMixin, tk.Tk):
         self.buscador.focus_set()
 
     def _agregar_articulo_sin_codigo(self):
-        importe = simpledialog.askfloat(
-            "Artículo sin código", "Importe a cobrar:", parent=self, minvalue=0.01)
+        importe = pedir_importe(self)   # "1.500" es mil quinientos, no 1,5
         self._ir_a_buscador()
         if not importe:
             return

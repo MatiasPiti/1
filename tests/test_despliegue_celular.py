@@ -573,6 +573,81 @@ elif ok_mudo or "administrador" not in detalle_mudo:
 else:
     ok("si Windows no deja crear la regla del firewall, el detalle dice por qué (no adivina 'administrador')")
 
+# En la PC del local la revisión final dio NO en "reglas que bloquean" con 0
+# reglas Block en todo Windows: Get-NetFirewallRule -Action Block "no encuentra
+# objetos", deja $? en falso y PowerShell sale con 1 aunque no pasó nada; eso
+# volvía como "no se pudo saber". Sin Windows no se puede correr el script: se
+# mira que ninguna consulta use un filtro que pueda "no encontrar" ni trague
+# errores (SilentlyContinue = un "ninguna" que no verificó nada), y que un
+# error de verdad siga saliendo con 1 (-ErrorAction Stop) y vuelva como None.
+scripts = {}
+resultados_ps = {}
+p = Parches()
+try:
+    p.poner(sw, "_ES_WINDOWS", True)
+    for nombre, llamada in (("reglas_que_bloquean", lambda estricto: sw.reglas_que_bloquean(EXE_WIN, estricto=estricto)),
+                            ("reglas_que_abren_de_mas",
+                             lambda estricto: sw.reglas_que_abren_de_mas(EXE_WIN, estricto=estricto))):
+        for codigo in (0, 1):
+            p.poner(sw, "_powershell", lambda script, timeout=60, _n=nombre, _c=codigo: (
+                scripts.__setitem__(_n, script), (_c, ""))[1])
+            resultados_ps[(nombre, codigo)] = (llamada(True), llamada(False))
+finally:
+    p.sacar()
+for nombre, script in scripts.items():
+    consultas = re.findall(r"Get-NetFirewall\w+[^|\n;]*", script)
+    reglas = [c for c in consultas if c.startswith("Get-NetFirewallRule")]
+    if not reglas or any(re.search(r"-(Action|Direction|Enabled)\b", c) for c in reglas):
+        fallos.append(f"{nombre}: Get-NetFirewallRule con filtro (-Action/-Direction/-Enabled): si ninguna regla lo "
+                      f"cumple sale con 1 y la revisión final da NO sin motivo: {reglas}")
+    elif any("-ErrorAction Stop" not in c for c in consultas) or "SilentlyContinue" in script:
+        fallos.append(f"{nombre}: una consulta del firewall no corta con su error (-ErrorAction Stop): {consultas}")
+for (nombre, codigo), (estricto, comun) in sorted(resultados_ps.items()):
+    esperado = ([], []) if codigo == 0 else (None, [])
+    if (estricto, comun) != esperado:
+        fallos.append(f"{nombre} con PowerShell saliendo {codigo} y sin salida: (estricto, común) = "
+                      f"{(estricto, comun)}, se esperaba {esperado}")
+if not [f for f in fallos if f.startswith(("reglas_que_bloquean", "reglas_que_abren_de_mas"))]:
+    ok("las reglas del firewall se filtran en el script: sin ninguna regla Block la revisión final da SI, y un "
+       "error de verdad sigue siendo 'no se pudo saber'")
+
+# El diagnóstico de la consola: aunque PowerShell conteste, una consulta del
+# firewall puede fallar sola. Eso se muestra "no se pudo preguntar", nunca
+# "ninguna" (un SI que no verificó nada).
+import contextlib  # noqa: E402
+import io  # noqa: E402
+
+from services import api_celular_cli as cli  # noqa: E402
+
+base_diag = tempfile.mkdtemp(prefix="diag_estricto_")
+falso = ServicioFalso()
+falso.bloquean, falso.de_mas, falso.apagados, falso.placas = None, ["Regla vieja"], None, []
+p = Parches()
+salida_diag = io.StringIO()
+try:
+    p.poner(cli.paths, "_base_override", base_diag)
+    falso.instalar_en(p)
+    p.poner(cli, "_powershell_responde", lambda: True)
+    p.poner(cli, "_configurar_logs", lambda: None)
+    with contextlib.redirect_stdout(salida_diag):
+        cli.diagnostico()
+finally:
+    p.sacar()
+    shutil.rmtree(base_diag, ignore_errors=True)
+texto_diag = salida_diag.getvalue()
+esperadas = ["[--] Reglas que BLOQUEAN ApiCelular (le ganan a la nuestra) — no se pudo preguntar a Windows",
+             "[NO] Reglas que abren ApiCelular fuera de Tailscale — Regla vieja",
+             "[--] Firewall de Windows prendido en todos los perfiles — no se pudo preguntar a Windows",
+             "[SI] Ninguna otra placa tiene una IP del rango de Tailscale — ninguna"]
+faltan_diag = [e for e in esperadas if e not in texto_diag]
+if faltan_diag:
+    fallos.append(f"diagnóstico con consultas del firewall que no contestan: faltan las filas {faltan_diag}\n"
+                  f"{texto_diag}")
+elif not falso.llamo("reglas_que_bloquean"):
+    fallos.append("el diagnóstico no preguntó las reglas que bloquean")
+else:
+    ok("el diagnóstico muestra 'no se pudo preguntar' (y no 'ninguna') si una consulta del firewall no contesta")
+
 
 # ---------------------------------------------------------------- #
 # Identidad por HTTP, contra servidores de verdad en 127.0.0.1
@@ -736,6 +811,7 @@ class ActualizadorDePrueba:
         self.lineas.append(str(texto))
 
     _hacer_actualizacion = act.Actualizador._hacer_actualizacion
+    _volver_a_arrancar = act.Actualizador._volver_a_arrancar
 
     def _respaldar_base(self, destino):
         self.orden.append("respaldo")
@@ -1040,6 +1116,140 @@ except Exception as e:
     fallos.append(f"una excepción instalando el servicio del celular volteó la actualización: {e!r}")
 if not [f for f in fallos if "volteó" in f or "cortó" in f]:
     ok("una falla registrando el servicio de la API del celular no voltea la actualización")
+
+# 2.11 la Caja abierta: se avisa ANTES de respaldar o parar nada. En el local,
+# ACTUALIZAR con la Caja abierta paró la API del celular y el servicio de
+# stock, falló al reemplazar MaestroCaja y los dejó parados.
+from pos_core import instancia_unica  # noqa: E402
+
+
+def candado_tomado(destino, nombre):
+    """Lo que hace la Caja (o el Panel) al abrir: el candado, tomado."""
+    ruta = os.path.join(destino, "database", f".candado_{nombre}")
+    descriptor = open(ruta, "a+b")
+    descriptor.seek(0)
+    if not instancia_unica._bloquear(descriptor):
+        raise AssertionError("no se pudo tomar el candado de prueba")
+    return descriptor
+
+
+raiz = tempfile.mkdtemp(prefix="act_")
+destino = instalacion_local(raiz, con_celular=True, habilitado="true")
+carpeta_datos = os.path.join(destino, "database")
+esperar(not instancia_unica.esta_abierta("caja", carpeta_datos),
+        "sin el archivo del candado, esta_abierta dijo que la Caja está abierta")
+esperar(not os.path.exists(os.path.join(carpeta_datos, ".candado_caja")),
+        "esta_abierta creó el archivo del candado (solo tiene que mirar)")
+caja = candado_tomado(destino, "caja")
+panel = candado_tomado(destino, "dueno")
+error = None
+try:
+    esperar(act.programas_abiertos(destino) == ["la Caja", "el Panel del Dueño"],
+            f"no vio la Caja y el Panel abiertos: {act.programas_abiertos(destino)}")
+    try:
+        app, serv = actualizar(dist_nuevo(raiz), destino)
+    except Exception as e:
+        error = e
+finally:
+    # Soltar antes de cerrar: en Windows, cerrar con el candado tomado lo
+    # libera "cuando el sistema pueda", no en el acto.
+    for descriptor in (caja, panel):
+        instancia_unica._soltar(descriptor)
+        descriptor.close()
+esperar(isinstance(error, act.ProgramasAbiertosError) and "cerrá la Caja y el Panel del Dueño" in str(error),
+        f"con la Caja y el Panel abiertos no avisó que hay que cerrarlos: {error!r}")
+texto = act.texto_error_actualizacion(error) if error else ""
+esperar(texto.endswith("No se tocó nada.") and "sigue funcionando" not in texto,
+        f"el aviso de programas abiertos no dice que no se tocó nada: {texto!r}")
+esperar(not caja_actualizada(destino) and leer(os.path.join(destino, "MaestroCaja", "MaestroCaja.exe")) == "VIEJO",
+        "con la Caja abierta igual se copió algo")
+esperar(not instancia_unica.esta_abierta("caja", carpeta_datos),
+        "cerrada la Caja, esta_abierta sigue diciendo que está abierta (o el chequeo dejó el candado tomado)")
+# y cerradas, la misma instalación se actualiza (el chequeo no dejó nada tomado)
+app, serv = actualizar(dist_nuevo(raiz), destino)
+esperar(caja_actualizada(destino), "después de cerrar la Caja no se actualizó")
+if not [f for f in fallos if "Caja" in f or "candado" in f or "abiertos" in f]:
+    ok("con la Caja o el Panel abiertos avisa antes de respaldar o parar nada; cerrados, actualiza")
+
+# 2.12 Windows no deja reemplazar una carpeta a mitad de camino (un programa
+# abierto que no toma candado, el antivirus): lo que se paró se vuelve a
+# arrancar, y el cartel no promete lo que no pasó.
+raiz = tempfile.mkdtemp(prefix="act_")
+destino = instalacion_local(raiz, con_celular=True, habilitado="true")
+_rename_real = os.rename
+
+
+def rename_con_panel_abierto(a, b):
+    if os.path.basename(a) == "MaestroDueno":
+        e = PermissionError(13, "El proceso no tiene acceso al archivo porque está siendo utilizado por otro proceso")
+        e.winerror = 32
+        raise e
+    return _rename_real(a, b)
+
+
+serv = ServicioFalso()
+error = None
+try:
+    actualizar(dist_nuevo(raiz), destino, servicio=serv,
+               parches_extra=lambda p: p.poner(os, "rename", rename_con_panel_abierto))
+except Exception as e:
+    error = e
+esperar(isinstance(error, act.ActualizacionCortada) and isinstance(error.causa, PermissionError),
+        f"un rename bloqueado a mitad de camino no cortó la actualización como corresponde: {error!r}")
+esperar(serv.llamo("parar", sw.SERVICIO_CELULAR) and serv.llamo("arrancar", sw.SERVICIO_CELULAR)
+        and serv.llamo("arrancar", sw.NOMBRE_SERVICIO),
+        f"cortada la actualización, no volvió a arrancar la API del celular y el servicio de stock: {serv.llamadas}")
+esperar(leer(os.path.join(destino, "MaestroDueno", "MaestroDueno.exe")) == "VIEJO"
+        and not os.path.exists(os.path.join(destino, "MaestroDueno.anterior")),
+        "con el rename bloqueado se perdió (o quedó a medias) la carpeta del Panel")
+texto = act.texto_error_actualizacion(error) if error else ""
+esperar("Windows no dejó reemplazar un archivo" in texto and "sigue funcionando" in texto
+        and "quedó parado" not in texto, f"el cartel del corte no explica qué pasó: {texto!r}")
+
+# 2.13 si además no vuelven a arrancar, el cartel lo dice (y no "sigue funcionando")
+raiz = tempfile.mkdtemp(prefix="act_")
+destino = instalacion_local(raiz, con_celular=True, habilitado="true")
+serv = ServicioFalso()
+serv.lanzar = {"arrancar"}
+error = None
+try:
+    actualizar(dist_nuevo(raiz), destino, servicio=serv,
+               parches_extra=lambda p: p.poner(os, "rename", rename_con_panel_abierto))
+except Exception as e:
+    error = e
+texto = act.texto_error_actualizacion(error) if error else ""
+esperar(isinstance(error, act.ActualizacionCortada)
+        and error.no_volvieron == ["el servicio de stock", "la API del celular"]
+        and "ATENCIÓN: quedó parado el servicio de stock y la API del celular" in texto
+        and "sigue funcionando" not in texto,
+        f"con los servicios sin volver a arrancar, el cartel no lo dice: {error!r} {texto!r}")
+
+# 2.14 la migración de la base que falla tampoco deja los servicios parados
+raiz = tempfile.mkdtemp(prefix="act_")
+destino = instalacion_local(raiz, con_celular=True, habilitado="true")
+serv = ServicioFalso()
+error = None
+
+
+def migracion_que_falla(p):
+    def _migrar(self_, destino_):
+        raise RuntimeError("No se pudo actualizar la estructura de la base: disk I/O error")
+    p.poner(ActualizadorDePrueba, "_migrar_base", _migrar)
+
+
+try:
+    actualizar(dist_nuevo(raiz), destino, servicio=serv, parches_extra=migracion_que_falla)
+except Exception as e:
+    error = e
+esperar(isinstance(error, act.ActualizacionCortada) and serv.llamo("arrancar", sw.NOMBRE_SERVICIO)
+        and serv.llamo("arrancar", sw.SERVICIO_CELULAR),
+        f"con la migración fallida no volvieron a arrancar los servicios: {error!r} {serv.llamadas}")
+# el error de "falta administrador" no se confunde con un archivo en uso
+texto = act.texto_error_actualizacion(PermissionError("El servicio de stock está corriendo y ... administrador."))
+esperar("Windows no dejó reemplazar" not in texto, f"el aviso de administrador sumó el de archivo en uso: {texto!r}")
+if not [f for f in fallos if "cortó" in f or "cartel" in f or "arrancar" in f or "migración" in f]:
+    ok("si la actualización se corta con servicios parados (rename bloqueado, migración), los vuelve a "
+       "arrancar y el cartel dice qué quedó andando y qué no")
 
 
 # ================================================================ #
@@ -1584,7 +1794,8 @@ if not m or "ApiCelular" not in m.group(1).split():
     fallos.append("build_all.bat no limpia los datos de prueba de ApiCelular en el espejo")
 for nombre, script, ocultos in (
         ("OtterActualizador", "apps\\actualizador\\main.py",
-         ("pos_core.servicio_windows", "pos_core.config", "win32service", "win32com.client")),
+         ("pos_core.servicio_windows", "pos_core.config", "pos_core.instancia_unica", "win32service",
+          "win32com.client")),
         ("OtterInstalador", "apps\\instalador\\main.py",
          ("pos_core.servicio_windows", "win32service", "win32com.client")),
         ("USB_Mantenimiento", "apps\\usb_dev\\mantenimiento.py",

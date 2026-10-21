@@ -20,7 +20,7 @@ que haga falta.
 import os
 import sys
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -30,7 +30,7 @@ from pos_core import sales, audit, ticket_printer
 from apps.theme import (COLORS, aplicar_tema, estriar_treeview, tag_fila,
                          habilitar_copiar_pegar_global, abrir_dialogo_impresora,
                          ajustar_ventana)
-from apps.caja_carrito import CarritoTecladoMixin
+from apps.caja_carrito import CarritoTecladoMixin, pedir_importe
 
 ORIGEN = "MAESTRO"
 USUARIO = os.environ.get("USERNAME", "cajero")
@@ -179,8 +179,7 @@ class AppCaja(CarritoTecladoMixin, tk.Tk):
         top.bind("<Destroy>", lambda e: self._volver_del_dialogo() if e.widget is top else None)
 
     def _agregar_articulo_sin_codigo(self):
-        importe = simpledialog.askfloat(
-            "Artículo sin código", "Importe a cobrar:", parent=self, minvalue=0.01)
+        importe = pedir_importe(self)   # "1.500" es mil quinientos, no 1,5
         self.buscador.focus_set()
         if not importe:
             return

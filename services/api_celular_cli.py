@@ -308,20 +308,27 @@ def diagnostico() -> int:
                       "Ninguna otra placa tiene una IP del rango de Tailscale"):
             _fila(None, texto, "no se pudo preguntar a Windows (PowerShell no contesta)")
     else:
+        # estricto=True: aunque PowerShell conteste, una consulta puede fallar
+        # sola (el servicio del firewall, un antivirus que lo maneja): eso
+        # vuelve como None y se muestra "no se pudo saber", no "ninguna".
+        no_se_pudo = "no se pudo preguntar a Windows"
         for nombre, texto in (("reglas_que_bloquean", "Reglas que BLOQUEAN ApiCelular (le ganan a la nuestra)"),
                               ("reglas_que_abren_de_mas", "Reglas que abren ApiCelular fuera de Tailscale")):
-            ok, reglas = _sw(nombre, exe) if nombre == "reglas_que_bloquean" else _sw(nombre, exe, cfg["puerto"])
-            if ok:
+            ok, reglas = (_sw(nombre, exe, estricto=True) if nombre == "reglas_que_bloquean"
+                          else _sw(nombre, exe, cfg["puerto"], estricto=True))
+            if ok and reglas is not None:
                 _fila(not reglas, texto, ", ".join(reglas) if reglas else "ninguna")
             else:
-                _fila(None, texto, reglas)
-        ok, perfiles = _sw("perfiles_firewall_apagados")
+                _fila(None, texto, reglas if not ok else no_se_pudo)
+        ok, perfiles = _sw("perfiles_firewall_apagados", estricto=True)
+        ok = ok and perfiles is not None
         _fila((not perfiles) if ok else None, "Firewall de Windows prendido en todos los perfiles",
-              (("apagado en: " + ", ".join(perfiles)) if perfiles else "sí") if ok else perfiles)
-        ok, placas = _sw("placas_lan_en_rango_tailscale")
+              (("apagado en: " + ", ".join(perfiles)) if perfiles else "sí") if ok else (perfiles or no_se_pudo))
+        ok, placas = _sw("placas_lan_en_rango_tailscale", estricto=True)
+        ok = ok and placas is not None
         _fila((not placas) if ok else None, "Ninguna otra placa tiene una IP del rango de Tailscale",
               (("ojo: " + ", ".join(placas) + " (módem en puente: sin la regla atada a la placa abrirían el "
-                                              "puerto)") if placas else "ninguna") if ok else placas)
+                                              "puerto)") if placas else "ninguna") if ok else (placas or no_se_pudo))
 
     ok, tarea = _sw("estado_tarea", TAREA_WATCHDOG)
     if ok and tarea:

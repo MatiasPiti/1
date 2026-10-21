@@ -84,11 +84,13 @@ REM pos_core.servicio_windows se importa adentro de la revision final. Se
 REM declara a mano por la misma razon que instancia_unica: si el analisis
 REM automatico no lo agarra, el .exe compila igual y falla recien en el
 REM local, con el negocio esperando.
+REM pos_core.instancia_unica: antes de parar nada mira si la Caja o el Panel
+REM estan abiertos (su candado), tambien adentro de una funcion.
 REM Para la API del celular usa ademas pos_core.config (leer [api_celular]),
 REM win32service (estado con PID y reintentos del servicio) y win32com.client
 REM (el acceso directo "Otter - PIN del celular"), todos adentro de funciones.
 %PYI% %DATA% %ICON% --name OtterActualizador --paths . ^
-    --hidden-import pos_core.servicio_windows ^
+    --hidden-import pos_core.servicio_windows --hidden-import pos_core.instancia_unica ^
     --hidden-import pos_core.config --hidden-import win32service --hidden-import win32com.client ^
     apps\actualizador\main.py
 

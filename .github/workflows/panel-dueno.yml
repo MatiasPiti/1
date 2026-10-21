@@ -223,22 +223,33 @@ jobs:
                   break
           if not any(resultados):
               fallas.append(f"asegurar_regla_firewall_celular no pudo con ninguna placa: {placas}")
+          # Estricto, como la revisión final: sin ninguna regla Block sobre el
+          # exe tiene que dar [] y no None ("no se pudo saber" = NO en la
+          # revisión; en el local pasó con 0 reglas Block en todo Windows).
+          antes = sw.reglas_que_bloquean(exe, estricto=True)
+          print("reglas_que_bloquean (estricto, sin la Block de prueba):", antes)
+          if antes is None:
+              fallas.append("reglas_que_bloquean (estricto) no pudo preguntar sin ninguna regla Block sobre el exe")
           ps(f"New-NetFirewallRule -Name OtterCI-Block -DisplayName 'OtterCI Block' -Direction Inbound "
              f"-Action Block -Program '{exe}' | Out-Null")
           ps(f"New-NetFirewallRule -Name OtterCI-Allow -DisplayName 'OtterCI Allow' -Direction Inbound "
              f"-Action Allow -Program '{exe}' | Out-Null")
-          bloquean = sw.reglas_que_bloquean(exe)
-          de_mas = sw.reglas_que_abren_de_mas(exe)
+          bloquean = sw.reglas_que_bloquean(exe, estricto=True)
+          de_mas = sw.reglas_que_abren_de_mas(exe, estricto=True)
           print("reglas_que_bloquean:", bloquean)
           print("reglas_que_abren_de_mas:", de_mas)
-          if "OtterCI Block" not in bloquean:
+          if "OtterCI Block" not in (bloquean or []):
               fallas.append("reglas_que_bloquean no vio la regla Block")
-          if "OtterCI Allow" not in de_mas:
+          if "OtterCI Allow" not in (de_mas or []):
               fallas.append("reglas_que_abren_de_mas no vio la Allow sin rango")
-          if "Otter API del celular (solo Tailscale)" in de_mas:
+          if "Otter API del celular (solo Tailscale)" in (de_mas or []):
               fallas.append("reglas_que_abren_de_mas acuso a la regla propia")
-          print("perfiles apagados:", sw.perfiles_firewall_apagados())
-          print("placas LAN en el rango de Tailscale:", sw.placas_lan_en_rango_tailscale())
+          apagados = sw.perfiles_firewall_apagados(estricto=True)
+          placas_ts = sw.placas_lan_en_rango_tailscale(estricto=True)
+          print("perfiles apagados:", apagados)
+          print("placas LAN en el rango de Tailscale:", placas_ts)
+          if apagados is None or placas_ts is None:
+              fallas.append("perfiles_firewall_apagados o placas_lan_en_rango_tailscale (estricto) no pudo preguntar")
           ps("Remove-NetFirewallRule -Name OtterCI-Block,OtterCI-Allow -ErrorAction SilentlyContinue")
           if fallas:
               print("\n".join(["FALLAS:"] + fallas))

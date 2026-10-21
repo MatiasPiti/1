@@ -276,6 +276,48 @@ from pos_core import servicio_windows as sw_real
 _era_windows = sw_real._ES_WINDOWS
 sw_real._ES_WINDOWS = False
 app = ActualizadorDePrueba()
+# Con otro antivirus (Avast, en el local) Defender está apagado y no acepta la
+# exclusión (0x800106ba): la fila nombra el antivirus que hay, que es donde se
+# agrega a mano. PowerShell va reemplazado: nada toca el antivirus de quien corre esto.
+import types  # noqa: E402
+
+guiones = []
+
+
+def powershell_con_avast(argumentos, **kw):
+    guion = argumentos[-1]
+    guiones.append(guion)
+    if "SecurityCenter2" in guion:
+        return types.SimpleNamespace(returncode=0, stdout="Avast Antivirus\r\nWindows Defender\r\n", stderr="")
+    return types.SimpleNamespace(returncode=1, stdout="",
+                                 stderr=f"{guion.split()[0]} : Operation failed with the following error: 0x800106ba")
+
+
+def powershell_sin_centro(argumentos, **kw):
+    if "SecurityCenter2" in argumentos[-1]:
+        return types.SimpleNamespace(returncode=1, stdout="", stderr="Invalid namespace")
+    return powershell_con_avast(argumentos, **kw)
+
+
+app_av = ActualizadorDePrueba()
+originales = (act.os.name, act.es_administrador, act.subprocess.run)
+try:
+    act.os.name, act.es_administrador = "nt", (lambda: True)
+    act.subprocess.run = powershell_con_avast
+    con_avast = app_av._excluir_del_antivirus(r"C:\SistemaDual")
+    act.subprocess.run = powershell_sin_centro
+    sin_centro = app_av._excluir_del_antivirus(r"C:\SistemaDual")
+finally:
+    act.os.name, act.es_administrador, act.subprocess.run = originales
+if con_avast != (False, "el antivirus de esta PC es Avast Antivirus (Windows Defender está apagado): agregá a mano "
+                        "C:\\SistemaDual a sus excepciones"):
+    fallos.append(f"con Avast y Defender apagado, la fila del antivirus no nombra a Avast: {con_avast!r}")
+elif sin_centro != (False, "no parece haber Windows Defender: revisá a mano el antivirus que usen"):
+    fallos.append(f"sin Centro de seguridad (Windows Server) cambió el aviso de siempre: {sin_centro!r}")
+else:
+    print("OK: con otro antivirus (Avast) la fila nombra cuál es y dónde va la excepción, sin tocar el antivirus "
+          "real")
+
 # Tampoco se agrega una carpeta temporal a las exclusiones del antivirus.
 app._excluir_del_antivirus = lambda destino: (False, "no se prueba en esta sección")
 destino = instalacion(con_backup_dias=0, puerto=8765)
