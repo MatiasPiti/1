@@ -134,9 +134,11 @@ rango de Tailscale (la revisión final también lo mira).
 
 ### 3.3 Instalar con el Actualizador
 
-1. Como administrador: `E:\dist\OtterActualizador\OtterActualizador.exe`, tildar **"Instalar también
-   la API del celular (app del dueño, puerto 8766)"** y ACTUALIZAR. Si la API falla, se anota y la
-   caja se actualiza igual.
+1. Con la Caja y el Panel **cerrados** (si quedó alguno abierto, el Actualizador avisa y no toca
+   nada), como administrador: `E:\dist\OtterActualizador\OtterActualizador.exe`, tildar **"Instalar
+   también la API del celular (app del dueño, puerto 8766)"** y ACTUALIZAR. Si la API falla, se anota
+   y la caja se actualiza igual. Si algo corta la actualización a mitad de camino, vuelve a arrancar
+   lo que había parado y el cartel dice qué quedó andando.
 2. La revisión final tiene que dar todo SI, salvo "PIN definido" y el watchdog (se arreglan en los
    pasos siguientes).
 3. Botón **"Definir PIN del celular"**: Leo escribe su PIN (6 a 12 números) dos veces. Nadie mira,
@@ -181,13 +183,18 @@ dashboard tiene que cargar.
 |---|---|
 | Inicio | Ventas de hoy y de los últimos días, más vendidos, alertas activas, estado del bot de Telegram. |
 | Stock | Buscar por nombre o código (con la cámara), ver el detalle con el precio que cobra la Caja (ofertas incluidas) y los últimos movimientos, sumar o restar stock. Avisa si hay ventas que todavía falta descontar de ese producto. |
-| Modo lector | Escanear de corrido con la cámara: cada lectura suma o resta 1, como el lector del Panel. |
+| Producto nuevo | Desde Stock: el botón de arriba, o **«Darlo de alta»** cuando la búsqueda no trae nada. Los mismos campos que el alta del Panel (código con la cámara, nombre, precio, stock inicial, y marca, proveedor y categoría sugiriendo las que ya se usan). Queda en la Caja al instante; el costo y el % de ganancia se cargan después en Precios. Un código que ya existe no se pisa: muestra cuál es. Si se corta la señal, repetir nunca lo carga dos veces. |
+| Modo lector | Escanear de corrido con la cámara: cada lectura suma o resta 1, como el lector del Panel. Un código que no existe se da de alta desde la misma lista (la cámara se apaga mientras tanto). |
 | Precios | La cadena de 4 valores: la recalcula la PC igual que la pantalla de Precios del Panel. Si algo cambió mientras estaba abierta (una factura, otra persona), avisa y recarga. Edición masiva con vista previa idéntica a lo que se aplica. |
+| Filtros | Desde Precios (botón de arriba): listas de productos con nombre ("Gaseosas", "Promo verano"), **las mismas del Panel de la PC**. Crear, agregar productos buscándolos o escaneándolos, sacar, borrar y ajustar los precios de todos juntos. **«Guardar como filtro»** guarda lo seleccionado en Precios. Si lo guardaron en el Panel mientras tanto, avisa y no pisa nada. |
 | Facturas | Subir un PDF, revisar renglón por renglón y aplicar. Lo emparejado por nombre nunca se tilda solo. Si la misma factura ya se cargó hace poco, pregunta antes de sumar de nuevo. |
 | Alertas | Productos que cruzaron su umbral, umbral global (0 = no avisar), quitar el umbral global, cuántos productos tienen umbral propio, prender/apagar el bot y mandar un mensaje de prueba. |
 
 **No** se puede desde el celular (a propósito): cargar o ver el token del bot de Telegram (se carga en
-el Panel de la PC), "Quitar TODOS los umbrales propios", Excel, ARCA, alta de productos ni ofertas.
+el Panel de la PC), "Quitar TODOS los umbrales propios", Excel, ARCA ni ofertas.
+
+El alta de productos y los filtros necesitan la PC actualizada (API con contrato 3). Con una PC
+anterior la app avisa que hay que actualizarla y todo lo demás anda igual.
 
 ## 6. Operación
 
@@ -307,7 +314,7 @@ flutter test                                   # incluye contrato_test.dart (el 
 flutter test test/sesion_test.dart --plain-name "bloquea"   # uno solo
 ```
 
-El contrato con la API vive en `test/fixtures/contrato_api_celular_v2.json`: lo compara contra la API
+El contrato con la API vive en `test/fixtures/contrato_api_celular_v3.json`: lo compara contra la API
 real `tests/test_api_celular_contrato.py` (Python) y lo parsea `test/contrato_test.dart`. Si cambia un
 endpoint, se cambian los dos lados y `test/servidor_falso.dart`.
 

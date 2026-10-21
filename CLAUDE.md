@@ -603,8 +603,18 @@ código → "Quitar umbral propio" → cargar 5 y 0 → "Guardar umbral de este 
 - **Un solo interruptor**: `ApiCelular.exe deshabilitar`/`habilitar` (`[api_celular] habilitado`).
   Ningún corrector toca un servicio que alguien dejó Deshabilitado en Windows.
 - **Watchdog propio** (tarea `OtterWatchdogCelular`), separado del del StockService, con tope de 4
-  minutos. Desde el celular **no** van "Quitar TODOS los umbrales propios", Excel, ARCA, alta de
-  productos, ofertas ni el token de Telegram (solo prender/apagar el bot y probar).
+  minutos. Desde el celular **no** van "Quitar TODOS los umbrales propios", Excel, ARCA, ofertas ni el
+  token de Telegram (solo prender/apagar el bot y probar).
+- **Contrato 3 (21/10/2026): alta de productos y filtros**, pedido por Matías para Leo. El alta usa
+  `products.crear_producto` (la del Panel) y **solo** desde `POST /api/productos` (lo vigila
+  `test_api_celular_seguridad.py` con `ast`); si el código existe contesta 409 `producto_existe` con
+  el producto, así repetir tras un corte nunca duplica y la app ve que es el que mandó. Precio y stock
+  son números estrictos (un `"1.500"` en texto se leería 1,5) y el código `1` (el de la Caja para los
+  artículos sin código) se rechaza en `pos_core`. Los filtros son los mismos `Filtros_Guardados` del
+  Panel: crear no pisa (el Panel sí), cambiar y borrar exigen la `huella` (sha256 del JSON guardado)
+  y si cambió dan 409 `filtro_cambio`; un código inexistente no se guarda, los dados de baja van en
+  `faltantes`. Una app de contrato 3 anda contra una PC de contrato 2 salvo en lo nuevo
+  (`ruta_inexistente`, y la app dice que hay que actualizar la PC).
 - `config.guardar_config` pasó a ser **atómico para todas las apps** (temporal + `os.replace`, con
   candado; si todo falla, escribe como antes): dos escritores a la vez dejaban config.ini ilegible.
 
@@ -622,6 +632,13 @@ código → "Quitar umbral propio" → cargar 5 y 0 → "Guardar umbral de este 
   dependencias **antes** del decorador del endpoint.
 - Restaurar un respaldo devuelve también el PIN de ese día. El `Cancelar` del cartel del firewall de
   Windows crea una regla Block: nunca correr `ApiCelular.exe consola` en el local.
+- **Un cmdlet de CIM con filtro que no encuentra nada sale con 1** (`Get-NetFirewallRule -Action
+  Block` en una PC sin reglas Block): "no se encontraron objetos" deja `$?` en falso aunque no pasó
+  nada. La revisión final del local dio NO en el firewall por eso. Se trae todo y se filtra con
+  `Where-Object`, con `-ErrorAction Stop` para que un error de verdad siga saliendo con 1.
+- **`float()` y `askfloat` sobre lo que tipea alguien leen "1.500" como 1,5.** La plata tipeada se lee
+  con `precios.leer_numero` (el criterio de la hoja de precios). Estaba mal en el alta, el ajuste por
+  monto fijo y las ofertas del Panel, y en el artículo sin código de la Caja.
 
 **Sin verificar en Windows real** (lo cubren en parte los jobs de Windows del CI): uvicorn adentro de
 un servicio de pywin32, que `update` conserve los reintentos, PowerShell 5.1 como SYSTEM, el firewall
@@ -631,10 +648,13 @@ de la visita** (guía de la app, sección 2).
 ## Lo que falta hacer
 
 **Pendiente:**
-- [ ] **Desplegar la API del celular** (guía en `apps/movil_dueno/README.md`): ensayo en la laptop →
-      ACLs de Tailscale (con sus tests) → Actualizador con la casilla → PIN de Leo → OtterBlindaje
-      «Solo actualizar el watchdog» → prueba de reinicio → recién ahí el APK. **Primero la PC,
-      después el celular.**
+- [ ] **Desplegar la API del celular** (guía en `apps/movil_dueno/README.md`). La PC del local quedó
+      instalada el 20/10/2026 (Actualizador con la casilla, PIN de Leo, watchdog); su revisión final
+      dio NO en el firewall por el error de las reglas Block de arriba, ya arreglado. Falta: llevar
+      esta versión (contrato 3: alta de productos y filtros, y los arreglos del Actualizador) con el
+      Actualizador **con la Caja y el Panel cerrados**, la excepción de `C:\SistemaDual` en Avast, la
+      prueba de reinicio, y el celular de Leo (invitarlo a Tailscale, `tag:galpon-celular`, el APK
+      2.1.0 y la prueba con datos móviles).
 - [ ] **Sacar `backups\stock_2026-10-05.db` y `stock_2026-10-06.db` de la PC antes del 19/10** y
       compararlos en la laptop para ver si el ApiDueno viejo apagó umbrales 5/0 (ver arriba).
 - [ ] Sumar `http://<pc>:8766/api/salud` a Semáforo Clientes (otro repo): sin eso, el segundo

@@ -491,8 +491,12 @@ Laptop (DuenoRemoto) ──Tailscale──► :8765 StockService/remote_api ─�
 - **Diagnóstico en dos pasos desde el celular:** (1) en la app de Tailscale, ¿la PC figura online?
   (2) en el navegador, `http://<IP de Tailscale de la PC>:8766/api/salud` tiene que mostrar
   `otter-api-celular`. Si contesta otra cosa, es otro programa en el puerto.
+- **Alta de productos y filtros (contrato 3):** `POST /api/productos` usa el mismo
+  `products.crear_producto` que el Panel (repetirlo tras un corte da 409 con el producto, nunca un
+  duplicado) y `/api/filtros` trabaja sobre los mismos `Filtros_Guardados` del Panel: crear no pisa
+  uno con el mismo nombre, y cambiar o borrar exigen la `huella` de lo que se cargó.
 - **Lo que no se puede desde el celular:** el token de Telegram, "Quitar TODOS los umbrales
-  propios", Excel, ARCA, alta de productos ni ofertas.
+  propios", Excel, ARCA ni ofertas.
 
 La guía de instalación paso a paso (compilar, ensayo, ACLs, Actualizador, PIN, verificación,
 operación y **"Desinstalar la API del celular"**) está en **`apps/movil_dueno/README.md`**.
