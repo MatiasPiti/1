@@ -125,14 +125,14 @@ if not fallos:
 # --- 5. artículo sin código: también tiene que quedar a la vista ----------------
 if not fallos:
     from pos_core.sales import CODIGO_SIN_BARRA, NOMBRE_SIN_BARRA
-    # se llama al camino real con el importe ya resuelto, sin el diálogo
+    # se llama al camino real con lo que tipeó el cajero, sin el diálogo
     import tkinter.simpledialog as sd
-    original = sd.askfloat
-    sd.askfloat = lambda *a, **k: 777.0
+    original = sd.askstring
+    sd.askstring = lambda *a, **k: "777"
     try:
         app._agregar_articulo_sin_codigo()
     finally:
-        sd.askfloat = original
+        sd.askstring = original
     app.update()
     suelto = app.carrito[-1]
     if suelto["codigo"] != CODIGO_SIN_BARRA or abs(suelto["precio_unitario"] - 777.0) > 0.01:
@@ -143,6 +143,36 @@ if not fallos:
                        f"vista en ({v[0]:.0f}, {v[1]:.0f})")
     else:
         print("OK: el artículo sin código también queda a la vista")
+
+# --- 5b. el importe se lee a la argentina: "1.500" son mil quinientos ------------
+# (askfloat lo leía 1,5 y se cobraban $ 1,50); algo que no es un número se
+# vuelve a pedir, y cancelar no agrega nada.
+if not fallos:
+    import tkinter.simpledialog as sd
+    original = sd.askstring
+    respuestas = iter(["1.500", "mil", "1.500,50", None])
+    pedidas = []
+
+    def cajero(*a, **k):
+        pedidas.append(k.get("initialvalue"))
+        return next(respuestas)
+    sd.askstring = cajero
+    try:
+        lineas_antes = len(app.carrito)
+        app._agregar_articulo_sin_codigo()          # "1.500"
+        app._agregar_articulo_sin_codigo()          # "mil" -> se vuelve a pedir -> "1.500,50"
+        app._agregar_articulo_sin_codigo()          # cancela
+    finally:
+        sd.askstring = original
+    app.update()
+    nuevos = [round(l["precio_unitario"], 2) for l in app.carrito[lineas_antes:]]
+    if nuevos != [1500.0, 1500.5]:
+        fallos.append(f"el importe tipeado no se leyó a la argentina: líneas nuevas {nuevos} "
+                      f"(se esperaba [1500.0, 1500.5])")
+    elif pedidas != ["", "", "mil", ""]:
+        fallos.append(f"un importe que no es número no se volvió a pedir con lo escrito: {pedidas}")
+    else:
+        print("OK: el importe del artículo sin código se lee a la argentina ('1.500' = $ 1.500)")
 
 # --- 6. el total dibujado tiene que coincidir con la plata del carrito ----------
 if not fallos:

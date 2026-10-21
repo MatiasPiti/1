@@ -26,11 +26,28 @@ _on_buscar(), _agregar_al_carrito() y _usuario_origen().
 """
 
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, simpledialog
 
 from apps.theme import COLORS, celda_texto, enlazar_rueda_mouse
 
 from pos_core import audit
+from pos_core.precios import leer_numero
+
+
+def pedir_importe(parent, titulo: str = "Artículo sin código", texto: str = "Importe a cobrar:"):
+    """El importe de un artículo sin código, leído a la argentina: "1.500"
+    es mil quinientos y "1.500,50" lleva centavos. simpledialog.askfloat lo
+    leía 1,5 y se cobraban $ 1,50. None si el cajero cancela."""
+    escrito = ""
+    while True:
+        respuesta = simpledialog.askstring(titulo, texto, parent=parent, initialvalue=escrito)
+        if respuesta is None:
+            return None
+        importe = leer_numero(respuesta)
+        if importe is not None and importe >= 0.01:
+            return round(importe, 2)
+        messagebox.showwarning(titulo, "Escribí el importe con números: 1500, 1.500 o 1.500,50.", parent=parent)
+        escrito = respuesta
 
 
 class CarritoTecladoMixin:

@@ -11,6 +11,9 @@ Dos escenarios, y el segundo es el error más caro del proyecto:
      que actualizar la laptop de Leo lo borraba y lo dejaba sin panel.
      Recuperarlo obliga a tipear el token a mano, que es justo lo que la
      regla 4 dice que no hay que hacer nunca.
+
+Y la API del celular (ApiCelular, opcional), que se reemplaza con su propia
+función: tampoco puede perder lo que haya adentro ni traerse lo de prueba.
 """
 import os
 import shutil
@@ -115,6 +118,59 @@ colados = [n for n in os.listdir(destino_m) if n.lower() in ("config.ini", "data
 print("BASURA DEL BUILD QUE SE COLÓ EN LA INSTALACIÓN:", colados or "ninguna")
 if colados:
     fallos.append(f"el build metió datos de prueba en la instalación: {colados}")
+
+# ------------------------------------------------------------------ #
+# 3. API del celular (opcional): misma regla, con su propio reemplazo
+# ------------------------------------------------------------------ #
+# ApiCelular se reemplaza con servicio_windows.reemplazar_carpeta (reintenta
+# el rename mientras el proceso que acaba de parar suelta el .exe). Si
+# alguien dejó datos adentro de la carpeta del programa (api_celular\, el
+# secreto del PIN), tienen que sobrevivir; y la basura de probar el .exe en
+# dist\ no puede llegar a la PC del local (regla 3).
+from apps.actualizador import main as act
+
+dist = os.path.join(raiz, "dist")
+origen_c = os.path.join(dist, "ApiCelular")
+os.makedirs(os.path.join(origen_c, "_internal"))
+os.makedirs(os.path.join(origen_c, "database"))
+with open(os.path.join(origen_c, "ApiCelular.exe"), "w") as f:
+    f.write("API NUEVA")
+with open(os.path.join(origen_c, "_internal", "base_library.zip"), "w") as f:
+    f.write("libreria")
+with open(os.path.join(origen_c, "config.ini"), "w") as f:
+    f.write("[api_celular]\nhabilitado = false\n")
+with open(os.path.join(origen_c, "database", "stock.db"), "w") as f:
+    f.write("base de prueba del build")
+
+destino_c = os.path.join(instalacion, "ApiCelular")
+os.makedirs(os.path.join(destino_c, "api_celular"))
+with open(os.path.join(destino_c, "ApiCelular.exe"), "w") as f:
+    f.write("API VIEJA")
+SECRETO = '{"firma": "de-prueba", "pimienta": "de-prueba"}'
+with open(os.path.join(destino_c, "api_celular", "secreto.json"), "w") as f:
+    f.write(SECRETO)
+
+if "api_celular" not in act._DATOS_DEL_CLIENTE:
+    fallos.append("'api_celular' no está entre los datos del cliente del Actualizador")
+salio_bien = act._reemplazar_celular(dist, instalacion, _log)
+if not salio_bien or open(os.path.join(destino_c, "ApiCelular.exe")).read() != "API NUEVA":
+    fallos.append("no se actualizó ApiCelular.exe")
+if not os.path.isfile(os.path.join(destino_c, "_internal", "base_library.zip")):
+    fallos.append("ApiCelular quedó sin su _internal (no arrancaría)")
+secreto = os.path.join(destino_c, "api_celular", "secreto.json")
+if not os.path.isfile(secreto) or open(secreto).read() != SECRETO:
+    fallos.append("se perdió el secreto que había adentro de ApiCelular: todos los PIN quedarían inservibles")
+colados_c = [n for n in os.listdir(destino_c) if n.lower() in ("config.ini", "database")]
+if colados_c:
+    fallos.append(f"el build metió datos de prueba adentro de ApiCelular: {colados_c}")
+if os.path.exists(destino_c + ".anterior"):
+    fallos.append("quedó ApiCelular.anterior tirada después de una actualización que salió bien")
+if open(os.path.join(instalacion, "config.ini")).read() != CONFIG_MAESTRO:
+    fallos.append("actualizar ApiCelular tocó el config.ini real del Maestro")
+print("API DEL CELULAR TRAS ACTUALIZAR:",
+      "exe nuevo," if salio_bien else "NO actualizada,",
+      "secreto conservado" if os.path.isfile(secreto) else "SECRETO PERDIDO",
+      "| basura del build:", colados_c or "ninguna")
 
 print()
 if fallos:

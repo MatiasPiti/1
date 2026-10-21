@@ -15,6 +15,10 @@ arrancar porque son muy distintas:
       Copia solo DuenoRemoto, guarda la dirección y el token del local, y
       prueba la conexión antes de dar por terminada la instalación.
 
+Opcional, solo en el LOCAL: la API de la app del celular (ApiCelular, un
+segundo servicio de Windows en el puerto 8766). Si algo de eso falla se
+anota y la caja queda instalada igual (regla 6).
+
 El error más caro que este instalador evita: poner el Panel del Dueño
 MAESTRO en la laptop del dueño. Esa app abre perfecto y no da ningún
 error, pero se crea su propia base vacía y nunca muestra una venta del
@@ -44,6 +48,9 @@ NOMBRE_SERVICIO = "SistemaDualStockService"
 # como subcarpetas hermanas del mismo destino.
 APPS_LOCAL = ["MaestroCaja", "MaestroDueno", "StockService"]
 APPS_REMOTO = ["DuenoRemoto"]
+APP_CELULAR = "ApiCelular"
+AVISO_PIN = ("Se abrió una ventana negra: que Leo escriba ahí su PIN, dos veces. Nadie más lo "
+             "mira, lo anota ni lo manda por chat.")
 
 
 def es_administrador() -> bool:
@@ -151,6 +158,10 @@ class Instalador(tk.Tk):
                         variable=self.var_remoto).grid(row=4, column=0, columnspan=2, sticky="w")
         ttk.Checkbutton(f, text="Crear accesos directos en el Escritorio",
                         variable=self.var_accesos).grid(row=5, column=0, columnspan=2, sticky="w")
+        # Destildada a propósito: instalar un servicio de red es una decisión.
+        self.var_celular = tk.BooleanVar(value=False)
+        ttk.Checkbutton(f, text="Instalar la API del celular (app del dueño, puerto 8766) — opcional",
+                        variable=self.var_celular).grid(row=6, column=0, columnspan=2, sticky="w")
 
         # --- campos del modo REMOTO ---
         self.campos_remoto = ttk.Frame(self.form)
@@ -251,6 +262,7 @@ class Instalador(tk.Tk):
             "ruta_excel": self.ruta_excel.get().strip(),
             "servicio": bool(self.var_servicio.get()),
             "accesos": bool(self.var_accesos.get()),
+            "celular": bool(self.var_celular.get()),
             "destino_remoto": self.destino_remoto.get().strip(),
             "url_remota": self.url_remota.get().strip(),
             "token_remoto": self.token_remoto.get().strip(),
@@ -356,6 +368,13 @@ class Instalador(tk.Tk):
         if datos["servicio"]:
             self._instalar_servicio(destino)
 
+        # --- API del celular (opcional): nunca frena la instalación de la caja ---
+        if datos.get("celular"):
+            try:
+                self._instalar_celular(destino)
+            except Exception as e:
+                self._log(f"ATENCIÓN: la API del celular no quedó instalada (la caja sí): {e}\n")
+
         # --- accesos directos ---
         if datos["accesos"]:
             self._crear_acceso_directo("Otter Caja", os.path.join(destino, "MaestroCaja", "MaestroCaja.exe"))
@@ -430,6 +449,65 @@ class Instalador(tk.Tk):
         else:
             self._log(f"   ATENCIÓN: el servicio quedó instalado pero no figura como corriendo.\n"
                        f"   {estado.stdout.strip()}\n")
+
+    def _instalar_celular(self, destino: str):
+        """Copia ApiCelular, la habilita en config.ini, registra su servicio,
+        su regla de firewall y el acceso directo del PIN.
+
+        No se agrega su dirección a lo que se muestra al final: la IP de la
+        PC se copia desde la app de Tailscale del celular, nunca se tipea.
+        """
+        from pos_core import servicio_windows as sw
+        from apps.actualizador.main import _ignorar_datos   # el MISMO filtro de datos
+
+        if not es_administrador():
+            self._log("API DEL CELULAR: NO se instaló porque este instalador no está corriendo como\n"
+                       "administrador. Se puede instalar después con el Actualizador (como\n"
+                       "administrador), tildando \"Instalar también la API del celular\".\n")
+            return
+        origen_app = os.path.join(self.origen, APP_CELULAR)
+        if not os.path.isdir(origen_app):
+            self._log("ATENCIÓN: el pendrive no trae ApiCelular: la API del celular no se instaló.\n")
+            return
+        destino_app = os.path.join(destino, APP_CELULAR)
+        exe = os.path.join(destino_app, "ApiCelular.exe")
+        self._log("Instalando la API del celular...")
+
+        # Reinstalación encima: copiar sobre un .exe y DLL cargados falla a
+        # mitad de camino y deja versiones mezcladas. Primero se para, y de
+        # verdad (STOP_PENDING no es parado).
+        estado, pid = sw.estado_y_pid(sw.SERVICIO_CELULAR)
+        if estado != "no_instalado" and not (estado == "parado" and pid == 0):
+            ok, detalle = sw.parar(sw.SERVICIO_CELULAR)
+            if not ok:
+                self._log(f"ATENCIÓN: la API del celular está corriendo y no se pudo parar: "
+                           f"no se reinstaló ({detalle}).\n")
+                return
+
+        shutil.copytree(origen_app, destino_app, dirs_exist_ok=True, ignore=_ignorar_datos)
+        # La casilla está tildada A PROPÓSITO, así que acá sí se escribe habilitado.
+        self._configurar(destino, {"api_celular": {"habilitado": "true", "puerto": "8766"}})
+        self._log("   Copiada y habilitada en config.ini ([api_celular]).")
+
+        ok, detalle = sw.instalar_servicio(exe, sw.SERVICIO_CELULAR)
+        self._log(f"   Servicio: {'OK' if ok else 'ATENCIÓN'} — {detalle}")
+        if not ok:
+            self._log("   ATENCIÓN: la API del celular no quedó corriendo (la caja sí). Se puede "
+                       "reintentar con el Actualizador.")
+        ok_fw, detalle = sw.asegurar_regla_firewall_celular(exe, sw.PUERTO_CELULAR)
+        self._log(f"   Firewall: {'OK' if ok_fw else 'ATENCIÓN'} — {detalle}")
+        ok_ad, detalle = sw.acceso_directo_pin_celular(exe)
+        self._log(f"   Acceso directo del PIN: {'OK' if ok_ad else 'ATENCIÓN'} — {detalle}")
+
+        if sw.estado_y_pid(sw.SERVICIO_CELULAR)[0] == "corriendo":
+            try:
+                subprocess.Popen([exe, "definir-pin", "--pausa"],
+                                 creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+                self._log("   " + AVISO_PIN)
+            except Exception as e:
+                self._log(f"   (no se pudo abrir la ventana del PIN: {e}; después: menú Inicio > "
+                           f"Otter > «Otter - PIN del celular»)")
+        self._log("")
 
     def _mostrar_ip_tailscale(self):
         try:

@@ -116,6 +116,11 @@ if not caja:
     fallos.append("no pude ubicar la celda del nombre en pantalla (bbox vacío)")
     caja = (0, 0, 0, 0)
 x_celda, y_celda = caja[0] + caja[2] // 2, caja[1] + caja[3] // 2
+# En Windows, tk_popup abre el menú de forma MODAL (TrackPopupMenu): el clic
+# simulado no vuelve hasta que alguien cierre el menú, y sin nadie mirando
+# (el CI) la prueba quedaba colgada. Lo que se prueba es lo que el clic deja
+# armado en el menú (qué columna ofrece copiar), no que Windows lo dibuje.
+menu.tk_popup = lambda *a, **k: None
 suelta.event_generate("<Button-3>", x=x_celda, y=y_celda, when="now")
 root.update()
 try:

@@ -14,11 +14,15 @@ Lo que NUNCA toca:
 
 Sirve para las dos instalaciones y se da cuenta solo de cuál es:
   - PC del local  -> MaestroCaja + MaestroDueno + StockService
+                     (+ ApiCelular, la API de la app del celular, si se pide
+                     o si ya estaba instalada: es OPCIONAL y si falla la caja
+                     se actualiza igual)
   - Laptop del dueño -> DuenoRemoto
 """
 
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -39,6 +43,20 @@ CANDIDATOS_REMOTO = [r"C:\Otter", r"C:\DuenoRemoto"]
 
 APPS_LOCAL = ["MaestroCaja", "MaestroDueno", "StockService"]
 APPS_REMOTO = ["DuenoRemoto"]
+# Opcionales: no frenan la actualización si faltan, y si algo de ellas falla
+# se anota y la caja se actualiza igual (regla 6). Se manejan APARTE del
+# bucle de APPS_LOCAL a propósito: ese bucle es el camino de la caja.
+APPS_LOCAL_OPCIONALES = ["ApiCelular"]
+APP_CELULAR = "ApiCelular"
+
+# Los programas que toman el candado de instancia única (pos_core/instancia_unica)
+# sobre la base de la instalación. Abiertos, Windows no deja reemplazar su carpeta.
+PROGRAMAS_CON_CANDADO = (("caja", "la Caja"), ("dueno", "el Panel del Dueño"))
+
+TEXTO_CASILLA_CELULAR = "Instalar también la API del celular (app del dueño, puerto 8766)"
+TEXTO_CELULAR_YA_INSTALADA = "La API del celular ya está instalada: se actualiza junto con lo demás."
+AVISO_PIN = ("Se abrió una ventana negra: que Leo escriba ahí su PIN, dos veces. Nadie más lo "
+             "mira, lo anota ni lo manda por chat.")
 
 # Datos del cliente, no programa. Vale en las dos direcciones:
 #
@@ -52,8 +70,11 @@ APPS_REMOTO = ["DuenoRemoto"]
 #    del Maestro. Actualizar la laptop de Leo lo borraba y lo dejaba sin
 #    panel, y recuperarlo obliga a tipear el token a mano, que es
 #    justamente lo que no hay que hacer nunca.
+#
+# "api_celular" es donde la API del celular guarda su secreto (en la carpeta
+# padre, no adentro del programa); está acá por si alguien la deja adentro.
 _DATOS_DEL_CLIENTE = {"config.ini", "database", "logs", "tickets", "sync_data",
-                       "backups", "sincronizacion_exitosa.txt"}
+                       "backups", "sincronizacion_exitosa.txt", "api_celular"}
 
 
 def _ignorar_datos(carpeta, nombres):
@@ -153,6 +174,410 @@ def detectar_instalacion() -> tuple:
     return "", ""
 
 
+_RE_IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+
+
+def _tapar_ips(texto) -> str:
+    """La tabla de la revisión se fotografía y se manda por chat: sin IPs.
+
+    Una captura de pantalla de la consola ES un chat (regla 4). Ninguna
+    fila escribe una IP a propósito; esto es por si algún detalle de
+    Windows la trae puesta.
+    """
+    return _RE_IPV4.sub("x.x.x.x", str(texto or ""))
+
+
+def _antivirus_de_terceros() -> list:
+    """Los antivirus que Windows tiene registrados en el Centro de seguridad y
+    no son Defender. [] si no se puede saber (en Windows Server no existe)."""
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                            "Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct "
+                            "-ErrorAction Stop | ForEach-Object { $_.displayName }"],
+                           capture_output=True, text=True, timeout=30,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        return []
+    if r.returncode != 0:
+        return []
+    nombres = []
+    for linea in (r.stdout or "").splitlines():
+        nombre = linea.strip()
+        if nombre and "defender" not in nombre.lower() and nombre not in nombres:
+            nombres.append(nombre)
+    return nombres
+
+
+class ProgramasAbiertosError(RuntimeError):
+    """La Caja o el Panel están abiertos: hay que cerrarlos antes. No se tocó nada."""
+
+
+class ActualizacionCortada(Exception):
+    """La actualización se cortó después de parar servicios, y ya se intentó
+    volver a arrancarlos: `no_volvieron` dice cuáles quedaron parados."""
+
+    def __init__(self, causa: Exception, no_volvieron: list):
+        super().__init__(f"{type(causa).__name__}: {causa}")
+        self.causa, self.no_volvieron = causa, list(no_volvieron)
+
+
+def programas_abiertos(destino: str) -> list:
+    """Cuáles de la Caja y el Panel están abiertos en esta instalación (los
+    que tienen tomado su candado). Se pregunta ANTES de parar nada: con la
+    Caja abierta, reemplazar su carpeta falla, y antes eso pasaba con la API
+    del celular y el servicio de stock ya parados, que quedaban así."""
+    from pos_core import instancia_unica
+    carpeta = os.path.join(destino, "database")
+    return [texto for nombre, texto in PROGRAMAS_CON_CANDADO if instancia_unica.esta_abierta(nombre, carpeta)]
+
+
+def texto_error_actualizacion(e: Exception) -> str:
+    """Lo que se le dice al cliente cuando la actualización se detiene, sin
+    prometer que "sigue funcionando" si algo quedó parado."""
+    if isinstance(e, ProgramasAbiertosError):
+        return f"{e}\nNo se tocó nada."
+    causa = e.causa if isinstance(e, ActualizacionCortada) else e
+    texto = f"{type(causa).__name__}: {causa}"
+    # 5 = acceso denegado, 32 = lo está usando otro proceso (solo los arma
+    # Windows: el PermissionError de "falta administrador" no los trae).
+    if getattr(causa, "winerror", None) in (5, 32):
+        texto += ("\nWindows no dejó reemplazar un archivo: casi siempre es un programa de Otter abierto (la "
+                  "Caja o el Panel, también en otra sesión de Windows) o el antivirus revisándolo. Cerralos y "
+                  "tocá ACTUALIZAR de nuevo.")
+    if isinstance(e, ActualizacionCortada) and e.no_volvieron:
+        return texto + (f"\nATENCIÓN: quedó parado {' y '.join(e.no_volvieron)}. Reiniciá la PC (arranca "
+                        f"solo con Windows) o tocá ACTUALIZAR de nuevo con todo cerrado.")
+    return texto + "\nLa instalación anterior sigue funcionando: no se borró nada."
+
+
+# ---------------------------------------------------------------------- #
+# API del celular: funciones de módulo (las llama el hilo de trabajo, que
+# nunca toca Tk; `log` solo encola).
+# ---------------------------------------------------------------------- #
+def _parar_celular(log) -> bool:
+    """Para la API del celular para poder reemplazar su carpeta. True si paró."""
+    from pos_core import servicio_windows
+    log("Parando la API del celular...")
+    try:
+        ok, detalle = servicio_windows.parar(servicio_windows.SERVICIO_CELULAR)
+    except Exception as e:
+        ok, detalle = False, str(e)
+    if ok:
+        log(f"   {detalle}.\n")
+        return True
+    log(f"   ATENCIÓN: la API del celular no se pudo parar y queda en su versión anterior: {detalle}\n")
+    return False
+
+
+def _reemplazar_celular(origen: str, destino: str, log) -> bool:
+    """Copia la versión nueva de ApiCelular. Nunca lanza: si falla, queda la anterior."""
+    from pos_core import servicio_windows
+    log(f"Actualizando {APP_CELULAR}...")
+    origen_app = os.path.join(origen, APP_CELULAR)
+    destino_app = os.path.join(destino, APP_CELULAR)
+    anterior = destino_app + ".anterior"
+    try:
+        servicio_windows.reemplazar_carpeta(origen_app, destino_app, _ignorar_datos)
+        _devolver_datos_del_cliente(anterior, destino_app, log)
+        shutil.rmtree(anterior, ignore_errors=True)
+        log(f"   {APP_CELULAR} actualizado.\n")
+        return True
+    except Exception as e:
+        log(f"   ATENCIÓN: la API del celular quedó en la versión anterior: {e}\n")
+        return False
+
+
+def _esperar_salud(puerto: int, segundos: int = 20):
+    """La salud de la API del celular, esperando a que levante (o None)."""
+    from pos_core import servicio_windows
+    # Por cantidad de intentos y no por reloj: así las pruebas, que cambian
+    # _dormir por una función que no espera, no se quedan girando 20 s.
+    for intento in range(max(segundos // 2, 1)):
+        salud = servicio_windows.salud_api_celular(puerto)
+        if salud is not None:
+            return salud
+        servicio_windows._dormir(2)
+    return servicio_windows.salud_api_celular(puerto)
+
+
+def _instalar_celular(destino: str, pedida_ahora: bool, log) -> None:
+    """Registra/actualiza el servicio de la API del celular, su regla de
+    firewall y el acceso directo del PIN. Cada paso aislado: uno que falle
+    no se lleva a los demás, y ninguno voltea la actualización."""
+    from pos_core import config, paths, servicio_windows as sw
+    exe = os.path.join(destino, APP_CELULAR, "ApiCelular.exe")
+    log("Instalando la API del celular como servicio de Windows...")
+    paths.set_base_override(destino)
+    ruta_config = os.path.join(destino, "config.ini")
+
+    if pedida_ahora:
+        # SOLO si se pidió ahora. Si ya estaba instalada, [api_celular] no se
+        # toca nunca: puede estar apagada a propósito (D21).
+        try:
+            config.cargar_config(estricto=True)   # nunca pisar un config ilegible con defaults
+            config.actualizar_config_dict({"api_celular": {"habilitado": "true", "puerto": "8766"}})
+            log("   config.ini: [api_celular] habilitado = true, puerto = 8766")
+        except Exception as e:
+            log(f"   ATENCIÓN: no se pudo escribir [api_celular] en config.ini ({e}): "
+                f"la API queda instalada pero apagada")
+
+    try:
+        ok, detalle = sw.instalar_servicio(exe, sw.SERVICIO_CELULAR)
+        log(f"   Servicio: {'OK' if ok else 'ATENCIÓN'} — {detalle}")
+    except Exception as e:
+        log(f"   Servicio: ATENCIÓN — {e}")
+
+    cfg = config.leer_config_celular(ruta_config)
+    try:
+        ok, detalle = sw.asegurar_regla_firewall_celular(exe, cfg["puerto"])
+        log(f"   Firewall: {'OK' if ok else 'ATENCIÓN'} — {detalle}")
+    except Exception as e:
+        log(f"   Firewall: ATENCIÓN — {e}")
+
+    try:
+        ok, detalle = sw.acceso_directo_pin_celular(exe)
+        log(f"   Acceso directo del PIN: {'OK' if ok else 'ATENCIÓN'} — {detalle}")
+    except Exception as e:
+        log(f"   Acceso directo del PIN: ATENCIÓN — {e}")
+
+    try:
+        if cfg["habilitado"] and sw.estado_y_pid(sw.SERVICIO_CELULAR)[0] == "corriendo":
+            salud = _esperar_salud(cfg["puerto"])
+            if salud is None:
+                log("   La API del celular todavía no contesta: la revisión final la vuelve a mirar.")
+            elif not salud.get("pin_configurado"):
+                log('   Falta definir el PIN: con Leo al lado, apretá "Definir PIN del celular".')
+            else:
+                log("   El PIN del celular ya estaba definido.")
+    except Exception as e:
+        log(f"   (no se pudo preguntar por el PIN: {e})")
+    log("")
+
+
+def _filas_servicio_stock_extra(destino: str, anotar) -> None:
+    """Fila nueva del servicio de stock: que Windows lo reintente si se cae.
+
+    poner_en_automatico() se llama SIEMPRE: es idempotente, y `remove` +
+    `install` (lo que hace el paso 5 al relanzar el servicio) borra los
+    reintentos sin avisar. Después se verifica leyendo, no se da por hecho.
+    """
+    que = "Windows reintenta el servicio de stock si se cae"
+    try:
+        from pos_core import servicio_windows as sw
+        sw.poner_en_automatico()
+        reintentos = sw.reintentos_configurados(sw.NOMBRE_SERVICIO)
+        if reintentos is True:
+            anotar(que, True)
+        elif reintentos is None:
+            anotar(que, False, "no se pudo leer")
+        else:
+            anotar(que, False, "sin reintentos configurados (¿falta ejecutar como administrador?)")
+    except Exception as e:
+        anotar(que, False, str(e))
+
+
+_DESHABILITADA = ("deshabilitada en Windows: no se toca; para apagarla se usa "
+                  "[api_celular] habilitado = false")
+_SUGERENCIA_WATCHDOG = ("no está instalado: correr OtterBlindaje con «Solo actualizar el "
+                        "watchdog» (no corta la red)")
+
+
+def _filas_celular(destino: str, anotar) -> None:
+    """Filas de la API del celular en la revisión final. Cada una en su try.
+
+    Antes de cualquier poner_en_automatico() o arrancar() se mira el tipo
+    de arranque: esas funciones desharían un Deshabilitado, y deshabilitarla
+    en Windows es decisión de alguien (la forma documentada de apagarla es
+    [api_celular] habilitado = false, que también se respeta).
+    """
+    from pos_core import config, servicio_windows as sw
+    carpeta = os.path.join(destino, APP_CELULAR)
+    exe = os.path.join(carpeta, "ApiCelular.exe")
+
+    if not os.path.isdir(carpeta):
+        try:
+            est, _ = sw.estado_y_pid(sw.SERVICIO_CELULAR)
+            # "desconocido" no prueba que esté registrado: no se acusa sin saber.
+            if est not in ("no_instalado", "desconocido"):
+                anotar("Quedó registrado el servicio de la API del celular sin su carpeta", False,
+                       'ver "Desinstalar la API del celular" en el README')
+        except Exception:
+            pass
+        return
+
+    hab, puerto = False, sw.PUERTO_CELULAR
+    try:
+        cfg = config.leer_config_celular(os.path.join(destino, "config.ini"))
+        hab, puerto = bool(cfg["habilitado"]), int(cfg["puerto"])
+        anotar("La API del celular está habilitada en config.ini", hab,
+               "" if hab else "instalada pero apagada a propósito ([api_celular] habilitado = false)")
+    except Exception as e:
+        anotar("La API del celular está habilitada en config.ini", False, str(e))
+
+    que = "La API del celular arranca sola con Windows"
+    try:
+        arranque = sw.tipo_de_arranque(sw.SERVICIO_CELULAR)
+        if arranque == "auto":
+            anotar(que, True)
+        elif arranque == "deshabilitado":
+            anotar(que, False, _DESHABILITADA)
+        elif arranque == "manual":
+            ok, detalle = sw.poner_en_automatico(sw.SERVICIO_CELULAR)
+            anotar(que, ok, "estaba en MANUAL, corregido" if ok
+                   else f"estaba en MANUAL y no se pudo corregir: {detalle}")
+        else:
+            anotar(que, False, f"no se pudo leer el tipo de arranque ({arranque})")
+    except Exception as e:
+        anotar(que, False, str(e))
+
+    que = "Windows reintenta la API del celular si se cae"
+    try:
+        arranque = sw.tipo_de_arranque(sw.SERVICIO_CELULAR)
+        if arranque == "deshabilitado":
+            anotar(que, False, _DESHABILITADA)
+        elif arranque not in ("auto", "manual"):
+            anotar(que, False, f"no se pudo leer el tipo de arranque ({arranque})")
+        else:
+            sw.poner_en_automatico(sw.SERVICIO_CELULAR)   # idempotente: repone los reintentos
+            reintentos = sw.reintentos_configurados(sw.SERVICIO_CELULAR)
+            anotar(que, reintentos is True, "" if reintentos is True else
+                   ("no se pudo leer" if reintentos is None else "sin reintentos configurados"))
+    except Exception as e:
+        anotar(que, False, str(e))
+
+    que = "La API del celular está corriendo"
+    try:
+        arranque = sw.tipo_de_arranque(sw.SERVICIO_CELULAR)
+        est, _ = sw.estado_y_pid(sw.SERVICIO_CELULAR)
+        if est == "corriendo":
+            anotar(que, True)
+        elif arranque == "deshabilitado":
+            anotar(que, False, _DESHABILITADA)
+        elif est == "parado":
+            ok, detalle = sw.arrancar(sw.SERVICIO_CELULAR)
+            anotar(que, ok, "estaba parada, arrancada" if ok else f"estaba parada y no arrancó: {detalle}")
+        else:
+            anotar(que, False, f"estado: {est}")
+    except Exception as e:
+        anotar(que, False, str(e))
+
+    salud = None
+    if hab:
+        que = f"En el {puerto} contesta la API del celular (y es ella)"
+        try:
+            ok, detalle = sw.api_celular_contesta(puerto)
+            anotar(que, ok, "" if ok and detalle == "contesta la API del celular" else detalle)
+        except Exception as e:
+            anotar(que, False, str(e))
+
+        try:
+            salud = sw.salud_api_celular(puerto)
+        except Exception:
+            salud = None
+
+        que = "La API del celular ve la base del negocio"
+        try:
+            if salud is None:
+                anotar(que, False, "la API del celular no contesta")
+            else:
+                base = salud.get("base") or {}
+                anotar(que, base.get("ok") is True,
+                       "" if base.get("ok") is True else str(base.get("detalle", "")))
+        except Exception as e:
+            anotar(que, False, str(e))
+
+        que = "El PIN del celular está definido"
+        try:
+            if salud is None:
+                anotar(que, False, "la API del celular no contesta")
+            else:
+                definido = salud.get("pin_configurado") is True
+                anotar(que, definido, "" if definido else
+                       'con Leo al lado, apretá "Definir PIN del celular" (un PIN recién '
+                       'definido puede tardar 15 segundos en verse acá)')
+        except Exception as e:
+            anotar(que, False, str(e))
+
+    que = f"Firewall: el {puerto} solo abre para Tailscale"
+    try:
+        ok_regla, detalle_regla = sw.asegurar_regla_firewall_celular(exe, puerto)
+        # estricto=True: "no se pudo preguntar" vuelve como None y no como
+        # una lista vacía, que se leería como "no hay ninguna" (un SI que no
+        # verificó nada).
+        bloquean = sw.reglas_que_bloquean(exe, estricto=True)
+        de_mas = sw.reglas_que_abren_de_mas(exe, puerto, estricto=True)
+        apagados = sw.perfiles_firewall_apagados(estricto=True)
+        placas = sw.placas_lan_en_rango_tailscale(estricto=True)
+        partes = []
+        if not ok_regla:
+            partes.append(detalle_regla)
+        sin_respuesta = [que for que, valor in (("reglas que bloquean", bloquean),
+                                                ("reglas que abren de más", de_mas),
+                                                ("perfiles apagados", apagados)) if valor is None]
+        if sin_respuesta:
+            partes.append("no se pudo preguntar a Windows por: " + ", ".join(sin_respuesta))
+        if bloquean:
+            partes.append("reglas que BLOQUEAN ApiCelular (no se borraron): " + ", ".join(bloquean))
+        if de_mas:
+            partes.append("reglas que abren el puerto sin limitarlo a Tailscale (no se borraron): "
+                          + ", ".join(de_mas))
+        if apagados:
+            partes.append("firewall apagado en: " + ", ".join(apagados))
+        if placas:
+            partes.append("aviso: placas que no son Tailscale con IP en su rango: " + ", ".join(placas))
+        ok = ok_regla and bloquean == [] and de_mas == [] and apagados == []
+        anotar(que, ok, "; ".join(partes))
+    except Exception as e:
+        anotar(que, False, str(e))
+
+    if not hab:
+        return
+
+    que = "El watchdog vigila la API del celular"
+    try:
+        tarea = sw.estado_tarea(sw.TAREA_WATCHDOG_CELULAR)
+        script = os.path.join(destino, "watchdog", "watchdog_celular.ps1")
+        if tarea is None:
+            anotar(que, False, "no se pudo preguntar por la tarea programada")
+        elif not tarea.get("existe") or not os.path.isfile(script):
+            anotar(que, False, _SUGERENCIA_WATCHDOG)
+        elif tarea.get("deshabilitada"):
+            anotar(que, False, "la tarea está deshabilitada")
+        elif tarea.get("ultimo_resultado") == 267011:
+            anotar(que, False, "todavía no corrió (267011): esperá 5 minutos")
+        elif tarea.get("ultimo_resultado") not in (0, 267009):
+            anotar(que, False, f"último resultado {tarea.get('ultimo_resultado')}")
+        elif tarea.get("minutos_desde_ultima") is None or tarea["minutos_desde_ultima"] >= 15:
+            anotar(que, False, f"no corre hace {tarea.get('minutos_desde_ultima')} min")
+        else:
+            anotar(que, True)
+    except Exception as e:
+        anotar(que, False, str(e))
+
+    que = "No quedan restos del ApiDueno viejo"
+    try:
+        restos = sw.restos_api_dueno()
+        # La carpeta también es un resto: con ApiDueno.exe ahí, cualquiera lo
+        # puede volver a correr contra la base del negocio, que es justo lo que
+        # pasó el 5/10. Sin mirarla, la fila daba SI con la carpeta puesta.
+        carpeta_vieja = os.path.join(destino, "ApiDueno")
+        resto_carpeta = (f"quedó la carpeta {carpeta_vieja}: borrala a mano"
+                         if os.path.isdir(carpeta_vieja) else None)
+        if restos is None:
+            anotar(que, False, "no se pudo revisar procesos y tareas"
+                   + (f"; {resto_carpeta}" if resto_carpeta else ""))
+        else:
+            quien = sw.quien_escucha(sw.PUERTO_POR_DEFECTO)
+            if quien.lower().startswith("apidueno"):
+                restos = list(restos) + [f"el {sw.PUERTO_POR_DEFECTO} lo tiene {quien}"]
+            if resto_carpeta:
+                restos = list(restos) + [resto_carpeta]
+            # Solo informa: no se borra nada a ciegas.
+            anotar(que, not restos, "; ".join(restos) + (" (no se borró nada)" if restos else ""))
+    except Exception as e:
+        anotar(que, False, str(e))
+
+
 class Actualizador(tk.Tk):
 
     def __init__(self):
@@ -181,6 +606,7 @@ class Actualizador(tk.Tk):
                        "Elegí a mano la carpeta donde está instalado Otter (la que tiene\n"
                        "adentro las carpetas MaestroCaja / DuenoRemoto).\n")
         self._log(f"Programas nuevos encontrados en:\n   {self.origen}\n")
+        self._reevaluar_celular()
         if not es_administrador():
             self._log("AVISO: no estás como administrador. Todo se actualiza igual, pero el\n"
                        "servicio de stock no se va a poder reiniciar solo. Si esta es la PC\n"
@@ -207,6 +633,21 @@ class Actualizador(tk.Tk):
                                      "(recomendado)", variable=self.var_backup
                         ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
+        # API del celular: solo en la PC del local (_reevaluar_celular la
+        # muestra u oculta según la carpeta elegida).
+        self.marco_celular = ttk.Frame(marco)
+        self.marco_celular.grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.var_celular = tk.BooleanVar(value=False)
+        self._celular_ya_instalada = False
+        self.casilla_celular = ttk.Checkbutton(self.marco_celular, text=TEXTO_CASILLA_CELULAR,
+                                               variable=self.var_celular)
+        self.casilla_celular.pack(anchor="w")
+        self.boton_pin = ttk.Button(self.marco_celular, text="Definir PIN del celular",
+                                    command=self._definir_pin_celular, state="disabled")
+        self.boton_pin.pack(anchor="w", pady=(4, 0))
+        self.destino.bind("<FocusOut>", lambda _e: self._reevaluar_celular())
+        self.destino.bind("<Return>", lambda _e: self._reevaluar_celular())
+
         self.boton = ttk.Button(self, text="ACTUALIZAR", style="Accent.TButton",
                                  command=self._actualizar)
         self.boton.pack(anchor="w", padx=18, pady=(6, 12))
@@ -220,6 +661,55 @@ class Actualizador(tk.Tk):
         if carpeta:
             self.destino.delete(0, "end")
             self.destino.insert(0, carpeta.replace("/", os.sep))
+            self._reevaluar_celular()
+
+    # ------------------------------------------------------------------ #
+    # API del celular en pantalla (todo esto corre en el hilo de Tk)
+    # ------------------------------------------------------------------ #
+    def _reevaluar_celular(self):
+        """Muestra la casilla y el botón del PIN solo en la PC del local, y
+        los deja como corresponde a lo que hay instalado en esa carpeta."""
+        destino = self.destino.get().strip()
+        if not destino or not os.path.isdir(os.path.join(destino, "MaestroCaja")):
+            # La laptop de Leo no lleva la API del celular: ni se ofrece.
+            self.marco_celular.grid_remove()
+            self.var_celular.set(False)
+            self._celular_ya_instalada = False
+            return
+        self.marco_celular.grid()
+        if os.path.isdir(os.path.join(destino, APP_CELULAR)):
+            # Ya instalada: se actualiza sí o sí junto con lo demás. Tildada
+            # y deshabilitada para que no parezca que destildarla la saca.
+            self.var_celular.set(True)
+            self.casilla_celular.config(text=TEXTO_CELULAR_YA_INSTALADA, state="disabled")
+            self._celular_ya_instalada = True
+        else:
+            if self._celular_ya_instalada:
+                self.var_celular.set(False)
+            self.casilla_celular.config(text=TEXTO_CASILLA_CELULAR, state="normal")
+            self._celular_ya_instalada = False
+        exe = os.path.join(destino, APP_CELULAR, "ApiCelular.exe")
+        self.boton_pin.config(state="normal" if os.path.isfile(exe) else "disabled")
+
+    def _reevaluar_boton_pin(self):
+        """Lo encola el hilo de trabajo al terminar: el botón del PIN se
+        habilita apenas existe ApiCelular.exe. Corre en el hilo de Tk."""
+        self._reevaluar_celular()
+
+    def _definir_pin_celular(self):
+        exe = os.path.join(self.destino.get().strip(), APP_CELULAR, "ApiCelular.exe")
+        if not os.path.isfile(exe):
+            self._log(f"No está {exe}: primero hay que instalar la API del celular.")
+            self._reevaluar_celular()
+            return
+        try:
+            # Consola NUEVA: getpass necesita una de verdad para que el PIN no
+            # se vea al escribirlo. Hereda el administrador del Actualizador.
+            subprocess.Popen([exe, "definir-pin", "--pausa"],
+                             creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+            self._log(AVISO_PIN)
+        except Exception as e:
+            self._log(f"No se pudo abrir la ventana del PIN: {e}")
 
     # ------------------------------------------------------------------ #
     def _log(self, texto):
@@ -253,16 +743,18 @@ class Actualizador(tk.Tk):
             return
         self.boton.config(state="disabled")
         self.texto.delete("1.0", "end")
-        datos = {"destino": destino, "backup": bool(self.var_backup.get())}
+        # Todo lo que el hilo de trabajo necesita de la pantalla se lee ACÁ,
+        # en el hilo de Tk: ese hilo nunca toca un widget.
+        datos = {"destino": destino, "backup": bool(self.var_backup.get()),
+                 "celular": bool(self.var_celular.get())}
         threading.Thread(target=self._actualizar_en_hilo, args=(datos,), daemon=True).start()
 
     def _actualizar_en_hilo(self, datos):
         try:
             self._hacer_actualizacion(datos)
         except Exception as e:
-            self._log(f"\n*** LA ACTUALIZACIÓN SE DETUVO ***\n{type(e).__name__}: {e}\n"
-                       f"La instalación anterior sigue funcionando: no se borró nada.")
-            mensaje = f"{type(e).__name__}: {e}"
+            mensaje = texto_error_actualizacion(e)
+            self._log(f"\n*** LA ACTUALIZACIÓN SE DETUVO ***\n{mensaje}")
             self._cola.put(lambda: messagebox.showerror("Error al actualizar", mensaje))
         finally:
             self._cola.put(lambda: self.boton.config(state="normal"))
@@ -280,49 +772,105 @@ class Actualizador(tk.Tk):
                 f"No se encontraron los programas nuevos: {', '.join(faltantes)}.\n"
                 f"¿Copiaste la carpeta 'dist' completa al pendrive?")
 
+        # Antes de respaldar o parar nada: con la Caja o el Panel abiertos
+        # Windows no deja reemplazarlos.
+        if modo == "local":
+            abiertos = programas_abiertos(destino)
+            if abiertos:
+                raise ProgramasAbiertosError(
+                    f"Primero cerrá {' y '.join(abiertos)} (fijate también en la barra de tareas) y después "
+                    f"tocá ACTUALIZAR de nuevo.")
+
+        # La API del celular es OPCIONAL. Se decide todo ANTES de copiar nada.
+        # "pedida_ahora" y no la casilla sola: con la API ya instalada la
+        # casilla queda tildada y deshabilitada, así que siempre daría True y
+        # no distinguiría "la pidieron ahora" de "ya estaba" — y solo en el
+        # primer caso se escribe [api_celular] habilitado = true (si ya
+        # estaba, puede estar apagada A PROPÓSITO y no se toca).
+        cel_origen = os.path.isdir(os.path.join(self.origen, APP_CELULAR))
+        cel_instalada = os.path.isdir(os.path.join(destino, APP_CELULAR))
+        pedida_ahora = modo == "local" and bool(datos.get("celular")) and not cel_instalada
+        actualizar_cel = modo == "local" and cel_origen and (cel_instalada or pedida_ahora)
+        if modo == "local" and cel_instalada and not cel_origen:
+            self._log("ATENCIÓN: el pendrive no trae ApiCelular: queda la versión anterior.\n")
+        elif pedida_ahora and not cel_origen:
+            self._log("ATENCIÓN: se pidió instalar la API del celular, pero el pendrive no trae "
+                       "ApiCelular: no se instaló (la caja se actualiza igual).\n")
+
         # 1) Copia de seguridad de la base ANTES de tocar nada.
         if datos["backup"] and modo == "local":
             self._respaldar_base(destino)
 
-        # 2) El servicio tiene el .exe abierto: hay que pararlo para poder
-        #    reemplazarlo (si no, Windows no deja escribir encima).
-        servicio_estaba = False
-        if modo == "local":
-            servicio_estaba = self._parar_servicio(destino)
+        # Desde acá se paran servicios. Si algo falla antes de volver a
+        # arrancarlos (Windows no deja reemplazar una carpeta, la migración
+        # de la base), se arrancan de nuevo tal como quedaron: antes la API
+        # del celular y el servicio de stock quedaban parados con un cartel
+        # que decía "la instalación anterior sigue funcionando".
+        celular_parado = servicio_estaba = False
+        try:
+            # 2a) La API del celular se para ANTES que el servicio de stock,
+            #     y de verdad: que el proceso ya no exista (STOP_PENDING no es
+            #     parado). Si no para, se deja en su versión anterior y la
+            #     caja sigue: nunca frena la actualización.
+            if actualizar_cel and cel_instalada:
+                actualizar_cel = celular_parado = _parar_celular(self._log)
 
-        # 3) Reemplazar los programas. Se copia solo el programa (ver
-        #    _DATOS_DEL_CLIENTE) y se repone después lo que hubiera de
-        #    datos adentro de la carpeta. En el Maestro la base y el config
-        #    viven en la carpeta padre y esto no cambia nada; en el Dueño
-        #    Remoto el config vive ADENTRO, y sin esto se perdía.
-        for app in apps:
-            self._log(f"Actualizando {app}...")
-            origen_app = os.path.join(self.origen, app)
-            destino_app = os.path.join(destino, app)
-            anterior = destino_app + ".anterior"
-            if os.path.exists(anterior):
+            # 2) El servicio tiene el .exe abierto: hay que pararlo para poder
+            #    reemplazarlo (si no, Windows no deja escribir encima).
+            if modo == "local":
+                servicio_estaba = self._parar_servicio(destino)
+
+            # 3) Reemplazar los programas. Se copia solo el programa (ver
+            #    _DATOS_DEL_CLIENTE) y se repone después lo que hubiera de
+            #    datos adentro de la carpeta. En el Maestro la base y el
+            #    config viven en la carpeta padre y esto no cambia nada; en el
+            #    Dueño Remoto el config vive ADENTRO, y sin esto se perdía.
+            for app in apps:
+                self._log(f"Actualizando {app}...")
+                origen_app = os.path.join(self.origen, app)
+                destino_app = os.path.join(destino, app)
+                anterior = destino_app + ".anterior"
+                if os.path.exists(anterior):
+                    shutil.rmtree(anterior, ignore_errors=True)
+                if os.path.isdir(destino_app):
+                    # Se mueve la vieja en vez de borrarla: si la copia nueva
+                    # falla a la mitad, todavía existe con qué volver atrás.
+                    os.rename(destino_app, anterior)
+                try:
+                    shutil.copytree(origen_app, destino_app, ignore=_ignorar_datos)
+                except Exception:
+                    if os.path.isdir(anterior) and not os.path.isdir(destino_app):
+                        os.rename(anterior, destino_app)   # volver a la anterior
+                    raise
+                _devolver_datos_del_cliente(anterior, destino_app, self._log)
                 shutil.rmtree(anterior, ignore_errors=True)
-            if os.path.isdir(destino_app):
-                # Se mueve la vieja en vez de borrarla: si la copia nueva
-                # falla a la mitad, todavía existe con qué volver atrás.
-                os.rename(destino_app, anterior)
-            try:
-                shutil.copytree(origen_app, destino_app, ignore=_ignorar_datos)
-            except Exception:
-                if os.path.isdir(anterior) and not os.path.isdir(destino_app):
-                    os.rename(anterior, destino_app)   # volver a la anterior
-                raise
-            _devolver_datos_del_cliente(anterior, destino_app, self._log)
-            shutil.rmtree(anterior, ignore_errors=True)
-        self._log("Programas actualizados.\n")
+            self._log("Programas actualizados.\n")
 
-        # 4) Poner la base al día (agrega columnas nuevas; no borra datos).
-        if modo == "local":
-            self._migrar_base(destino)
+            # 3b) La API del celular, adentro de su propio try (ver
+            #     _reemplazar_celular): si falla, la caja ya quedó actualizada.
+            if actualizar_cel:
+                _reemplazar_celular(self.origen, destino, self._log)
+
+            # 4) Poner la base al día (agrega columnas nuevas; no borra datos).
+            if modo == "local":
+                self._migrar_base(destino)
+        except Exception as e:
+            raise ActualizacionCortada(e, self._volver_a_arrancar(celular_parado, servicio_estaba)) from e
 
         # 5) Volver a dejar el servicio como estaba.
         if modo == "local" and servicio_estaba:
             self._arrancar_servicio(destino)
+
+        # 5b) Registrar/actualizar el servicio de la API del celular. Nada de
+        #     esto puede voltear la actualización: va entero en un try.
+        exe_cel = os.path.join(destino, APP_CELULAR, "ApiCelular.exe")
+        if modo == "local" and os.path.isfile(exe_cel):
+            try:
+                _instalar_celular(destino, pedida_ahora, self._log)
+            except Exception as e:
+                self._log(f"ATENCIÓN: la API del celular no quedó instalada (la caja sí): {e}\n")
+            # El botón del PIN lo reevalúa el hilo de Tk, nunca este hilo.
+            self._cola.put(self._reevaluar_boton_pin)
 
         # 6) Revisión final: todo lo que, si no, hay que ir a tipear a mano en
         #    una consola de la PC del local. Nada de esto puede voltear una
@@ -373,6 +921,8 @@ class Actualizador(tk.Tk):
         filas = []
 
         def anotar(que, ok, detalle=""):
+            # Esta tabla se fotografía y se manda: ninguna IP, nunca.
+            detalle = _tapar_ips(detalle)
             filas.append((que, ok, detalle))
             self._log(f"   [{'SI' if ok else 'NO'}] {que}" + (f" — {detalle}" if detalle else ""))
 
@@ -393,6 +943,9 @@ class Actualizador(tk.Tk):
         except Exception as e:
             anotar("El servicio arranca solo con Windows", False, str(e))
 
+        # --- Windows lo reintenta si se cae ---
+        _filas_servicio_stock_extra(destino, anotar)
+
         # --- el servicio está corriendo AHORA ---
         try:
             estado = servicio_windows.estado()
@@ -407,15 +960,17 @@ class Actualizador(tk.Tk):
         except Exception as e:
             anotar("El servicio de stock está corriendo", False, str(e))
 
-        # --- el puerto de la API remota contesta ---
+        # --- en el puerto contesta LA API REMOTA (no cualquier programa) ---
         try:
             puerto = self._puerto_remoto(destino)
-            escucha = servicio_windows.puerto_escuchando(puerto)
-            anotar(f"El puerto {puerto} contesta (es lo que usa Leo)", escucha,
-                   "" if escucha else "el servicio puede decir Running igual: la API se levanta "
-                                      "adentro y si falla solo lo anota en el log")
+            contesta, detalle = servicio_windows.remote_api_contesta(puerto)
+            if not contesta and detalle == "no hay nadie escuchando":
+                detalle += (": el servicio puede decir Running igual, la API se levanta "
+                            "adentro y si falla solo lo anota en el log")
+            anotar(f"En el {puerto} contesta la API remota (es lo que usa Leo)", contesta,
+                   "" if contesta else detalle)
         except Exception as e:
-            anotar("El puerto de la API remota contesta", False, str(e))
+            anotar("En el puerto de la API remota contesta ella (es lo que usa Leo)", False, str(e))
 
         # --- antivirus ---
         try:
@@ -438,6 +993,9 @@ class Actualizador(tk.Tk):
                 anotar("Evidencia del blindaje copiada al Escritorio", ok, detalle)
         except Exception as e:
             anotar("Evidencia del blindaje copiada al Escritorio", False, str(e))
+
+        # --- la API del celular (opcional) ---
+        _filas_celular(destino, anotar)
 
         pendientes = [q for q, ok, _ in filas if not ok]
         if pendientes:
@@ -487,6 +1045,12 @@ class Actualizador(tk.Tk):
         if destino.lower() in listado.lower():
             return True, "confirmado en la lista de exclusiones"
         if "Get-MpPreference" in (r.stderr or "") or not listado.strip():
+            # Con otro antivirus (Avast, en el local) Defender queda apagado y
+            # no acepta exclusiones: se nombra el que hay, que es donde va.
+            otros = _antivirus_de_terceros()
+            if otros:
+                return False, (f"el antivirus de esta PC es {', '.join(otros)} (Windows Defender está "
+                               f"apagado): agregá a mano {destino} a sus excepciones")
             return False, "no parece haber Windows Defender: revisá a mano el antivirus que usen"
         return False, "el comando corrió pero la carpeta no quedó en la lista"
 
@@ -589,6 +1153,26 @@ class Actualizador(tk.Tk):
         except Exception:
             pass
         return "desconocido"
+
+    def _volver_a_arrancar(self, celular: bool, stock: bool) -> list:
+        """La actualización se cortó con servicios parados: se vuelven a
+        arrancar como quedaron (cada carpeta quedó entera, la nueva o la
+        anterior). Devuelve los que no volvieron. Nunca lanza."""
+        from pos_core import servicio_windows as sw
+        no_volvieron = []
+        for parado, nombre, texto in ((stock, sw.NOMBRE_SERVICIO, "el servicio de stock"),
+                                      (celular, sw.SERVICIO_CELULAR, "la API del celular")):
+            if not parado:
+                continue
+            self._log(f"Volviendo a arrancar {texto}...")
+            try:
+                ok, detalle = sw.arrancar(nombre)
+            except Exception as e:
+                ok, detalle = False, str(e)
+            self._log(f"   {'Corriendo de nuevo' if ok else 'ATENCIÓN: no volvió a arrancar'} ({detalle}).")
+            if not ok:
+                no_volvieron.append(texto)
+        return no_volvieron
 
     def _parar_servicio(self, destino) -> bool:
         """Para el servicio para poder reemplazar su .exe. True si estaba corriendo."""

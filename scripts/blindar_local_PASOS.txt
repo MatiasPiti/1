@@ -132,3 +132,25 @@ Recordatorio de comandos sueltos, por si hace falta a mano:
   servicios: Get-Service / Start-Service, o sc.exe con el
   .exe explicito.
 ===========================================================
+
+===========================================================
+API DEL CELULAR (si esta instalada)
+===========================================================
+El blindaje tambien deja una tarea propia,
+OtterWatchdogCelular, que cada 5 minutos verifica que la
+API del celular (puerto 8766) conteste con su firma
+(otter-api-celular) y si no, la reinicia con sc.exe (nunca
+Restart-Service). Esta separada de la del StockService: si
+la API se traba, no deja sin watchdog a la caja.
+
+Casilla "Solo actualizar el watchdog": corre solo los pasos
+de las tareas del watchdog. No corta la red ni pisa
+estado_antes_del_blindaje.txt. Es lo que hay que usar para
+instalar el watchdog del celular en una PC ya blindada.
+
+Ver el estado:
+    Get-ScheduledTaskInfo OtterWatchdogCelular
+    Get-Content C:\SistemaDual\watchdog\watchdog_celular.log -Tail 20
+
+Apagar la API a proposito (el watchdog no la levanta):
+    & 'C:\SistemaDual\ApiCelular\ApiCelular.exe' deshabilitar

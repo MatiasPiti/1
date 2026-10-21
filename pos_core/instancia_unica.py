@@ -68,3 +68,36 @@ def tomar(nombre_app: str) -> bool:
         # Carpeta de solo lectura, sistema de archivos raro, lo que sea:
         # no es motivo para no dejar trabajar. Ver "regla de oro" arriba.
         return True
+
+
+def _soltar(descriptor) -> None:
+    try:
+        import msvcrt          # Windows: se suelta antes de cerrar
+    except ImportError:
+        return                 # flock se suelta solo al cerrar
+    try:
+        descriptor.seek(0)
+        msvcrt.locking(descriptor.fileno(), msvcrt.LK_UNLCK, 1)
+    except OSError:
+        pass
+
+
+def esta_abierta(nombre_app: str, carpeta_datos: str) -> bool:
+    """¿Hay un proceso con el candado de esa app tomado en esa carpeta de
+    datos? Lo usa el Actualizador para no empezar (ni parar los servicios)
+    con la Caja o el Panel abiertos: Windows no deja reemplazar su carpeta.
+
+    Prueba tomar el candado y, si puede, lo suelta enseguida. Ante cualquier
+    duda dice que no: después, el reemplazo de la carpeta avisa igual."""
+    ruta = os.path.join(carpeta_datos, f".candado_{nombre_app}")
+    if not os.path.isfile(ruta):
+        return False           # nunca se abrió con esta versión: nadie lo puede tener tomado
+    try:
+        with open(ruta, "a+b") as descriptor:
+            descriptor.seek(0)
+            if not _bloquear(descriptor):
+                return True
+            _soltar(descriptor)
+            return False
+    except Exception:
+        return False

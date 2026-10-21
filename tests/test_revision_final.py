@@ -120,10 +120,19 @@ def filas_de(lineas):
 # ---------------------------------------------------------------- #
 app = ActualizadorDePrueba()
 destino = instalacion(con_backup_dias=0, con_evidencia=True, puerto=8765)
+# "Sin permisos" de verdad, también cuando la prueba corre en Windows como
+# administrador (el CI de GitHub): si no, _excluir_del_antivirus agrega DE
+# VERDAD la carpeta temporal a las exclusiones de Defender de esa máquina, la
+# fila da SI con razón y, de paso, la prueba le cambia el antivirus a quien
+# la corre. Sin administrador es el mismo camino que en una PC sin Windows.
+es_administrador_real = act.es_administrador
+act.es_administrador = lambda: False
 try:
     app._revision_final(destino)
 except Exception as e:
     fallos.append(f"la revisión final lanzó una excepción y voltearía la actualización: {e!r}")
+finally:
+    act.es_administrador = es_administrador_real
 
 filas = filas_de(app.lineas)
 print("FILAS DE LA TABLA:")
@@ -229,6 +238,112 @@ if 'if modo == "local":\n            try:\n                self._revision_final(
                    "Leo no hay servicio, ni puerto, ni respaldos que revisar")
 else:
     print("OK: la revisión final solo corre en la PC del local")
+
+# ---------------------------------------------------------------- #
+# 6. Filas nuevas: reintentos del servicio de stock, la API remota POR
+#    IDENTIDAD en el 8765, y la API del celular solo si está instalada
+# ---------------------------------------------------------------- #
+import socket
+
+
+def puerto_libre():
+    # Un puerto donde seguro no hay nadie: así la fila del puerto del celular
+    # no depende de lo que esté corriendo en la máquina de quien prueba.
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    p = s.getsockname()[1]
+    s.close()
+    return p
+
+
+# La corrida de la sección 1 (sin carpeta ApiCelular). El texto de cada fila
+# trae el detalle después de " — ": se compara el comienzo.
+fila = {t.split(" — ")[0]: ok for t, ok in filas}
+if "Windows reintenta el servicio de stock si se cae" not in fila:
+    fallos.append("falta la fila de los reintentos del servicio de stock (remove + install los borra)")
+elif fila["Windows reintenta el servicio de stock si se cae"]:
+    fallos.append("sin Windows, la fila de los reintentos del servicio de stock dio SI")
+if "En el 8765 contesta la API remota (es lo que usa Leo)" not in fila:
+    fallos.append("la fila del 8765 no pregunta por la API remota por su identidad")
+if [t for t in fila if "celular" in t.lower()]:
+    fallos.append("sin la carpeta ApiCelular aparecieron filas de la API del celular")
+
+# Sin Windows A PROPÓSITO, también cuando la prueba corre en Windows: estas
+# filas CORRIGEN (regla de firewall, automático, arrancar), y en la PC de
+# quien prueba podría haber una API del celular de verdad (el ensayo de
+# §15) cuya regla del firewall terminaría apuntando a esta carpeta temporal.
+from pos_core import servicio_windows as sw_real
+_era_windows = sw_real._ES_WINDOWS
+sw_real._ES_WINDOWS = False
+app = ActualizadorDePrueba()
+# Con otro antivirus (Avast, en el local) Defender está apagado y no acepta la
+# exclusión (0x800106ba): la fila nombra el antivirus que hay, que es donde se
+# agrega a mano. PowerShell va reemplazado: nada toca el antivirus de quien corre esto.
+import types  # noqa: E402
+
+guiones = []
+
+
+def powershell_con_avast(argumentos, **kw):
+    guion = argumentos[-1]
+    guiones.append(guion)
+    if "SecurityCenter2" in guion:
+        return types.SimpleNamespace(returncode=0, stdout="Avast Antivirus\r\nWindows Defender\r\n", stderr="")
+    return types.SimpleNamespace(returncode=1, stdout="",
+                                 stderr=f"{guion.split()[0]} : Operation failed with the following error: 0x800106ba")
+
+
+def powershell_sin_centro(argumentos, **kw):
+    if "SecurityCenter2" in argumentos[-1]:
+        return types.SimpleNamespace(returncode=1, stdout="", stderr="Invalid namespace")
+    return powershell_con_avast(argumentos, **kw)
+
+
+app_av = ActualizadorDePrueba()
+originales = (act.os.name, act.es_administrador, act.subprocess.run)
+try:
+    act.os.name, act.es_administrador = "nt", (lambda: True)
+    act.subprocess.run = powershell_con_avast
+    con_avast = app_av._excluir_del_antivirus(r"C:\SistemaDual")
+    act.subprocess.run = powershell_sin_centro
+    sin_centro = app_av._excluir_del_antivirus(r"C:\SistemaDual")
+finally:
+    act.os.name, act.es_administrador, act.subprocess.run = originales
+if con_avast != (False, "el antivirus de esta PC es Avast Antivirus (Windows Defender está apagado): agregá a mano "
+                        "C:\\SistemaDual a sus excepciones"):
+    fallos.append(f"con Avast y Defender apagado, la fila del antivirus no nombra a Avast: {con_avast!r}")
+elif sin_centro != (False, "no parece haber Windows Defender: revisá a mano el antivirus que usen"):
+    fallos.append(f"sin Centro de seguridad (Windows Server) cambió el aviso de siempre: {sin_centro!r}")
+else:
+    print("OK: con otro antivirus (Avast) la fila nombra cuál es y dónde va la excepción, sin tocar el antivirus "
+          "real")
+
+# Tampoco se agrega una carpeta temporal a las exclusiones del antivirus.
+app._excluir_del_antivirus = lambda destino: (False, "no se prueba en esta sección")
+destino = instalacion(con_backup_dias=0, puerto=8765)
+os.makedirs(os.path.join(destino, "ApiCelular"))
+with open(os.path.join(destino, "config.ini"), "a", encoding="utf-8") as f:
+    f.write(f"\n[api_celular]\nhabilitado = true\npuerto = {puerto_libre()}\n")
+try:
+    app._revision_final(destino)
+except Exception as e:
+    fallos.append(f"con ApiCelular instalada la revisión final lanzó una excepción: {e!r}")
+finally:
+    sw_real._ES_WINDOWS = _era_windows
+filas_cel = [(t, ok) for t, ok in filas_de(app.lineas) if "celular" in t.lower()]
+print("FILAS DE LA API DEL CELULAR (sin Windows):")
+for texto, ok in filas_cel:
+    print(f"   [{'SI' if ok else 'NO'}] {texto}")
+if len(filas_cel) < 8:
+    fallos.append(f"con ApiCelular instalada y habilitada salieron {len(filas_cel)} filas del celular, "
+                   f"esperaba las 9 (o más)")
+de_prestado = [t for t, ok in filas_cel if ok and "habilitada en config.ini" not in t]
+if de_prestado:
+    fallos.append(f"sin Windows, estas filas del celular se ganaron un SI sin comprobar nada: {de_prestado}")
+if not [t for t, ok in filas_cel if "habilitada en config.ini" in t and ok]:
+    fallos.append("con [api_celular] habilitado = true la fila 'habilitada en config.ini' no dio SI")
+if not fallos:
+    print("OK: reintentos del stock, 8765 por identidad, y las filas del celular solo con su carpeta")
 
 print()
 if fallos:

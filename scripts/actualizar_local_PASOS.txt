@@ -345,3 +345,31 @@ Las copias que hay:
 OJO: "sc" a secas en PowerShell NO es el comando de
 servicios, es un alias de Set-Content (escribir archivos).
 Usar Get-Service, o sc.exe con el .exe explicito.
+
+===========================================================
+API DEL CELULAR (ApiCelular, puerto 8766) - OPCIONAL
+===========================================================
+Guia completa: apps/movil_dueno/README.md. Resumen:
+
+1. En el Actualizador, tildar "Instalar tambien la API del
+   celular" antes de ACTUALIZAR. Si la API falla, se anota
+   y la caja se actualiza igual.
+
+2. Boton "Definir PIN del celular": lo escribe Leo, dos
+   veces. Nadie mira, no va por chat ni en una captura.
+
+3. OtterBlindaje con la casilla "Solo actualizar el
+   watchdog" (no corta la red): crea la tarea
+   OtterWatchdogCelular.
+
+4. Verificar (PowerShell):
+    Get-Service SistemaDualApiCelular
+    (Invoke-RestMethod http://127.0.0.1:8766/api/salud).servicio
+    & 'C:\SistemaDual\ApiCelular\ApiCelular.exe' diagnostico
+   Tiene que decir Running, otter-api-celular y todo [SI].
+
+5. Recien despues, el APK en el celular. Siempre primero
+   la PC y despues el celular.
+
+NUNCA correr el ApiDueno.exe viejo: si queda una carpeta
+ApiDueno en la PC o en un pendrive, se borra.
