@@ -42,7 +42,7 @@ python tests\correr_todos.py
 
 - `Test-Path` tiene que dar `True` (si da `False`, estás en una rama sin la API del celular: no sigas).
 - Python tiene que ser `3.12.x` y la ruta `...\venv\Scripts\python.exe`.
-- Las pruebas terminan en **`20 en verde, 0 en rojo`** (tarda unos 3 minutos; no uses la PC
+- Las pruebas terminan en **`22 en verde, 0 en rojo`** (tarda unos 3 minutos; no uses la PC
   mientras tanto: una prueba usa el portapapeles). Si algo da rojo, se para acá.
 
 **B) Compilar** (30 a 45 minutos, en la misma ventana):
