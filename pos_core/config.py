@@ -66,6 +66,20 @@ class ConfigIlegibleError(Exception):
 _REINTENTOS_LECTURA = 40
 _ESPERA_LECTURA_S = 0.025
 
+# os.replace que falla porque el antivirus o un lector tienen config.ini
+# abierto: se reintenta esperando cada vez un poco más (0,05 s, 0,10 s ...
+# 1 s), 10,5 s en total como mucho.
+_REINTENTOS_REEMPLAZO = 20
+_ESPERA_REEMPLAZO_S = 0.05
+
+# Cuánto espera su turno quien quiere guardar. Tiene que ser MÁS que lo que
+# un guardado puede tener el candado sin estar trabado: leer (1 s) +
+# reemplazar con el antivirus encima (10,5 s) + escribir y fsync. Con 2 s,
+# en una PC con antivirus el que esperaba se cansaba, guardaba sin candado y
+# el guardado lento de adelante le pisaba la clave al terminar (pasó en la
+# laptop de Matías: de 160 claves guardadas a la vez sobrevivieron 152).
+_ESPERA_CANDADO_S = 20.0
+
 
 def _leer_texto(ruta: str, encoding: str = "utf-8") -> str:
     """El contenido de config.ini, reintentando el PermissionError pasajero
@@ -158,12 +172,12 @@ def guardar_config(cfg: configparser.ConfigParser) -> None:
                 os.chmod(tmp, os.stat(ruta).st_mode & 0o7777)
             except OSError:
                 pass
-        for intento in range(20):
+        for intento in range(_REINTENTOS_REEMPLAZO):
             try:
                 os.replace(tmp, ruta)
                 return
             except PermissionError:
-                time.sleep(0.05 * (intento + 1))
+                time.sleep(_ESPERA_REEMPLAZO_S * (intento + 1))
     except Exception:
         pass
     try:
@@ -214,20 +228,25 @@ _ultima_liberacion = [float("-inf")]
 
 
 @contextmanager
-def _candado_config(espera_s: float = 2.0):
+def _candado_config(espera_s: float = None):
     """Que dos programas no lean-modifiquen-guarden config.ini a la vez.
 
-    Espera como mucho `espera_s` y, si no lo consigue, SIGUE IGUAL: un
-    candado trabado (o una carpeta donde no se puede crear el .lock) nunca
-    puede impedir que una app guarde su config ni que la caja abra.
+    Espera como mucho `espera_s` (_ESPERA_CANDADO_S si no se dice, más que el
+    guardado más lento que no está trabado) y, si no lo consigue, SIGUE
+    IGUAL: un candado trabado (o una carpeta donde no se puede crear el
+    .lock) nunca puede impedir que una app guarde su config ni que la caja
+    abra. La Caja no lo toma al abrir: lo toman los guardados de
+    configuración y token_remoto(), al levantar la API remota.
 
     Para que esa espera casi nunca se agote: se vuelve a mirar cada 10 ms, y
     un proceso que lo ACABA de soltar deja pasar primero a los que esperan.
     Sin eso, uno que guarda varias veces seguidas lo retomaba al instante y
     los demás, que miran cada tanto, no entraban nunca: con la PC cargada se
-    les agotaban los 2 s y guardaban sin candado, perdiendo claves (medido:
+    les agotaba la espera y guardaban sin candado, perdiendo claves (medido:
     6 de 25 rondas de 4 programas x 40 guardados; 0 de 25 así).
     """
+    if espera_s is None:
+        espera_s = _ESPERA_CANDADO_S
     descriptor, tomado = None, False
     try:
         if time.monotonic() - _ultima_liberacion[0] < 0.05:

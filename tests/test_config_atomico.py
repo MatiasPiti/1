@@ -40,6 +40,28 @@ if len(sys.argv) >= 4 and sys.argv[1] == "--escritor":
         _config.actualizar_config_dict({"carga": {f"p{_n}_{_i}": str(_i)}})
     sys.exit(0)
 
+if len(sys.argv) >= 4 and sys.argv[1] == "--lento":
+    # Un guardado lento pero vivo: el antivirus le traba el os.replace unos
+    # segundos (en Windows lo tiene abierto mientras lo revisa). Deja una
+    # marca cuando ya tiene el candado y quedó trabado.
+    _base, _segundos = sys.argv[2], float(sys.argv[3])
+    from pos_core import paths
+    paths.set_base_override(_base)
+    from pos_core import config as _config
+    _replace, _hasta = os.replace, []
+
+    def _replace_trabado(origen, destino):
+        if not _hasta:
+            _hasta.append(time.monotonic() + _segundos)
+            open(os.path.join(_base, "trabado.marca"), "w").close()
+        if time.monotonic() < _hasta[0]:
+            raise PermissionError(13, "El proceso no tiene acceso al archivo porque está siendo utilizado")
+        return _replace(origen, destino)
+
+    os.replace = _replace_trabado
+    _config.actualizar_config_dict({"carga": {"lento": "1"}})
+    sys.exit(0)
+
 if len(sys.argv) >= 3 and sys.argv[1] == "--corte-de-luz":
     # Simula un corte de luz justo después de escribir el temporal y antes
     # de reemplazar: el proceso muere sin llegar a ningún finally.
@@ -142,6 +164,34 @@ if final.get("telegram", "bot_token", fallback="") != "123456:BOT-DE-PRUEBA":
     falla("se perdió el token del bot de Telegram")
 if temporales(base):
     falla(f"quedaron temporales sueltos: {temporales(base)}")
+
+# --------------------------------------------------------------------- #
+# 1b. Un guardado lento adelante (el antivirus le traba el reemplazo)
+# --------------------------------------------------------------------- #
+# Lo que dio rojo en la laptop de Matías (sobrevivieron 152 de 160): con el
+# antivirus encima, un guardado tenía el candado más de 2 s, el que esperaba
+# se cansaba y guardaba sin candado, y al terminar el lento le pisaba la
+# clave. El que espera tiene que aguantar a uno lento que sigue trabajando.
+base = nueva_base(CONFIG_REAL)
+marca = os.path.join(base, "trabado.marca")
+lento = subprocess.Popen([sys.executable, os.path.abspath(__file__), "--lento", base, "4"])
+limite = time.monotonic() + 60
+while not os.path.exists(marca) and lento.poll() is None and time.monotonic() < limite:
+    time.sleep(0.01)
+inicio = time.monotonic()
+config.actualizar_config_dict({"carga": {"espero": "1"}})
+espero = time.monotonic() - inicio
+codigo = lento.wait(120)
+final = config.cargar_config(estricto=True)
+claves = set(final["carga"].keys()) if final.has_section("carga") else set()
+if codigo != 0 or not os.path.exists(marca):
+    falla(f"el guardado lento no llegó a trabarse (código {codigo})")
+elif claves != {"lento", "espero"}:
+    falla(f"con un guardado lento adelante (reemplazo trabado 4 s), el que esperaba guardó sin candado "
+          f"y se perdió una clave: quedaron {sorted(claves)} (esperó {espero:.1f} s)")
+else:
+    ok(f"con un guardado lento adelante (reemplazo trabado 4 s), el que espera aguarda su turno "
+       f"({espero:.1f} s) y no se pierde ninguna clave")
 
 # --------------------------------------------------------------------- #
 # 2. Una falla al armar el archivo no toca el original
@@ -351,44 +401,63 @@ else:
 # --------------------------------------------------------------------- #
 # 4. El candado entre procesos nunca bloquea
 # --------------------------------------------------------------------- #
-base = nueva_base(CONFIG_REAL)
-if os.name != "nt":
-    import fcntl
-    tomado = open(os.path.join(base, "config.ini.lock"), "a+b")
-    fcntl.flock(tomado.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    inicio = time.monotonic()
-    config.actualizar_config_dict({"telegram": {"habilitado": "false"}})
-    demora = time.monotonic() - inicio
-    fcntl.flock(tomado.fileno(), fcntl.LOCK_UN)
-    tomado.close()
-    if config.cargar_config(estricto=True).get("telegram", "habilitado") != "false":
-        falla("con el candado trabado por otro, no se guardó")
-    elif demora > 5:
-        falla(f"con el candado trabado por otro, guardar tardó {demora:.1f} s (tiene que seguir a los 2 s)")
-    else:
-        ok(f"con el candado trabado por otro programa, guarda igual después de esperar {demora:.1f} s")
-else:
-    import msvcrt
-    tomado = open(os.path.join(base, "config.ini.lock"), "a+b")
-    tomado.seek(0)
-    msvcrt.locking(tomado.fileno(), msvcrt.LK_NBLCK, 1)
-    resultado = {}
-
-    def _guardar():
-        inicio_ = time.monotonic()
+# La espera de verdad es _ESPERA_CANDADO_S (20 s, ver 1b); acá se achica a
+# 1 s para no tardar: lo que se prueba es que al agotarse guarda igual.
+espera_real = config._ESPERA_CANDADO_S
+config._ESPERA_CANDADO_S = 1.0
+try:
+    base = nueva_base(CONFIG_REAL)
+    if os.name != "nt":
+        import fcntl
+        tomado = open(os.path.join(base, "config.ini.lock"), "a+b")
+        fcntl.flock(tomado.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        inicio = time.monotonic()
         config.actualizar_config_dict({"telegram": {"habilitado": "false"}})
-        resultado["demora"] = time.monotonic() - inicio_
-
-    hilo = threading.Thread(target=_guardar)
-    hilo.start()
-    hilo.join(10)
-    tomado.seek(0)
-    msvcrt.locking(tomado.fileno(), msvcrt.LK_UNLCK, 1)
-    tomado.close()
-    if "demora" not in resultado or resultado["demora"] > 5:
-        falla("con el candado trabado por otro, guardar se colgó")
+        demora = time.monotonic() - inicio
+        fcntl.flock(tomado.fileno(), fcntl.LOCK_UN)
+        tomado.close()
+        if config.cargar_config(estricto=True).get("telegram", "habilitado") != "false":
+            falla("con el candado trabado por otro, no se guardó")
+        elif demora > 5:
+            falla(f"con el candado trabado por otro, guardar tardó {demora:.1f} s "
+                  f"(tiene que seguir al agotarse la espera de 1 s)")
+        else:
+            ok(f"con el candado trabado por otro programa, guarda igual después de esperar {demora:.1f} s")
     else:
-        ok(f"con el candado trabado, guarda igual después de esperar {resultado['demora']:.1f} s")
+        import msvcrt
+        tomado = open(os.path.join(base, "config.ini.lock"), "a+b")
+        tomado.seek(0)
+        msvcrt.locking(tomado.fileno(), msvcrt.LK_NBLCK, 1)
+        resultado = {}
+
+        def _guardar():
+            inicio_ = time.monotonic()
+            config.actualizar_config_dict({"telegram": {"habilitado": "false"}})
+            resultado["demora"] = time.monotonic() - inicio_
+
+        hilo = threading.Thread(target=_guardar)
+        hilo.start()
+        hilo.join(10)
+        tomado.seek(0)
+        msvcrt.locking(tomado.fileno(), msvcrt.LK_UNLCK, 1)
+        tomado.close()
+        if "demora" not in resultado or resultado["demora"] > 5:
+            falla("con el candado trabado por otro, guardar se colgó")
+        else:
+            ok(f"con el candado trabado, guarda igual después de esperar {resultado['demora']:.1f} s")
+finally:
+    config._ESPERA_CANDADO_S = espera_real
+
+# Y la espera de verdad: más que lo que un guardado vivo puede tener el
+# candado (si no, pasa lo de 1b), pero sin colgar una app medio minuto.
+peor_guardado = (config._REINTENTOS_LECTURA * config._ESPERA_LECTURA_S
+                 + sum(config._ESPERA_REEMPLAZO_S * (i + 1) for i in range(config._REINTENTOS_REEMPLAZO)))
+if not peor_guardado + 3 <= espera_real <= 30:
+    falla(f"la espera del candado ({espera_real:.1f} s) tiene que pasar por 3 s al guardado más lento "
+          f"que no está trabado ({peor_guardado:.1f} s) y no llegar a 30 s")
+else:
+    ok(f"la espera del candado ({espera_real:.0f} s) es más larga que el guardado más lento que no "
+       f"está trabado ({peor_guardado:.1f} s)")
 
 # token_remoto bajo candado: lo genera una vez y no lo cambia
 base = nueva_base("[general]\nnombre_local = x\n")
