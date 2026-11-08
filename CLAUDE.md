@@ -375,6 +375,73 @@ automática busca `USB_Caja.exe` / `USB_Dueno.exe` en la raíz de cada unidad, n
 y dos apps en la misma raíz chocarían sus carpetas `_internal\` de PyInstaller. El README decía
 que se podían poner las dos en un mismo pendrive: se corrigió.
 
+### Reimportar la lista de precios sin romper los filtros (septiembre 2026)
+
+Matías pidió poder volver a sacar la lista de precios del sistema viejo y que, después de
+importarla, **los filtros que el dueño tiene armados sigan armados pero con los precios
+nuevos**. Revisando el circuito aparecieron tres cosas que lo rompían:
+
+- **El código de Otter NO es estable entre extracciones.** Sale del PRIMER código de barras
+  del producto (`scripts/generar_lista_precios.py`, `armar()`). Si en el sistema viejo le
+  agregaron, borraron o reordenaron un código de barras, la lista nueva trae otro código
+  para el MISMO producto. `excel_import.cargar_masivo` empareja solo por código: no lo
+  encontraba y **creaba un producto nuevo al lado**. El viejo quedaba con el precio de antes
+  y, como **los filtros guardados son listas de códigos**, el filtro seguía señalándolo. El
+  dueño veía el filtro armado, con el precio desactualizado, y el producto con el precio
+  bueno afuera de todo filtro. El desempate `-2` de las colisiones tiene el mismo problema:
+  cuál de los dos se lo lleva depende del orden del `.DBF`.
+- **El Excel le borraba el proveedor a los 4587 productos.** `escribir_importacion` escribe
+  la columna Proveedor vacía (a pedido de Matías) y el UPDATE hacía `proveedor=?`. Cada
+  reimportación lo vaciaba, en silencio.
+- **Un filtro se encoge solo y se puede perder.** `aplicar_filtro` ignora sin decir nada los
+  códigos que ya no existen, y el Panel, al abrir un filtro guardado, se queda solo con los
+  que encontró: si el dueño después aprieta "Guardar", **la pérdida queda escrita**.
+
+Lo que se hizo, en **`pos_core/actualizacion_precios.py`** (decidido con Matías, no
+re-litigar):
+
+- **Solo se pisa el precio.** El nombre y el proveedor cargados en Otter se conservan, y el
+  stock no se toca.
+- **Si el código no existe pero hay UN producto activo con el mismo nombre**, es el mismo
+  producto con el código cambiado: se le actualiza el precio Y el código, y ese código se
+  arrastra a **`Filtros_Guardados`, `Ofertas`, `Configuracion_Alertas` y `Alertas_Enviadas`**.
+  El historial (`Detalle_Ventas`, `Movimientos_Stock`, `Lineas_Eliminadas`) **no se toca**:
+  ya pasó, y guarda su propio snapshot de nombre y precio.
+- **Si hay varios productos con ese nombre, o el nombre ya lo tomó otra fila, no se adivina**:
+  va al informe. Misma regla que el emparejado de facturas PDF — equivocarse acá le cambia el
+  precio al producto equivocado y lo cobra la caja.
+- La comparación de nombres es **exacta** sobre `matching.normalizar` (sin acentos, sin
+  puntuación, minúsculas). Nada de parecidos ni porcentajes: el nombre sale del mismo campo
+  del mismo `.DBF` en las dos extracciones, así que cuando el producto es el mismo coincide
+  igual.
+- **Dos pasadas, y el orden importa.** Primero las filas cuyo código ya existe (reclaman su
+  producto), después las que buscan por nombre entre los no reclamados. Al revés, cuando el
+  código viejo de un producto pasa a ser el de otro, los dos se pelean por el mismo registro.
+- **Los productos de Otter que no vienen en el Excel quedan intactos**, y el informe dice
+  cuántos son (los 8 de colisión cargados a mano, o los que el dueño creó en el Panel).
+- **Hay un ENSAYO que no escribe nada**, y es el botón 1 de la pantalla. `analizar()` y
+  `aplicar()` usan la MISMA función de planificación a propósito: un ensayo que se calcula
+  distinto de lo que después se ejecuta es peor que no tener ensayo. Y `aplicar()` vuelve a
+  planificar sobre la base de ahora, porque el ensayo pudo correrse hace rato.
+- El informe se muestra en pantalla **y se guarda en el Escritorio**: lista productos uno por
+  uno y no entra en una foto, pero el archivo se puede mandar.
+- **Cada producto va en su propia transacción**: con 4587 filas, que una falle no puede tirar
+  abajo las 4586 que estaban bien.
+- **Es idempotente**: reimportar el mismo Excel no cambia nada.
+- `_escritorio()` del Actualizador se mudó a **`pos_core.paths.carpeta_escritorio()`**, porque
+  el Panel la necesita igual y tenerla copiada en los dos garantizaba que en tres meses una
+  mitad estuviera arreglada y la otra no.
+- **La carga masiva de siempre ("Subir Excel/CSV") no se tocó**: sigue siendo la carga
+  INICIAL, la que crea productos. Lo nuevo va en un bloque aparte arriba.
+- Lo cuida `tests/test_lista_precios.py`, que **abre el filtro guardado y lee los precios que
+  salen** en vez de mirar la tabla `Productos` — el filtro podría estar bien y el producto
+  correcto afuera, que es exactamente el bug. Lo prueba por los tres caminos: la función, la
+  pantalla del Panel y la API remota levantada de verdad.
+- **El orden de despliegue es el de siempre: PRIMERO la PC del local, DESPUÉS la laptop.**
+  `actualizacion_precios.analizar` y `.aplicar` son entradas nuevas de la allowlist, que vive
+  en el `StockService` del local. Con el local viejo, los botones contestan "función no
+  permitida".
+
 ### Decisiones que ya se tomaron (no re-litigar)
 
 - **El ticket queda con el formato que tiene.** El encabezado dice `OTTER` y el renglón dice
@@ -600,6 +667,12 @@ que se podían poner las dos en un mismo pendrive: se corrigió.
 - [ ] **Que el USB de Mantenimiento no asuma "Maestro" por descarte.** Apuntado a mano a
       `C:\Otter` en la laptop de Leo le metió adentro `MaestroDueno.exe` (regla 2). Ver la
       sección de arriba. Matías lo postergó el 21/9.
+- [ ] **Desplegar la reimportación de la lista de precios.** Hecho en el repo (botones
+      "Ensayar" y "Actualizar los precios" en la pestaña Carga Excel). Falta recompilar y
+      actualizar **primero la PC del local y después la laptop de Leo** — las dos funciones
+      nuevas son entradas de la allowlist, que vive en el local. Correr el ENSAYO contra la
+      base real antes de aplicar: el número de productos que cambian de código es el dato que
+      nunca se midió.
 - [ ] **Rotar los dos tokens del cliente**: el de `[remoto]` y el del bot de Telegram quedaron
       visibles en una captura de pantalla mandada por chat. El de Telegram se revoca con `/revoke`
       en @BotFather; el de `[remoto]` se cambia en `C:\SistemaDual\config.ini`, se reinicia el
