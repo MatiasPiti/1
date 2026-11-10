@@ -1130,17 +1130,122 @@ class AppDueno(tk.Tk):
     # Excel
     # ------------------------------------------------------------------ #
     def _armar_excel(self, frame):
-        ttk.Label(frame, text="Columnas esperadas: Código | Nombre | Precio Venta | Stock Inicial | Proveedor",
+        # Bloque de arriba: reimportar la lista del sistema viejo sin
+        # romper lo que ya está cargado. Va separado de "Subir Excel/CSV"
+        # a propósito: ese es la carga inicial (crea productos), este
+        # actualiza precios sobre un catálogo que ya existe y tiene
+        # filtros, ofertas y proveedores cargados encima.
+        caja = ttk.LabelFrame(frame, text="Actualizar la lista de precios (del sistema viejo)",
+                               padding=12)
+        caja.pack(fill="x", pady=(0, 12))
+        ttk.Label(
+            caja, justify="left", style="Muted.TLabel",
+            text="Actualiza SOLO el precio de los productos que ya están cargados. No pisa el\n"
+                  "nombre ni el proveedor, y no toca el stock. Si a un producto le cambió el\n"
+                  "código de barras, lo reconoce por el nombre y arrastra el código nuevo a los\n"
+                  "filtros guardados, las ofertas y los umbrales de alerta.\n"
+                  "Ensayá primero: el ensayo no modifica nada.").pack(anchor="w", pady=(0, 10))
+        fila = ttk.Frame(caja)
+        fila.pack(anchor="w")
+        ttk.Button(fila, text="1. Ensayar (no toca nada)", style="Accent.TButton",
+                   command=self._ensayar_lista_precios).pack(side="left")
+        ttk.Button(fila, text="2. Actualizar los precios...",
+                   command=self._aplicar_lista_precios).pack(side="left", padx=8)
+
+        ttk.Label(frame, text="Carga inicial — columnas esperadas: Código | Nombre | Precio Venta | Stock Inicial | Proveedor",
                   style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
         botones = ttk.Frame(frame)
         botones.pack(pady=(0, 8), anchor="w")
-        ttk.Button(botones, text="Subir Excel/CSV...", style="Accent.TButton",
+        ttk.Button(botones, text="Subir Excel/CSV...",
                    command=self._subir_excel).pack(side="left")
         ttk.Button(botones, text="Exportar lista de precios (Excel)",
                    command=self._exportar_precios).pack(side="left", padx=8)
         self.excel_log = tk.Text(frame, height=25, bg="#FFFFFF", relief="flat",
                                   highlightthickness=1, highlightbackground="#E3E6ED", padx=8, pady=8)
         self.excel_log.pack(fill="both", expand=True)
+
+    # ------------------------------------------------------------------ #
+    # Reimportar la lista de precios (ver pos_core/actualizacion_precios.py)
+    # ------------------------------------------------------------------ #
+    def _elegir_lista(self):
+        return filedialog.askopenfilename(
+            title="Elegí el Excel de la lista de precios",
+            filetypes=[("Excel/CSV", "*.xlsx *.xlsm *.csv")])
+
+    def _mostrar_informe(self, informe: str, nombre_archivo: str) -> str:
+        """Lo deja en pantalla y lo guarda en el Escritorio. Guardarlo
+        importa: el informe lista productos uno por uno y no entra en una
+        foto, pero el archivo se puede mandar entero."""
+        self.excel_log.delete("1.0", "end")
+        self.excel_log.insert("end", informe)
+        try:
+            from pos_core.paths import carpeta_escritorio
+            destino = os.path.join(carpeta_escritorio(), nombre_archivo)
+            with open(destino, "w", encoding="utf-8") as f:
+                f.write(informe)
+            return destino
+        except Exception as e:
+            # Que no se pueda escribir el archivo no puede tapar el
+            # informe, que ya está en pantalla.
+            self.excel_log.insert("end", f"\n\n(No se pudo guardar el informe en el Escritorio: {e})")
+            return ""
+
+    def _ensayar_lista_precios(self):
+        ruta = self._elegir_lista()
+        if not ruta:
+            return
+        try:
+            plan = self.backend.subir_y_llamar("actualizacion_precios", "analizar", ruta)
+        except Exception as e:
+            messagebox.showerror("No se pudo ensayar", str(e))
+            return
+        destino = self._mostrar_informe(plan["informe"], "otter_ensayo_precios.txt")
+        messagebox.showinfo(
+            "Ensayo terminado — no se modificó nada",
+            f"Cambian de precio: {len(plan['actualizan'])}\n"
+            f"Cambian de código de barras: {len(plan['recodifican'])}\n"
+            f"Productos nuevos: {len(plan['nuevos'])}\n"
+            f"Sin resolver (hay que mirarlos): {len(plan['ambiguos'])}\n\n"
+            f"El detalle completo está acá abajo"
+            + (f" y en:\n{destino}" if destino else "."))
+
+    def _aplicar_lista_precios(self):
+        ruta = self._elegir_lista()
+        if not ruta:
+            return
+        # Se ensaya SIEMPRE antes de aplicar, aunque el dueño ya haya
+        # apretado "Ensayar": así la confirmación dice lo que va a pasar
+        # con el archivo que acaba de elegir, y no con otro de antes.
+        try:
+            plan = self.backend.subir_y_llamar("actualizacion_precios", "analizar", ruta)
+        except Exception as e:
+            messagebox.showerror("No se pudo leer el archivo", str(e))
+            return
+        self._mostrar_informe(plan["informe"], "otter_ensayo_precios.txt")
+        if not messagebox.askyesno(
+                "Confirmar",
+                f"Se van a actualizar {len(plan['actualizan'])} precios.\n"
+                f"{len(plan['recodifican'])} productos cambian de código de barras.\n"
+                f"Se van a crear {len(plan['nuevos'])} productos nuevos.\n"
+                f"{len(plan['ambiguos'])} quedan SIN TOCAR porque no se pudo resolver.\n\n"
+                f"Los filtros guardados no se borran: los códigos que cambien se arrastran solos.\n\n"
+                f"¿Aplico?"):
+            return
+        try:
+            hecho = self.backend.subir_y_llamar("actualizacion_precios", "aplicar", ruta,
+                                                  usuario=USUARIO, origen=ORIGEN)
+        except Exception as e:
+            messagebox.showerror("Error actualizando precios", str(e))
+            return
+        destino = self._mostrar_informe(hecho["informe"], "otter_actualizacion_precios.txt")
+        messagebox.showinfo(
+            "Precios actualizados",
+            f"Precios actualizados: {hecho['precios']}\n"
+            f"Códigos de barras cambiados: {hecho['recodificados']}\n"
+            f"Productos creados: {hecho['creados']}\n"
+            f"Filtros actualizados: {', '.join(hecho['filtros']) or 'ninguno'}\n"
+            f"Errores: {len(hecho['errores'])}"
+            + (f"\n\nInforme completo en:\n{destino}" if destino else ""))
 
     def _subir_excel(self):
         ruta = filedialog.askopenfilename(filetypes=[("Excel/CSV", "*.xlsx *.xlsm *.csv")])

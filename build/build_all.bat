@@ -121,6 +121,12 @@ REM
 REM Los modulos de pywin32 se declaran explicitamente: cuando el
 REM Administrador de servicios arranca el .exe, si falta alguno el
 REM servicio muere sin dejar rastro visible (queda en "Detenido" y nada mas).
+REM
+REM pos_core.actualizacion_precios llega hasta aca por dos saltos
+REM indirectos (remote_api -> _construir_allowlist, que importa adentro de
+REM la funcion). Si PyInstaller no lo agarra, el .exe compila igual y el
+REM Panel contesta "funcion no permitida" recien en el local, con el
+REM negocio esperando.
 python -m PyInstaller --noconfirm --clean --onedir %DATA% %ICON% ^
     --name StockService --paths . ^
     --hidden-import win32timezone ^
@@ -128,6 +134,7 @@ python -m PyInstaller --noconfirm --clean --onedir %DATA% %ICON% ^
     --hidden-import win32serviceutil ^
     --hidden-import win32service ^
     --hidden-import win32event ^
+    --hidden-import pos_core.actualizacion_precios ^
     services\stock_windows_service.py
 
 echo.

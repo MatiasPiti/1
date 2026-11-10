@@ -115,30 +115,10 @@ def _devolver_datos_del_cliente(anterior: str, destino_app: str, log) -> None:
 
 def _escritorio() -> str:
     """Dónde dejar los archivos que Matías se lleva o fotografía.
-
-    No alcanza con "~/Desktop": si la PC tiene OneDrive, Windows redirige
-    el Escritorio adentro de OneDrive y ahí la carpeta puede llamarse
-    Escritorio en castellano. Un informe que queda en un lugar que nadie
-    mira es lo mismo que no haberlo escrito, así que se prueban las
-    variantes conocidas y, si ninguna existe, se cae a la carpeta del
-    usuario — que siempre existe.
-
-    Ojo: en Windows `expanduser("~")` NO mira HOME, mira USERPROFILE.
-    """
-    casa = os.path.expanduser("~")
-    candidatos = [
-        os.path.join(casa, "Desktop"),
-        os.path.join(casa, "Escritorio"),
-        os.path.join(casa, "OneDrive", "Desktop"),
-        os.path.join(casa, "OneDrive", "Escritorio"),
-    ]
-    entorno = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
-    if entorno:
-        candidatos += [os.path.join(entorno, "Desktop"), os.path.join(entorno, "Escritorio")]
-    for c in candidatos:
-        if os.path.isdir(c):
-            return c
-    return casa
+    La lógica (OneDrive, Escritorio en castellano) vive en pos_core.paths
+    porque el Panel del Dueño la necesita igual."""
+    from pos_core.paths import carpeta_escritorio
+    return carpeta_escritorio()
 
 
 def es_administrador() -> bool:

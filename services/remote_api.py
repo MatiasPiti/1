@@ -74,7 +74,7 @@ def _json_default(valor):
 def _construir_allowlist() -> dict:
     from pos_core import (stock_service, bulk_edit, pdf_import, excel_import, filters, config,
                            alerts, audit, products, ofertas, reports, sales, precios,
-                           telegram_bot)
+                           telegram_bot, actualizacion_precios)
 
     return {
         "reports.resumen_dashboard": reports.resumen_dashboard,
@@ -95,6 +95,8 @@ def _construir_allowlist() -> dict:
         "pdf_import.resolver_por_nombre": pdf_import.resolver_por_nombre,
         "excel_import.cargar_masivo": excel_import.cargar_masivo,
         "excel_import.exportar_lista_precios": excel_import.exportar_lista_precios,
+        "actualizacion_precios.analizar": actualizacion_precios.analizar,
+        "actualizacion_precios.aplicar": actualizacion_precios.aplicar,
         "config.obtener_config_dict": config.obtener_config_dict,
         "config.actualizar_config_dict": config.actualizar_config_dict,
         "sales.resumen_facturacion": sales.resumen_facturacion,
@@ -126,6 +128,8 @@ def _construir_allowlist() -> dict:
 _FUNCIONES_CON_SUBIDA = {
     "excel_import.cargar_masivo": "ruta",
     "pdf_import.parsear_factura_pdf": "ruta_pdf",
+    "actualizacion_precios.analizar": "ruta",
+    "actualizacion_precios.aplicar": "ruta",
 }
 
 # Funciones que ESCRIBEN un archivo en la ruta que reciben: acá se les da

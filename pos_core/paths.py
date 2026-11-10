@@ -108,3 +108,35 @@ def tickets_dir() -> str:
 
 def config_path() -> str:
     return os.path.join(get_base_path(), "config.ini")
+
+
+def carpeta_escritorio() -> str:
+    """Dónde dejar los informes que se fotografían o se mandan.
+
+    No alcanza con "~/Desktop": si la PC tiene OneDrive, Windows redirige
+    el Escritorio adentro de OneDrive y ahí la carpeta puede llamarse
+    Escritorio en castellano. Un informe que queda en un lugar que nadie
+    mira es lo mismo que no haberlo escrito, así que se prueban las
+    variantes conocidas y, si ninguna existe, se cae a la carpeta del
+    usuario — que siempre existe.
+
+    Ojo: en Windows `expanduser("~")` NO mira HOME, mira USERPROFILE.
+
+    Vive acá y no en cada app a propósito: el Actualizador y el Panel la
+    necesitan igual, y tenerla copiada en los dos garantiza que en tres
+    meses una mitad esté arreglada y la otra no.
+    """
+    casa = os.path.expanduser("~")
+    candidatos = [
+        os.path.join(casa, "Desktop"),
+        os.path.join(casa, "Escritorio"),
+        os.path.join(casa, "OneDrive", "Desktop"),
+        os.path.join(casa, "OneDrive", "Escritorio"),
+    ]
+    entorno = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
+    if entorno:
+        candidatos += [os.path.join(entorno, "Desktop"), os.path.join(entorno, "Escritorio")]
+    for c in candidatos:
+        if os.path.isdir(c):
+            return c
+    return casa
