@@ -16,6 +16,7 @@ que salen. No alcanza con mirar la tabla Productos — el filtro podría estar
 actualizado y el producto correcto afuera de él, que es exactamente el bug.
 """
 import atexit
+import json
 import os
 import sys
 import tempfile
@@ -67,15 +68,22 @@ import openpyxl
 from pos_core import products, filters, alerts, ofertas, actualizacion_precios
 
 
-def excel(filas, nombre="lista.xlsx"):
+def excel(filas, nombre="lista.xlsx", con_rubro=False):
     """Arma un Excel con el mismo formato que genera scripts/generar_lista_precios.py:
-    el proveedor va VACÍO, que es lo que le borraba el proveedor al catálogo."""
+    el proveedor va VACÍO, que es lo que le borraba el proveedor al catálogo.
+    Con `con_rubro`, cada fila lleva además su grupo (4º elemento)."""
     ruta = os.path.join(base, nombre)
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.append(["Código", "Nombre", "Precio Venta", "Stock Inicial", "Proveedor"])
-    for codigo, nom, precio in filas:
-        ws.append([codigo, nom, precio, 0, ""])
+    encabezados = ["Código", "Nombre", "Precio Venta", "Stock Inicial", "Proveedor"]
+    if con_rubro:
+        encabezados.append("Rubro")
+    ws.append(encabezados)
+    for f in filas:
+        fila = [f[0], f[1], f[2], 0, ""]
+        if con_rubro:
+            fila.append(f[3])
+        ws.append(fila)
     wb.save(ruta)
     return ruta
 
@@ -382,6 +390,134 @@ elif "Pantalla" not in open(guardado, encoding="utf-8").read():
 else:
     print("OK: el informe queda guardado en el Escritorio, para poder mandarlo")
 app.destroy()
+
+# --------------------------------------------------------------------- #
+# 13. LOS GRUPOS: los rubros del sistema viejo pasan a ser filtros
+# --------------------------------------------------------------------- #
+# Es lo que pidió Matías. En el sistema viejo hay 16 rubros (ARC_RUB.DBF)
+# y el dueño los usa para cambiarle el precio a todo un grupo de una.
+
+for cod, nom, precio in [("G1", "QUESO CREMOSO", 5000.0), ("G2", "YOGUR ENTERO", 1200.0),
+                          ("G3", "LAVANDINA 1 LT", 800.0), ("G4", "JABON EN POLVO", 2000.0)]:
+    products.crear_producto(codigo=cod, nombre=nom, precio_venta=precio, usuario="test")
+
+# El dueño ya tiene un filtro propio que se llama igual que un rubro.
+filters.guardar_filtro_manual("LIMPIEZA", ["G3"])
+
+ruta_g = excel([
+    ("G1", "QUESO CREMOSO",  5500.0, "LACTEOS"),
+    ("G2", "YOGUR ENTERO",   1300.0, "LACTEOS"),
+    ("G3", "LAVANDINA 1 LT",  900.0, "LIMPIEZA"),   # choca con el filtro del dueño
+    ("G9", "JABON EN POLVO", 2200.0, "LIMPIEZA"),   # cambió de código: G4 -> G9
+], "grupos.xlsx", con_rubro=True)
+
+plan_g = actualizacion_precios.analizar(ruta_g)
+acciones = {g["nombre"]: g["accion"] for g in plan_g["grupos"]}
+if acciones.get("LACTEOS") != "crea" or acciones.get("LIMPIEZA") != "respeta":
+    fallos.append(f"el ensayo de grupos decidió mal: {acciones}")
+else:
+    print("OK: el ensayo dice que crea LACTEOS y RESPETA el LIMPIEZA del dueño")
+
+if "GRUPOS" not in plan_g["informe"] or "LACTEOS" not in plan_g["informe"]:
+    fallos.append("el informe del ensayo no muestra los grupos")
+else:
+    print("OK: el informe muestra los grupos")
+
+actualizacion_precios.aplicar(ruta_g, usuario="test")
+
+guardados = {f["nombre"]: f["definicion"] for f in filters.listar_filtros_guardados()}
+
+# 13a. El grupo nuevo quedó armado y sirve para la edición masiva
+if "LACTEOS" not in guardados:
+    fallos.append("no se creó el grupo LACTEOS")
+else:
+    en_lacteos = filters.aplicar_filtro(guardados["LACTEOS"])
+    nombres = sorted(p["nombre"] for p in en_lacteos)
+    precios = {p["nombre"]: p["precio_venta"] for p in en_lacteos}
+    if nombres != ["QUESO CREMOSO", "YOGUR ENTERO"]:
+        fallos.append(f"el grupo LACTEOS quedó con {nombres}")
+    elif precios.get("QUESO CREMOSO") != 5500.0:
+        fallos.append(f"en el grupo LACTEOS el precio no se actualizó: {precios}")
+    else:
+        print("OK: el grupo LACTEOS quedó armado, con sus 2 productos y los precios nuevos")
+
+# 13b. El filtro del dueño NO se pisó
+if "LIMPIEZA" not in guardados:
+    fallos.append("SE BORRÓ el filtro LIMPIEZA del dueño")
+else:
+    en_limpieza = filters.aplicar_filtro(guardados["LIMPIEZA"])
+    if [p["codigo"] for p in en_limpieza] != ["G3"]:
+        fallos.append(f"SE PISÓ el filtro LIMPIEZA del dueño: quedó con "
+                       f"{[p['codigo'] for p in en_limpieza]}, tenía solo G3")
+    elif guardados["LIMPIEZA"].get("origen"):
+        fallos.append("el filtro del dueño quedó marcado como si lo hubiéramos armado nosotros")
+    else:
+        print("OK: el filtro LIMPIEZA que armó el dueño quedó intacto")
+
+# 13c. Un producto que cambió de código entra al grupo con el código NUEVO
+if "LACTEOS" in guardados and "G9" in str(guardados.get("LIMPIEZA", {})):
+    fallos.append("el producto recodificado entró al filtro del dueño")
+jabon = db.get_connection().execute(
+    "SELECT codigo, categoria FROM Productos WHERE nombre = 'JABON EN POLVO'").fetchone()
+if jabon["codigo"] != "G9":
+    fallos.append(f"el producto del grupo no se recodificó: quedó en {jabon['codigo']}")
+else:
+    print("OK: el producto que cambió de código se recodificó estando en un grupo")
+
+# 13d. El rubro se carga también en la columna Rubro del producto
+queso = db.get_connection().execute(
+    "SELECT categoria FROM Productos WHERE codigo = 'G1'").fetchone()
+if queso["categoria"] != "LACTEOS":
+    fallos.append(f"no se cargó la columna Rubro del producto: {queso['categoria']!r}")
+else:
+    print("OK: el rubro quedó cargado en la columna Rubro del producto")
+
+# 13e. Reimportar no duplica ni rompe: el grupo se actualiza
+segunda_g = actualizacion_precios.aplicar(ruta_g, usuario="test")
+if segunda_g["grupos_creados"]:
+    fallos.append(f"reimportar volvió a CREAR grupos: {segunda_g['grupos_creados']}")
+elif "LACTEOS" not in segunda_g["grupos_actualizados"]:
+    fallos.append(f"reimportar no reconoció el grupo que ya había creado: {segunda_g}")
+else:
+    print("OK: reimportar actualiza el grupo en vez de duplicarlo")
+
+# 13f. Si el dueño lo edita (y pierde la marca), deja de pisarse
+filters.guardar_filtro_manual("LACTEOS", ["G1"])      # como lo guarda el Panel: sin marca
+tercera = actualizacion_precios.aplicar(ruta_g, usuario="test")
+despues = {f["nombre"]: f["definicion"] for f in filters.listar_filtros_guardados()}
+if [c for c in despues["LACTEOS"].get("codigos", [])] != ["G1"]:
+    fallos.append(f"se pisó un grupo que el dueño había editado: "
+                   f"{despues['LACTEOS'].get('codigos')}")
+elif "LACTEOS" not in tercera["grupos_respetados"]:
+    fallos.append("el grupo editado por el dueño no figura como respetado en el informe")
+else:
+    print("OK: si el dueño edita un grupo, pasa a ser suyo y no se vuelve a pisar")
+
+# 13g. La columna Rubro que puso el dueño a mano NO se pisa
+db.get_connection().execute("UPDATE Productos SET categoria = 'MI RUBRO' WHERE codigo = 'G2'")
+db.get_connection().commit()
+actualizacion_precios.aplicar(ruta_g, usuario="test")
+yogur = db.get_connection().execute(
+    "SELECT categoria FROM Productos WHERE codigo = 'G2'").fetchone()
+if yogur["categoria"] != "MI RUBRO":
+    fallos.append(f"se pisó el rubro que cargó el dueño: quedó {yogur['categoria']!r}")
+else:
+    print("OK: el rubro que cargó el dueño a mano no se pisa")
+
+# 13h. Un Excel SIN columna Rubro no toca ningún grupo (archivos viejos)
+antes_filtros = {f["nombre"]: json.dumps(f["definicion"], sort_keys=True)
+                  for f in filters.listar_filtros_guardados()}
+ruta_sin = excel([("G1", "QUESO CREMOSO", 5600.0)], "sin_rubro.xlsx")
+plan_sin = actualizacion_precios.analizar(ruta_sin)
+if plan_sin["grupos"] or plan_sin["trae_rubros"]:
+    fallos.append("un Excel sin columna Rubro planificó grupos igual")
+actualizacion_precios.aplicar(ruta_sin, usuario="test")
+despues_filtros = {f["nombre"]: json.dumps(f["definicion"], sort_keys=True)
+                    for f in filters.listar_filtros_guardados()}
+if antes_filtros != despues_filtros:
+    fallos.append("un Excel sin columna Rubro cambió los grupos")
+else:
+    print("OK: un Excel sin columna Rubro no toca ningún grupo")
 
 print()
 if fallos:

@@ -452,6 +452,33 @@ re-litigar):
   en el `StockService` del local. Con el local viejo, los botones contestan "función no
   permitida".
 
+**Los GRUPOS (noviembre 2026).** Matías pidió que los "grupos" del sistema viejo pasaran a ser
+filtros de edición masiva de Otter. Mirando los `.DBF` reales (`MatiasPiti/proyect`, carpeta
+`bases/`) resultaron ser los **rubros de `ARC_RUB.DBF`: 18 definidos, 16 en uso** sobre 2500
+productos — ALMACEN 676, LIMPIEZA 375, BEBIDAS 266, KIOSCO 239, HIGIENE 226, VARIOS 184,
+LACTEOS 148, LA VIRGINIA 109, CONGELADOS 89, PERFUMERIA 89, SNACK 48, CIGARRILLOS 17, TABACO 17,
+PUCHOS 11, GAONA 5, NAVIDAD 1.
+
+- **El `Otter_importar_*.xlsx` ahora lleva una columna `Rubro`.** Antes no la llevaba, así que
+  el rubro del sistema viejo **nunca entraba a Otter** (salía solo en la hoja que mira el dueño).
+- **El SUBRUBRO no se trae**: en el catálogo real 16 de las 20 combinaciones son
+  `<rubro> / GENERAL`, o sea que no agrupa nada.
+- Cada rubro queda como un **filtro guardado** con la marca `"origen": "rubro_sistema_viejo"`
+  adentro del JSON. Esa marca es lo que permite saber, en la importación siguiente, cuál se
+  puede volver a armar solo y cuál lo armó el dueño.
+- **Un filtro del dueño con el mismo nombre NO se pisa nunca**: va al informe diciendo por qué.
+  Y si el dueño edita uno de los nuestros (desde el Panel o el celular, que lo guardan **sin**
+  campos extra), pierde la marca y pasa a ser suyo — correcto, lo ajustó a mano.
+- El rubro se carga también en la **columna Rubro del producto** (`categoria`), pero **solo si
+  está vacía**: si el dueño puso una a mano en la pantalla de Precios, manda la suya.
+- **Un Excel sin columna Rubro no toca ningún grupo.** Es la compatibilidad con los archivos ya
+  generados: un archivo viejo nunca borra los grupos.
+- Los productos **ambiguos no entran a ningún grupo**: no se tocaron, así que meterlos diría que
+  sí se tocaron.
+- Verificado de punta a punta contra los `.DBF` REALES del cliente, no solo con datos de prueba:
+  2500 productos, los 16 grupos con los conteos exactos, 2499 rubros cargados (el 2500 era uno
+  puesto a mano, respetado), el filtro propio del dueño intacto, y reimportar no duplica nada.
+
 ### Decisiones que ya se tomaron (no re-litigar)
 
 - **El ticket queda con el formato que tiene.** El encabezado dice `OTTER` y el renglón dice
@@ -782,7 +809,10 @@ de la visita** (guía de la app, sección 2).
       actualizar **primero la PC del local y después la laptop de Leo** — las dos funciones
       nuevas son entradas de la allowlist, que vive en el local. Correr el ENSAYO contra la
       base real antes de aplicar: el número de productos que cambian de código es el dato que
-      nunca se midió.
+      nunca se midió. **Incluye los GRUPOS** (los 16 rubros del sistema viejo como filtros de
+      edición masiva): para eso el Excel hay que REGENERARLO con `scripts/generar_lista_precios.py`
+      desde los `.DBF` actuales de `C:\mmarket\bases` — los archivos ya generados no traen la
+      columna Rubro y no crean ningún grupo.
 - [ ] **Rotar los dos tokens del cliente**: el de `[remoto]` y el del bot de Telegram quedaron
       visibles en una captura de pantalla mandada por chat. El de Telegram se revoca con `/revoke`
       en @BotFather; el de `[remoto]` se cambia en `C:\SistemaDual\config.ini`, se reinicia el

@@ -210,19 +210,28 @@ def escribir_lista(filas: list, colisiones: list, destino: str) -> None:
 
 def escribir_importacion(filas: list, destino: str) -> None:
     """El Excel que come pos_core.excel_import: una sola hoja y los encabezados exactos.
-    El importador lee wb.active, asi que no puede haber otra hoja adelante."""
+    El importador lee wb.active, asi que no puede haber otra hoja adelante.
+
+    La columna Rubro la usa pos_core.actualizacion_precios para armar los
+    GRUPOS: un filtro guardado por cada rubro del sistema viejo, que es lo
+    que el dueno usa para cambiar precios en masa. La carga masiva de
+    siempre (excel_import.cargar_masivo) ignora esa columna, asi que el
+    mismo archivo sirve para las dos cosas.
+
+    El SUBRUBRO no se trae a proposito: en el catalogo real 16 de las 20
+    combinaciones son "<rubro> / GENERAL", o sea que no agrupa nada."""
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Productos"
-    ws.append(["Código", "Nombre", "Precio Venta", "Stock Inicial", "Proveedor"])
+    ws.append(["Código", "Nombre", "Precio Venta", "Stock Inicial", "Proveedor", "Rubro"])
     for celda in ws[1]:
         celda.font = _ENCABEZADO
         celda.fill = _FONDO
-    for i, ancho in enumerate([22, 44, 14, 14, 18], start=1):
+    for i, ancho in enumerate([22, 44, 14, 14, 18, 18], start=1):
         ws.column_dimensions[get_column_letter(i)].width = ancho
     ws.freeze_panes = "A2"
     for f in sorted(filas, key=lambda x: x["nombre"]):
-        ws.append([f["codigo_otter"], f["nombre"], f["precio_venta"], 0, ""])
+        ws.append([f["codigo_otter"], f["nombre"], f["precio_venta"], 0, "", f["rubro"]])
     wb.save(destino)
 
 

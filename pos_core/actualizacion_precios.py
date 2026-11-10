@@ -57,13 +57,31 @@ def _clave_nombre(nombre: str) -> str:
     return normalizar(nombre)
 
 
+# Encabezados que se aceptan para la columna del grupo. Se busca acá y no
+# en excel_import._ALIASES a propósito: la carga masiva de siempre no usa
+# el rubro, y meterle una columna que ignora solo confunde.
+_ALIAS_RUBRO = {"rubro", "grupo", "categoria", "categoría", "familia"}
+
+
+def _columna_rubro(encabezados: list):
+    """El índice de la columna del grupo, o None si el Excel no la trae.
+    Es OPCIONAL: un Excel sin esa columna se importa igual que siempre, sin
+    tocar ningún filtro. Así un archivo viejo nunca borra los grupos."""
+    for idx, h in enumerate(encabezados):
+        if str(h).strip().lower() in _ALIAS_RUBRO:
+            return idx
+    return None
+
+
 def _leer_excel(ruta: str) -> list:
-    """Devuelve [{fila, codigo, nombre, precio}] o levanta el error de
-    formato. Reusa el lector y el mapeo de columnas de excel_import para
+    """Devuelve [{fila, codigo, nombre, precio, rubro}] o levanta el error
+    de formato. Reusa el lector y el mapeo de columnas de excel_import para
     que los dos acepten exactamente los mismos archivos."""
     filas = _leer_filas(ruta)
     encabezados, *datos = filas
-    mapeo = _mapear_columnas([str(h) for h in encabezados])
+    encabezados = [str(h) for h in encabezados]
+    mapeo = _mapear_columnas(encabezados)
+    col_rubro = _columna_rubro(encabezados)
 
     leidas, errores = [], []
     for n, fila in enumerate(datos, start=2):
@@ -73,22 +91,26 @@ def _leer_excel(ruta: str) -> list:
             codigo = str(fila[mapeo["codigo"]]).strip()
             nombre = str(fila[mapeo["nombre"]]).strip()
             precio = float(fila[mapeo["precio_venta"]] or 0)
+            rubro = ""
+            if col_rubro is not None and col_rubro < len(fila):
+                rubro = str(fila[col_rubro] or "").strip()
             if not codigo or not nombre:
                 raise ValueError("código o nombre vacío")
             if precio < 0:
                 raise ValueError(f"precio de venta negativo ({precio})")
-            leidas.append({"fila": n, "codigo": codigo, "nombre": nombre, "precio": precio})
+            leidas.append({"fila": n, "codigo": codigo, "nombre": nombre,
+                            "precio": precio, "rubro": rubro})
         except Exception as e:
             errores.append({"fila": n, "error": str(e)})
-    return leidas, errores
+    return leidas, errores, col_rubro is not None
 
 
 def planificar(ruta: str) -> dict:
     """Decide qué va a pasar con cada fila del Excel, sin escribir nada."""
-    leidas, errores = _leer_excel(ruta)
+    leidas, errores, trae_rubros = _leer_excel(ruta)
     conn = get_connection()
     productos = [dict(r) for r in conn.execute(
-        "SELECT codigo, nombre, precio_venta, activo FROM Productos").fetchall()]
+        "SELECT codigo, nombre, precio_venta, activo, categoria FROM Productos").fetchall()]
 
     por_codigo = {p["codigo"]: p for p in productos}
     por_nombre = {}
@@ -121,7 +143,11 @@ def planificar(ruta: str) -> dict:
         reclamados.add(item["codigo"])
         destino = {"codigo": item["codigo"], "nombre": actual["nombre"],
                     "precio_viejo": actual["precio_venta"], "precio_nuevo": item["precio"],
-                    "fila": item["fila"]}
+                    "fila": item["fila"], "rubro": item.get("rubro", ""),
+                    # Solo se llena la columna Rubro si está vacía: si el dueño
+                    # le puso una a mano en la pantalla de Precios, manda la suya
+                    # (mismo criterio que con el nombre y el proveedor).
+                    "pone_categoria": bool(item.get("rubro")) and not (actual.get("categoria") or "").strip()}
         if abs(actual["precio_venta"] - item["precio"]) < 0.005:
             sin_cambios.append(destino)
         else:
@@ -151,17 +177,88 @@ def planificar(ruta: str) -> dict:
         actual = por_codigo[viejo]
         recodifican.append({"codigo_viejo": viejo, "codigo_nuevo": item["codigo"],
                              "nombre": actual["nombre"], "precio_viejo": actual["precio_venta"],
-                             "precio_nuevo": item["precio"], "fila": item["fila"]})
+                             "precio_nuevo": item["precio"], "fila": item["fila"],
+                             "rubro": item.get("rubro", ""),
+                             "pone_categoria": bool(item.get("rubro"))
+                                               and not (actual.get("categoria") or "").strip()})
 
     no_vienen = [{"codigo": p["codigo"], "nombre": p["nombre"]}
                   for p in productos if p["activo"] and p["codigo"] not in reclamados]
 
-    return {
+    plan = {
         "actualizan": actualizan, "sin_cambios": sin_cambios, "recodifican": recodifican,
         "nuevos": nuevos, "ambiguos": ambiguos, "errores": errores,
         "no_vienen": no_vienen, "total_filas": len(leidas) + len(errores),
         "filtros": _impacto_en_filtros(recodifican, ambiguos),
+        "trae_rubros": trae_rubros,
     }
+    plan["grupos"] = _planificar_grupos(plan, por_codigo) if trae_rubros else []
+    return plan
+
+
+# ---------------------------------------------------------------------- #
+# Los GRUPOS: un filtro guardado por cada rubro del sistema viejo
+# ---------------------------------------------------------------------- #
+# Es lo que el dueño usa para cambiar precios en masa. En el sistema viejo
+# son los rubros de ARC_RUB.DBF (16 en uso sobre 2500 productos); en Otter
+# el equivalente son los filtros guardados del Panel.
+#
+# Un filtro creado desde acá lleva la marca "origen": así, en la
+# importación siguiente se sabe cuál se puede volver a armar solo y cuál lo
+# armó el dueño. Los del dueño NUNCA se pisan. Si él toca uno de estos
+# desde el celular o el Panel, se guarda sin la marca y pasa a ser suyo —
+# que es lo correcto: lo ajustó a mano.
+ORIGEN_RUBRO = "rubro_sistema_viejo"
+
+
+def _planificar_grupos(plan: dict, por_codigo: dict) -> list:
+    """Para cada rubro del Excel, qué filtro queda y con qué productos.
+    No escribe nada: solo dice qué pasaría."""
+    from pos_core import filters
+
+    # El código que va al filtro es el que el producto va a tener DESPUÉS
+    # de aplicar: si cambió de código de barras, el viejo ya no existe.
+    por_rubro = {}
+    for item in plan["actualizan"] + plan["sin_cambios"]:
+        if item.get("rubro"):
+            por_rubro.setdefault(item["rubro"], []).append(item["codigo"])
+    for item in plan["recodifican"]:
+        if item.get("rubro"):
+            por_rubro.setdefault(item["rubro"], []).append(item["codigo_nuevo"])
+    for item in plan["nuevos"]:
+        if item.get("rubro"):
+            por_rubro.setdefault(item["rubro"], []).append(item["codigo"])
+    # Los ambiguos quedan afuera a propósito: no se tocan, así que tampoco
+    # se los mete en un grupo que diría que sí se tocaron.
+
+    existentes = {f["nombre"]: f["definicion"] for f in filters.listar_filtros_guardados()}
+
+    salida = []
+    for rubro in sorted(por_rubro):
+        codigos = por_rubro[rubro]
+        try:
+            nombre = filters.validar_nombre(rubro)
+        except ValueError as e:
+            salida.append({"rubro": rubro, "nombre": rubro, "productos": len(codigos),
+                            "accion": "no_se_puede", "motivo": str(e)})
+            continue
+        if len(codigos) > filters.MAXIMO_CODIGOS:
+            salida.append({"rubro": rubro, "nombre": nombre, "productos": len(codigos),
+                            "accion": "no_se_puede",
+                            "motivo": f"tiene más de {filters.MAXIMO_CODIGOS} productos"})
+            continue
+
+        actual = existentes.get(nombre)
+        if actual is None:
+            accion, motivo = "crea", ""
+        elif actual.get("origen") == ORIGEN_RUBRO:
+            accion, motivo = "actualiza", ""
+        else:
+            accion = "respeta"
+            motivo = "ya hay un filtro con ese nombre que armó el dueño: no se toca"
+        salida.append({"rubro": rubro, "nombre": nombre, "productos": len(codigos),
+                        "codigos": codigos, "accion": accion, "motivo": motivo})
+    return salida
 
 
 def _impacto_en_filtros(recodifican: list, ambiguos: list) -> list:
@@ -264,19 +361,29 @@ def aplicar(ruta: str, *, usuario: str, origen: str = "MAESTRO") -> dict:
     filtros_cache = {f["nombre"]: f["definicion"] for f in filters.listar_filtros_guardados()
                       if f["definicion"].get("tipo") == "manual"}
 
-    hecho = {"precios": 0, "recodificados": 0, "creados": 0,
+    hecho = {"precios": 0, "recodificados": 0, "creados": 0, "rubros": 0,
+              "grupos_creados": [], "grupos_actualizados": [], "grupos_respetados": [],
               "ofertas": 0, "umbrales": 0, "filtros": set(), "errores": list(plan["errores"])}
 
     # Cada producto va en su propia transacción: con 4587 filas, que una
     # falle no puede tirar abajo las 4586 que estaban bien (regla 6).
-    for item in plan["actualizan"]:
+    # Los "sin cambios" también pasan por acá cuando hay que ponerles el
+    # rubro: el precio ya está bien, pero la columna Rubro puede estar vacía.
+    for item in plan["actualizan"] + [i for i in plan["sin_cambios"] if i.get("pone_categoria")]:
+        cambia_precio = abs(item["precio_viejo"] - item["precio_nuevo"]) >= 0.005
         try:
             with transaction() as conn:
-                conn.execute(
-                    """UPDATE Productos SET precio_venta = ?, actualizado_en = ?,
-                       version = version + 1 WHERE codigo = ?""",
-                    (item["precio_nuevo"], now, item["codigo"]))
-            hecho["precios"] += 1
+                if cambia_precio:
+                    conn.execute(
+                        """UPDATE Productos SET precio_venta = ?, actualizado_en = ?,
+                           version = version + 1 WHERE codigo = ?""",
+                        (item["precio_nuevo"], now, item["codigo"]))
+                    hecho["precios"] += 1
+                if item.get("pone_categoria"):
+                    conn.execute(
+                        "UPDATE Productos SET categoria = ? WHERE codigo = ?",
+                        (item["rubro"], item["codigo"]))
+                    hecho["rubros"] += 1
         except Exception as e:
             hecho["errores"].append({"fila": item["fila"], "error": str(e)})
 
@@ -287,6 +394,10 @@ def aplicar(ruta: str, *, usuario: str, origen: str = "MAESTRO") -> dict:
                     """UPDATE Productos SET codigo = ?, precio_venta = ?, actualizado_en = ?,
                        version = version + 1 WHERE codigo = ?""",
                     (item["codigo_nuevo"], item["precio_nuevo"], now, item["codigo_viejo"]))
+                if item.get("pone_categoria"):
+                    conn.execute("UPDATE Productos SET categoria = ? WHERE codigo = ?",
+                                  (item["rubro"], item["codigo_nuevo"]))
+                    hecho["rubros"] += 1
                 tocado = _migrar_referencias(conn, item["codigo_viejo"], item["codigo_nuevo"],
                                               filtros_cache)
             hecho["recodificados"] += 1
@@ -301,10 +412,11 @@ def aplicar(ruta: str, *, usuario: str, origen: str = "MAESTRO") -> dict:
             with transaction() as conn:
                 conn.execute(
                     """INSERT INTO Productos
-                       (uuid_unico, codigo, nombre, precio_venta, stock, origen, sincronizado)
-                       VALUES (?,?,?,?,0,?,?)""",
+                       (uuid_unico, codigo, nombre, precio_venta, stock, categoria,
+                        origen, sincronizado)
+                       VALUES (?,?,?,?,0,?,?,?)""",
                     (str(uuid.uuid4()), item["codigo"], item["nombre"], item["precio"],
-                     origen, sincronizado))
+                     item.get("rubro") or None, origen, sincronizado))
                 conn.execute(
                     """INSERT INTO Movimientos_Stock
                        (uuid_unico, producto_codigo, tipo, cantidad, stock_resultante,
@@ -313,13 +425,53 @@ def aplicar(ruta: str, *, usuario: str, origen: str = "MAESTRO") -> dict:
                     (str(uuid.uuid4()), item["codigo"], "ENTRADA_EXCEL", 0, 0,
                      "Alta por lista de precios", usuario, origen, now, sincronizado))
             hecho["creados"] += 1
+            # El rubro del alta se cuenta igual que el de un UPDATE: si no,
+            # el informe dice "Rubros cargados: 0" después de haber cargado
+            # 2500 en el INSERT, y un informe que miente no sirve.
+            if item.get("rubro"):
+                hecho["rubros"] += 1
         except Exception as e:
             hecho["errores"].append({"fila": item["fila"], "error": str(e)})
+
+    # Los grupos van ÚLTIMOS, cuando los códigos ya son los definitivos: un
+    # producto que se recodificó entra al filtro con el código nuevo, no con
+    # el que acaba de dejar de existir.
+    _escribir_grupos(plan, hecho)
 
     hecho["filtros"] = sorted(hecho["filtros"])
     hecho["plan"] = plan
     hecho["informe"] = informe_texto(plan, ruta=os.path.basename(ruta), aplicado=hecho)
     return hecho
+
+
+def _escribir_grupos(plan: dict, hecho: dict) -> None:
+    """Crea o actualiza un filtro guardado por cada rubro. Cada uno va en su
+    propia transacción: que un grupo falle no puede llevarse los otros ni,
+    mucho menos, los precios que ya se escribieron bien."""
+    for g in plan.get("grupos", []):
+        if g["accion"] == "respeta":
+            hecho["grupos_respetados"].append(g["nombre"])
+            continue
+        if g["accion"] == "no_se_puede":
+            hecho["errores"].append({"fila": "-", "error": f"grupo «{g['rubro']}»: {g['motivo']}"})
+            continue
+        try:
+            # Se escribe directo y no con filters.crear_filtro_manual porque
+            # ese guarda la definición SIN campos extra, y acá hace falta la
+            # marca de origen para saber mañana cuál se puede rearmar solo.
+            definicion = {"tipo": "manual", "codigos": g["codigos"], "origen": ORIGEN_RUBRO}
+            texto = json.dumps(definicion, ensure_ascii=False)
+            with transaction() as conn:
+                conn.execute(
+                    """INSERT INTO Filtros_Guardados (nombre, definicion_json) VALUES (?, ?)
+                       ON CONFLICT(nombre) DO UPDATE SET definicion_json = excluded.definicion_json""",
+                    (g["nombre"], texto))
+            if g["accion"] == "crea":
+                hecho["grupos_creados"].append(g["nombre"])
+            else:
+                hecho["grupos_actualizados"].append(g["nombre"])
+        except Exception as e:
+            hecho["errores"].append({"fila": "-", "error": f"grupo «{g['nombre']}»: {e}"})
 
 
 # ---------------------------------------------------------------------- #
@@ -375,7 +527,33 @@ def informe_texto(plan: dict, *, ruta: str = "", aplicado: dict = None) -> str:
         L += _lista("--- Filas con error en el Excel ---", plan["errores"],
                      lambda e: f"fila {e['fila']}: {e['error']}")
 
-    L += ["--- Filtros guardados ---",
+    if plan.get("trae_rubros"):
+        crea = [g for g in plan["grupos"] if g["accion"] == "crea"]
+        act = [g for g in plan["grupos"] if g["accion"] == "actualiza"]
+        resp = [g for g in plan["grupos"] if g["accion"] == "respeta"]
+        mal = [g for g in plan["grupos"] if g["accion"] == "no_se_puede"]
+        L += ["--- GRUPOS (los rubros del sistema viejo) ---",
+               "Cada rubro queda como un filtro del Panel, para cambiarle el precio a todo el",
+               "grupo de una. Un filtro que haya armado el dueño NO se toca nunca.", ""]
+        L += [f"Se crean:      {len(crea)}", f"Se actualizan: {len(act)}",
+               f"Se respetan (los armó el dueño): {len(resp)}", ""]
+        for g in plan["grupos"]:
+            etiqueta = {"crea": "CREA     ", "actualiza": "ACTUALIZA", "respeta": "RESPETA  ",
+                         "no_se_puede": "NO SE PUEDE"}[g["accion"]]
+            linea = f"    {etiqueta}  {g['nombre'][:28]:<28} {g['productos']:>5} productos"
+            if g["motivo"]:
+                linea += f"   -- {g['motivo']}"
+            L += [linea]
+        if mal:
+            L += ["", "Los marcados NO SE PUEDE no se crean; el resto no se ve afectado."]
+        L += [""]
+    else:
+        L += ["--- GRUPOS ---",
+               "Este Excel no trae la columna Rubro, así que no se toca ningún grupo.",
+               "Para que los traiga, generá la lista de nuevo con scripts/generar_lista_precios.py.",
+               ""]
+
+    L += ["--- Filtros guardados que ya existían ---",
            "Ningún filtro se borra nunca. Esto dice cuántos de sus productos cambian de código", ""]
     if not plan["filtros"]:
         L += ["    (no hay filtros guardados)", ""]
@@ -403,6 +581,12 @@ def informe_texto(plan: dict, *, ruta: str = "", aplicado: dict = None) -> str:
                f"Ofertas arrastradas:    {aplicado['ofertas']}",
                f"Umbrales arrastrados:   {aplicado['umbrales']}",
                f"Filtros actualizados:   {', '.join(aplicado['filtros']) or 'ninguno'}",
+               f"Rubros cargados:        {aplicado['rubros']}",
+               f"Grupos creados:         {len(aplicado['grupos_creados'])}"
+               + (f"  ({', '.join(aplicado['grupos_creados'])})" if aplicado['grupos_creados'] else ""),
+               f"Grupos actualizados:    {len(aplicado['grupos_actualizados'])}",
+               f"Grupos respetados:      {len(aplicado['grupos_respetados'])}"
+               + (f"  ({', '.join(aplicado['grupos_respetados'])})" if aplicado['grupos_respetados'] else ""),
                f"Errores al aplicar:     {len(aplicado['errores'])}", ""]
         for e in aplicado["errores"][:_TOPE_DETALLE]:
             L += [f"    fila {e.get('fila', '?')}: {e['error']}"]
