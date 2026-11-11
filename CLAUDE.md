@@ -76,6 +76,38 @@ quedó vieja (tiene solo dos subidas manuales de archivos por la web): **el trab
 Ver "API del celular (octubre 2026)" más abajo: sobre esa rama vieja se armó un `ApiDueno` que se
 corrió contra la base real y está descartado.
 
+### DÓNDE QUEDÓ EL TRABAJO (11/11/2026) — leer esto primero
+
+**Despliegue de la lista de precios + los grupos, a mitad de camino.** Los pasos completos,
+copiables, están en **`scripts/lista_precios_PASOS.txt`** — ese archivo alcanza solo.
+
+Lo que YA está hecho:
+- Todo el código, en `main` (`79d5dc7` y los anteriores). 23 pruebas en verde en Linux.
+- El merge a `main` desde `claude/memoria-repositorio-jhi4i9` ya se hizo (`c9433a7`).
+- Matías ya corrió las pruebas en Windows: 22 en verde y **`test_config_atomico.py` en rojo**, que
+  es un pendiente conocido y NO bloquea (ver la sección de pendientes).
+
+Lo que FALTA, en orden:
+1. `build\build_all.bat` en la laptop de Matías (11 apps, tarda).
+2. Copiar al pendrive **8 carpetas**, no 5: las de siempre + `ApiCelular` + `OtterBlindaje` +
+   `USB_Mantenimiento`. Con `robocopy /MIR`, y mirando `$LASTEXITCODE >= 8` — un `Write-Host
+   "Listo"` suelto dice Listo aunque no se haya copiado nada (le pasó).
+3. Copiar `C:\mmarket\bases` (al menos `MAS_STO.DBF` y `BAR_STO.DBF`) de la PC del local: el
+   Excel hay que **regenerarlo**, los que ya están no traen las columnas nuevas.
+4. Actualizar **primero la PC del local**, después la laptop de Leo.
+5. **Correr el ENSAYO antes de aplicar.** Es lo más importante: ver abajo.
+
+**LA DECISIÓN QUE QUEDÓ ABIERTA, y cómo resolverla sin ir al local.** Todo esto asume que en Otter
+hay **un producto por cada código de barras (~4588)**, que es lo que dicen los `.DBF` y la sección
+del catálogo, pero **nunca se miró el número real en el Panel**. El ensayo lo responde solo, sin
+escribir nada:
+
+- **SIN RESOLVER cerca de 0** → son ~4588, aplicar tranquilo.
+- **SIN RESOLVER en miles** → son ~2500, NO aplicar: el emparejado por nombre estaría encontrando
+  12 productos llamados "ARCOR JUGOS" y dándolos por ambiguos. Hay que rehacer parte.
+
+En ningún caso se crean duplicados ni se toca nada: los ambiguos se dejan quietos a propósito.
+
 Últimos commits relevantes:
 - **Respaldo diario verificado + cartel de arranque** — el sistema no tenía NINGUNA copia
   automática y con la base rota no abría en silencio. Ver la sección del riesgo más grande, abajo.
@@ -126,6 +158,23 @@ nuevo — documentados para no perder tiempo re-descubriéndolos:
   instalación anterior — es el comportamiento correcto, ante la duda no rompe nada. Solución:
   cerrar el `.exe` que está bloqueando (Task Manager si hace falta) y volver a apretar
   "ACTUALIZAR".
+- **`Write-Host "Listo"` después de un `robocopy` SIEMPRE dice Listo**, haya copiado o no: no mira
+  el resultado. El 9/11/2026 las 7 copias fallaron con `ERROR 3` (el pendrive no estaba enchufado)
+  y la consola terminó en verde igual. El chequeo va **adentro** del bucle, con
+  `if ($LASTEXITCODE -ge 8)` — y 1, 2 y 3 son éxito en robocopy.
+- **El pendrive no siempre agarra `E:`.** Mirarlo con
+  `Get-Volume | Where-Object DriveLetter | Select-Object DriveLetter, FileSystemLabel` antes de
+  copiar, en vez de dar la letra por sentada.
+- **`robocopy /E` deja los archivos que ya no existen en la versión nueva.** Para una carpeta de
+  PyInstaller eso puede dejar un `.pyd` viejo al lado del nuevo. Va `/MIR`, que espeja exacto —
+  apuntando a `E:\<app>` carpeta por carpeta, **nunca a `E:` suelto**.
+- **Git en la laptop de Matías no tenía identidad configurada**, así que `git merge` fallaba con
+  "Committer identity unknown" dejando el merge **a medias** (con `MERGE_HEAD`). Se arregla con
+  `git config --global user.name/user.email`. Y si ya quedó a medias, **no se vuelve a mergear**:
+  `git status --short` muestra los archivos ya staged y se termina con `git commit -m "..."`.
+- **El editor por defecto de git ahí es Vim**, y salir sin guardar **aborta el commit del merge**
+  (parece que el merge no se hizo, pero quedó a medias). Salir es `Esc` y después `:wq`. Para que
+  no vuelva a aparecer: `git config --global core.editor notepad`, o mergear con `-m`.
 
 ### El Dueño Remoto se cayó dos veces en el mismo día (septiembre 2026)
 
@@ -848,8 +897,9 @@ de la visita** (guía de la app, sección 2).
       Excel hay que REGENERARLO con `scripts/generar_lista_precios.py` desde los `.DBF` actuales
       de `C:\mmarket\bases` — los archivos ya generados tienen una fila por producto en vez de
       una por código de barras, así que dejan ~2000 códigos sin actualizar y no crean ningún grupo.
-      **Antes de aplicar, mirar cuántos productos dice el Panel**: el diseño asume ~4588 (uno por
-      código de barras) y eso nunca se verificó en la base real.
+      **Antes de aplicar, correr el ENSAYO y mirar "SIN RESOLVER"**: cerca de 0 = aplicar;
+      en miles = la base tiene ~2500 y hay que rehacer parte (ver "Dónde quedó el trabajo").
+      Pasos completos y copiables en `scripts/lista_precios_PASOS.txt`.
 - [ ] **Rotar los dos tokens del cliente**: el de `[remoto]` y el del bot de Telegram quedaron
       visibles en una captura de pantalla mandada por chat. El de Telegram se revoca con `/revoke`
       en @BotFather; el de `[remoto]` se cambia en `C:\SistemaDual\config.ini`, se reinicia el

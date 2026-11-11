@@ -1,0 +1,288 @@
+===========================================================
+ ACTUALIZAR LA LISTA DE PRECIOS + LOS GRUPOS
+ (reimportar del sistema viejo sin romper nada)
+ Otter - El Galpon Del Nono
+===========================================================
+
+Este archivo alcanza solo: no hace falta abrir ningun otro.
+
+-----------------------------------------------------------
+QUE SE GANA CON ESTO
+-----------------------------------------------------------
+1. Los precios del sistema viejo entran a Otter SIN romper
+   los filtros que el dueno tiene armados: quedan armados,
+   con los precios nuevos.
+
+2. Los GRUPOS de edicion masiva. En el sistema viejo
+   "SAPHIRUS TEXTIL 250ML." es UN producto con 53 codigos
+   de barras que valen todos $4601, y el dueno les cambia
+   el precio una vez. En Otter cada codigo es un producto
+   suelto: hoy hay que cambiar 53 precios a mano. Con esto
+   queda un filtro "SAPHIRUS TEXTIL 250ML." con los 53
+   adentro. Son 683 grupos.
+
+3. 16 grupos mas, uno por rubro (ALMACEN, LIMPIEZA,
+   BEBIDAS...), para "subile 10% a toda la limpieza".
+
+4. Arregla un bug aparte: el Excel de importacion tenia una
+   fila por producto del sistema viejo (2500) y en Otter hay
+   una por codigo de barras (~4588). Actualizar precios con
+   ese archivo dejaba ~2000 codigos con el precio viejo, sin
+   decir nada.
+
+-----------------------------------------------------------
+QUE NO SE TOCA
+-----------------------------------------------------------
+- El nombre, el proveedor y el stock de los productos.
+  Solo se pisa el PRECIO.
+- Un filtro que haya armado el dueno. Nunca se pisa: si un
+  grupo se llama igual, va al informe.
+- La columna Rubro de un producto si el dueno le puso una
+  a mano.
+- El historial de ventas.
+
+===========================================================
+ PASO 0 - LOS .DBF DEL SISTEMA VIEJO
+===========================================================
+El Excel se genera desde los .DBF de la PC del local. Los
+que esten en el repo son viejos: si los precios del sistema
+viejo cambiaron, hay que copiar los de AHORA.
+
+En la PC del local, copiar al pendrive la carpeta:
+
+    C:\mmarket\bases
+
+Alcanza con estos dos archivos (los demas son opcionales):
+    MAS_STO.DBF     (los productos y sus precios)
+    BAR_STO.DBF     (los codigos de barras de cada uno)
+
+Son chicos. Hacerlo apenas llegues, antes de tocar nada.
+
+===========================================================
+ PASO 1 - COMPILAR (en casa, antes de ir)
+===========================================================
+    git pull origin main
+    venv\Scripts\pip install -r requirements.txt
+    venv\Scripts\python tests\correr_todos.py
+
+Tienen que dar 23 en verde.
+
+   OJO - test_config_atomico.py puede dar FALLA en Windows
+   si la maquina esta cargada ("sobrevivieron 157 de 160").
+   NO es un flake y NO bloquea: el candado entre procesos
+   espera 2 s y despues guarda igual, por la regla 6. Esta
+   explicado en CLAUDE.md. Cualquier OTRA en rojo, parar.
+
+Despues, con la Caja y el Panel CERRADOS:
+
+    build\build_all.bat
+
+Son 11 apps, tarda. Al final corre sola la autoprueba de
+ApiCelular; si falla, el .bat corta.
+
+Verificar que compilo hoy:
+
+    dir dist\*\*.exe | Sort-Object LastWriteTime | Select-Object LastWriteTime, Name
+
+===========================================================
+ PASO 2 - COPIAR AL PENDRIVE
+===========================================================
+Primero, que letra agarro el pendrive (no siempre es E:):
+
+    Get-Volume | Where-Object DriveLetter | Select-Object DriveLetter, FileSystemLabel
+
+Cambiar E: por la letra que sea y pegar TODO el bloque:
+
+    $fallo = $false
+    foreach ($app in "OtterActualizador","MaestroCaja","MaestroDueno","StockService","DuenoRemoto","ApiCelular","OtterBlindaje","USB_Mantenimiento") {
+        robocopy "dist\$app" "E:\$app" /MIR /MT:16 /NFL /NDL /NJH /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) { Write-Host "FALLO: $app ($LASTEXITCODE)" -ForegroundColor Red; $fallo = $true }
+        else { Write-Host "OK: $app" -ForegroundColor Green }
+    }
+    if ($fallo) { Write-Host "`nHUBO ERRORES - no vayas al local" -ForegroundColor Red }
+    else { Write-Host "`nTodo copiado" -ForegroundColor Green }
+
+Tres cosas de ese bloque:
+
+  - /MIR borra en el destino lo que no esta en el origen,
+    para que no queden restos de la version vieja. Apunta a
+    E:\<app> carpeta por carpeta, NUNCA a E: suelto.
+
+  - robocopy devuelve 1, 2 o 3 cuando salio BIEN. El error
+    recien empieza en 8. Por eso el chequeo es >= 8.
+
+  - Un "Write-Host Listo" al final SIEMPRE dice Listo,
+    aunque robocopy haya fallado: por eso el chequeo va
+    adentro del bucle.
+
+Llevar tambien la carpeta scripts\ (para el blindaje).
+
+===========================================================
+ PASO 3 - EN LA PC DEL LOCAL (primero el local, SIEMPRE)
+===========================================================
+Las funciones nuevas viven en la allowlist del StockService,
+que esta en la PC del local. Si actualizas la laptop primero,
+los botones contestan "funcion no permitida".
+
+1. Enchufar el pendrive.
+2. E:\OtterActualizador\OtterActualizador.exe
+     -> boton derecho -> "Ejecutar como administrador"
+     -> elegir PC DEL LOCAL -> ACTUALIZAR
+3. Al terminar sale sola la REVISION FINAL con la tabla
+   SI/NO. Las 5 filas tienen que decir SI. Queda guardada
+   en Escritorio\otter_revision_final.txt
+
+Si alguna fila dice NO: mandar ese archivo antes de seguir.
+
+===========================================================
+ PASO 4 - GENERAR EL EXCEL NUEVO
+===========================================================
+EN LA LAPTOP (no hace falta la PC del local). Apuntar a la
+carpeta donde copiaste los .DBF del PASO 0:
+
+    venv\Scripts\python scripts\generar_lista_precios.py E:\bases E:\lista
+
+Imprime algo asi:
+
+    Productos: 2500
+    Sin codigo de barras: 1796
+    Codigos repetidos: 3
+    Escritos:
+      Lista_Precios_El_Galpon_<fecha>.xlsx   <- la que mira el dueno
+      Otter_importar_<fecha>.xlsx            <- la que se importa
+
+El Otter_importar tiene que tener ~4596 filas (una por
+codigo de barras) y 8 columnas:
+    Codigo | Nombre | Precio Venta | Stock Inicial |
+    Proveedor | Rubro | Grupo | Codigo interno
+
+Si tiene 2500 filas o le faltan las 3 ultimas columnas, es
+el generador VIEJO: no sirve, hay que hacer git pull.
+
+===========================================================
+ PASO 5 - EL ENSAYO (no escribe nada)
+===========================================================
+En la PC del local, abrir MaestroDueno -> pestana
+"Carga Excel". Arriba hay un recuadro nuevo:
+
+    "Actualizar la lista de precios (del sistema viejo)"
+       [1. Ensayar (no toca nada)]
+       [2. Actualizar los precios...]
+
+Apretar ENSAYAR y elegir el Otter_importar_<fecha>.xlsx
+
+El informe queda en pantalla y en
+Escritorio\otter_ensayo_precios.txt
+
+*************************************************
+*** LA REGLA PARA SABER SI APLICAR O NO       ***
+*************************************************
+
+Mirar el renglon "SIN RESOLVER":
+
+  SIN RESOLVER cerca de 0    -> APLICAR tranquilo.
+  SIN RESOLVER en miles      -> NO APLICAR. Mandar el
+                                informe.
+
+Por que: el diseno asume que en Otter hay un producto por
+cada codigo de barras (~4588). Eso NUNCA se verifico en la
+base real. Si fueran 2500 (uno por producto), el emparejado
+por nombre encontraria 12 productos llamados "ARCOR JUGOS",
+los daria por ambiguos en masa y habria que rehacer esto.
+
+En ningun caso se crean duplicados ni se toca nada: los
+ambiguos se dejan quietos a proposito.
+
+Lo otro que vale mirar en el informe:
+
+  - "Cambian de codigo de barras": es el numero que nunca
+    se midio. Si es alto, revisar un par en el detalle.
+  - "GRUPOS - Por producto": tiene que decir que crea ~683.
+  - "GRUPOS - Por rubro": ~16.
+  - "Filtros guardados que ya existian": los del dueno.
+
+===========================================================
+ PASO 6 - APLICAR
+===========================================================
+Si el ensayo pinto bien: boton "2. Actualizar los precios".
+
+Vuelve a ensayar solo y pide confirmacion con los numeros
+antes de escribir nada. El informe final queda en
+Escritorio\otter_actualizacion_precios.txt
+
+Con 4588 productos tarda unos minutos (cada uno va en su
+propia transaccion, para que uno que falle no se lleve a
+los demas).
+
+===========================================================
+ PASO 7 - VERIFICAR QUE LOS GRUPOS SIRVEN
+===========================================================
+En el Panel -> pestana de filtros / edicion masiva.
+
+1. En el buscador escribir:  saphirus
+   Tienen que quedar los filtros de Saphirus.
+2. Doble clic en "SAPHIRUS TEXTIL 250ML."
+   Tiene que cargar 53 productos, todos al mismo precio.
+3. Probar un ajuste de +1% y ver que cambia los 53.
+   (Despues volver a dejarlo como estaba, o aplicarle el
+   aumento que de verdad quiera el dueno.)
+
+Al lado del buscador dice cuantos filtros hay en total y
+cuantos se estan viendo.
+
+===========================================================
+ PASO 8 - LA LAPTOP DE LEO (recien ahora)
+===========================================================
+1. Pendrive.
+2. E:\OtterActualizador\OtterActualizador.exe como
+   administrador.
+3. Elegir LAPTOP DEL DUENO -> ACTUALIZAR.
+4. Abrir DuenoRemoto, que conecte, y mirar que en
+   Carga Excel este el recuadro nuevo.
+
+Aca NO corre la revision final: es a proposito, en la laptop
+no hay servicio ni puerto ni respaldos.
+
+NUNCA correr el USB de Mantenimiento en la laptop de Leo.
+Apuntarlo a mano a C:\Otter le mete adentro MaestroDueno.exe
+(regla 2). Ya paso el 21/9/2026.
+
+===========================================================
+ SI ALGO SALE MAL
+===========================================================
+"funcion no permitida: actualizacion_precios.analizar"
+    El local quedo en una version vieja. Actualizar PRIMERO
+    la PC del local.
+
+El recuadro nuevo no aparece en Carga Excel
+    Esa maquina no se actualizo, o el Actualizador no
+    encontro la carpeta nueva. Revisar que MaestroDueno\
+    (o DuenoRemoto\) este al lado del OtterActualizador en
+    el pendrive.
+
+El ensayo da miles de SIN RESOLVER
+    Parar. Mandar el informe. Ver el PASO 5.
+
+Se importo y los filtros del dueno desaparecieron
+    No deberia pasar nunca (hay una prueba que lo cuida).
+    Las copias diarias estan en C:\SistemaDual\backups y la
+    de hoy es de antes de importar.
+
+===========================================================
+ GIT - COSAS QUE PASARON Y HACEN PERDER TIEMPO
+===========================================================
+"Committer identity unknown" al mergear:
+    git config --global user.name "Matias"
+    git config --global user.email "<tu mail>"
+
+Se abre Vim al mergear y no se sabe salir:
+    Esc, despues  :wq  y Enter.
+    Si se sale SIN guardar, el merge queda a medias: lo
+    muestra  git status --short  (archivos en M/A) y se
+    termina con  git commit -m "..."  (NO volver a mergear).
+
+Para que no vuelva a abrir Vim:
+    git config --global core.editor notepad
+
+Mergear sin que abra editor:
+    git merge <rama> -m "mensaje"
