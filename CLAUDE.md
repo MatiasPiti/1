@@ -803,6 +803,17 @@ de la visita** (guía de la app, sección 2).
       y la carrera de `_parar_servicio`/`_arrancar_servicio` del StockService en el Actualizador.
 - [ ] Commits aparte ya conocidos: el botón "Probar" de Telegram falla en el Panel y en DuenoRemoto
       (falta `telegram_bot` en `dueno_backend`), y las facturas PDF leen "3.500" como 3,5.
+- [ ] **`test_config_atomico.py` falla en Windows cuando la máquina está cargada** (11/11/2026, en
+      la laptop de Matías: sobrevivieron 159 y 157 de 160 claves, en dos corridas seguidas). **No
+      es un flake**: `_candado_config` espera 2 s por el candado entre procesos y, si no lo
+      consigue, guarda igual sin candado — a propósito, por la regla 6. El propio comentario del
+      código ya lo medía ("con la PC cargada se les agotaban los 2 s y guardaban sin candado,
+      perdiendo claves"). En Linux pasa siempre; en Windows depende de la carga. El riesgo en el
+      local es bajo (el test fuerza 4 procesos x 40 guardados, y ahí el config.ini se escribe
+      cuando el dueño cambia algo), pero **la prueba no puede quedar en rojo para siempre**: o se
+      hace que al perder el candado se reintente la operación entera, o el test deja de exigir las
+      160 bajo carga y mide lo que de verdad importa. Decisión pendiente, es código de la API del
+      celular.
 - [x] **Correr `scripts/blindar_local.ps1` en la PC del local.** HECHO el 9/9/2026: las 7 filas
       en SI (servicio en Automatic, watchdog Ready, Tailscale unattended por CLI, servicio
       corriendo, puerto 8765 respondiendo). Encontró el servicio parado por tercera vez y lo
