@@ -68,6 +68,21 @@ import openpyxl
 from pos_core import products, filters, alerts, ofertas, actualizacion_precios
 
 
+def excel_grupos(filas, nombre):
+    """Excel con las columnas del generador nuevo: una fila por CÓDIGO DE
+    BARRAS, con su grupo y el código interno del sistema viejo.
+    Cada fila: (codigo, nombre, precio, rubro, grupo, cod_viejo)."""
+    ruta = os.path.join(base, nombre)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["Código", "Nombre", "Precio Venta", "Stock Inicial", "Proveedor",
+                "Rubro", "Grupo", "Codigo interno"])
+    for cod, nom, precio, rubro, grupo, cv in filas:
+        ws.append([cod, nom, precio, 0, "", rubro, grupo, cv])
+    wb.save(ruta)
+    return ruta
+
+
 def excel(filas, nombre="lista.xlsx", con_rubro=False):
     """Arma un Excel con el mismo formato que genera scripts/generar_lista_precios.py:
     el proveedor va VACÍO, que es lo que le borraba el proveedor al catálogo.
@@ -518,6 +533,110 @@ if antes_filtros != despues_filtros:
     fallos.append("un Excel sin columna Rubro cambió los grupos")
 else:
     print("OK: un Excel sin columna Rubro no toca ningún grupo")
+
+# --------------------------------------------------------------------- #
+# 14. LOS GRUPOS POR PRODUCTO: los que valen todos lo mismo
+# --------------------------------------------------------------------- #
+# Es lo que pidió Matías: en el sistema viejo "SAPHIRUS TEXTIL 250ML." es UN
+# producto con 53 códigos de barras que valen todos $4601, y el dueño les
+# cambia el precio una vez. En Otter cada código es un producto suelto, así
+# que sin el grupo hay que cambiar 53 precios a mano.
+
+ruta_p = excel_grupos([
+    ("J1", "ARCOR JUGO NARANJA", 400.0, "ALMACEN", "ARCOR JUGOS", "1000"),
+    ("J2", "ARCOR JUGO MANZANA", 400.0, "ALMACEN", "ARCOR JUGOS", "1000"),
+    ("J3", "ARCOR JUGO UVA",     400.0, "ALMACEN", "ARCOR JUGOS", "1000"),
+    ("S1", "SHAMPOO X",          900.0, "HIGIENE", "",            "2000"),
+], "productos.xlsx")
+
+actualizacion_precios.aplicar(ruta_p, usuario="test")
+g = {f["nombre"]: f["definicion"] for f in filters.listar_filtros_guardados()}
+
+if "ARCOR JUGOS" not in g:
+    fallos.append("no se creó el grupo por producto ARCOR JUGOS")
+else:
+    en_grupo = filters.aplicar_filtro(g["ARCOR JUGOS"])
+    codigos = sorted(p["codigo"] for p in en_grupo)
+    precios = {p["precio_venta"] for p in en_grupo}
+    if codigos != ["J1", "J2", "J3"]:
+        fallos.append(f"el grupo ARCOR JUGOS quedó con {codigos}")
+    elif precios != {400.0}:
+        fallos.append(f"los del grupo no valen todos lo mismo: {precios}")
+    else:
+        print("OK: los 3 códigos de ARCOR JUGOS quedaron en un grupo, todos al mismo precio")
+
+if g["ARCOR JUGOS"].get("cod_viejo") != "1000":
+    fallos.append("el grupo no guardó el código interno del sistema viejo")
+if "SHAMPOO X" in g:
+    fallos.append("se creó un grupo para un producto con un solo código")
+else:
+    print("OK: un producto con un solo código no forma grupo")
+
+# 14a. Cambiar el precio del grupo es UNA operación
+nuevo_precio = 520.0
+for cod in ("J1", "J2", "J3"):
+    db.get_connection().execute("UPDATE Productos SET precio_venta = ? WHERE codigo = ?",
+                                 (nuevo_precio, cod))
+db.get_connection().commit()
+if {p["precio_venta"] for p in filters.aplicar_filtro(g["ARCOR JUGOS"])} != {nuevo_precio}:
+    fallos.append("el grupo no refleja un cambio de precio masivo")
+else:
+    print("OK: cambiar el precio sobre el grupo alcanza los 3 de una")
+
+# 14b. Si el grupo cambia de NOMBRE, se renombra en vez de duplicarse.
+# Pasa de verdad: cuando dos productos viejos se llaman igual, al nombre se
+# le agrega el precio, y el precio cambia.
+ruta_p2 = excel_grupos([
+    ("J1", "ARCOR JUGO NARANJA", 520.0, "ALMACEN", "ARCOR JUGOS ($520)", "1000"),
+    ("J2", "ARCOR JUGO MANZANA", 520.0, "ALMACEN", "ARCOR JUGOS ($520)", "1000"),
+    ("J3", "ARCOR JUGO UVA",     520.0, "ALMACEN", "ARCOR JUGOS ($520)", "1000"),
+], "productos2.xlsx")
+r_ren = actualizacion_precios.aplicar(ruta_p2, usuario="test")
+g2 = {f["nombre"]: f["definicion"] for f in filters.listar_filtros_guardados()}
+if "ARCOR JUGOS" in g2:
+    fallos.append("al cambiarle el nombre al grupo quedó el viejo huérfano al lado del nuevo")
+elif "ARCOR JUGOS ($520)" not in g2:
+    fallos.append(f"el grupo renombrado no aparece: {sorted(g2)}")
+elif not r_ren["grupos_renombrados"]:
+    fallos.append("el informe no dice que se renombró un grupo")
+else:
+    print("OK: si al grupo le cambia el nombre se renombra, no se duplica")
+
+# 14c. Un grupo que el dueño haya armado con ese nombre no se pisa
+filters.guardar_filtro_manual("MIS JUGOS", ["J1"])
+ruta_p3 = excel_grupos([
+    ("J1", "ARCOR JUGO NARANJA", 600.0, "ALMACEN", "MIS JUGOS", "3000"),
+    ("J2", "ARCOR JUGO MANZANA", 600.0, "ALMACEN", "MIS JUGOS", "3000"),
+], "productos3.xlsx")
+actualizacion_precios.aplicar(ruta_p3, usuario="test")
+g3 = {f["nombre"]: f["definicion"] for f in filters.listar_filtros_guardados()}
+if [p["codigo"] for p in filters.aplicar_filtro(g3["MIS JUGOS"])] != ["J1"]:
+    fallos.append("se pisó un filtro del dueño con un grupo por producto")
+else:
+    print("OK: un grupo por producto no pisa un filtro que armó el dueño")
+
+# --------------------------------------------------------------------- #
+# 15. El buscador de la lista de filtros (con ~700 no se puede desplazar)
+# --------------------------------------------------------------------- #
+app2 = AppDueno()
+app2.update()
+total_en_lista = app2.lista_filtros.size()
+if total_en_lista < 3:
+    fallos.append(f"la lista de filtros abrió con {total_en_lista} entradas")
+app2.buscar_filtro.insert(0, "jugos")
+app2._refrescar_lista_filtros()
+app2.update()
+visibles = [app2.lista_filtros.get(i) for i in range(app2.lista_filtros.size())]
+if not visibles or any("jugos" not in v.lower() for v in visibles):
+    fallos.append(f"el buscador de filtros no filtró: {visibles}")
+elif len(visibles) >= total_en_lista:
+    fallos.append("el buscador no redujo la lista")
+elif " de " not in app2.cuenta_filtros.cget("text"):
+    fallos.append(f"el buscador no dice cuántos de cuántos: {app2.cuenta_filtros.cget('text')!r}")
+else:
+    print(f"OK: el buscador de filtros deja {len(visibles)} de {total_en_lista} "
+           f"y lo dice en pantalla")
+app2.destroy()
 
 print()
 if fallos:

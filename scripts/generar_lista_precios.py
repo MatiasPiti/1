@@ -151,6 +151,7 @@ def escribir_lista(filas: list, colisiones: list, destino: str) -> None:
         ("Productos SIN codigo de barras", len(sin_barras)),
         ("Codigos escaneables en total", codigos_escaneables),
         ("Codigos repetidos (arreglar a mano)", len(colisiones)),
+        ("Grupos de edicion masiva", sum(1 for f in filas if len(f["barras"]) > 1)),
         ("Origen", "MAS_STO.DBF + BAR_STO.DBF del sistema viejo"),
         ("Stock", "entra en 0: el inventario fisico esta pendiente"),
     ]:
@@ -208,30 +209,64 @@ def escribir_lista(filas: list, colisiones: list, destino: str) -> None:
     wb.save(destino)
 
 
+def nombre_de_grupo(filas: list) -> dict:
+    """Como se llama el GRUPO de cada producto viejo, indexado por codigo interno.
+
+    Un producto del sistema viejo es UNA entrada con varios codigos de barras:
+    "SAPHIRUS TEXTIL 250ML." son 53 codigos distintos que valen todos lo mismo, y
+    el dueno les cambia el precio UNA vez. En Otter cada codigo es un producto
+    aparte, asi que sin el grupo hay que cambiar 53 precios a mano.
+
+    Solo forman grupo los que tienen MAS DE UN codigo: uno solo no es un grupo.
+
+    Si dos productos viejos se llaman igual (pasa 8 veces: MATARAZZO FIDEOS, BC
+    MERMELADA...) se les agrega el precio al nombre, porque son productos
+    distintos y juntarlos haria que un ajuste masivo les ponga el mismo precio.
+    """
+    from collections import Counter
+    con_grupo = [f for f in filas if len(f["barras"]) > 1]
+    repetidos = {n for n, c in Counter(f["nombre"] for f in con_grupo).items() if c > 1}
+    return {f["interno"]: (f'{f["nombre"]} (${f["precio_venta"]:.0f})'
+                            if f["nombre"] in repetidos else f["nombre"])
+            for f in con_grupo}
+
+
 def escribir_importacion(filas: list, destino: str) -> None:
     """El Excel que come pos_core.excel_import: una sola hoja y los encabezados exactos.
     El importador lee wb.active, asi que no puede haber otra hoja adelante.
 
-    La columna Rubro la usa pos_core.actualizacion_precios para armar los
-    GRUPOS: un filtro guardado por cada rubro del sistema viejo, que es lo
-    que el dueno usa para cambiar precios en masa. La carga masiva de
-    siempre (excel_import.cargar_masivo) ignora esa columna, asi que el
-    mismo archivo sirve para las dos cosas.
+    UNA FILA POR CODIGO DE BARRAS, no por producto. En Otter cada codigo
+    escaneable es un producto propio (asi entro el catalogo: 4587 filas), y una
+    fila por producto viejo dejaria sin actualizar los ~2000 codigos restantes.
 
-    El SUBRUBRO no se trae a proposito: en el catalogo real 16 de las 20
-    combinaciones son "<rubro> / GENERAL", o sea que no agrupa nada."""
+    Tres columnas que la carga masiva de siempre ignora y que usa
+    pos_core.actualizacion_precios:
+      - Rubro: el rubro del sistema viejo, para la columna del producto y para
+        los 16 grupos por rubro.
+      - Grupo: el producto del sistema viejo, para los 683 grupos de edicion
+        masiva (los que valen todos lo mismo).
+      - Codigo interno: el del sistema viejo. Es lo UNICO estable del grupo: el
+        nombre puede llevar el precio (los 8 repetidos) y el precio cambia, asi
+        que sin esto cada importacion crearia un filtro nuevo al lado del viejo.
+    """
+    grupos = nombre_de_grupo(filas)
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Productos"
-    ws.append(["Código", "Nombre", "Precio Venta", "Stock Inicial", "Proveedor", "Rubro"])
+    ws.append(["Código", "Nombre", "Precio Venta", "Stock Inicial", "Proveedor",
+                "Rubro", "Grupo", "Codigo interno"])
     for celda in ws[1]:
         celda.font = _ENCABEZADO
         celda.fill = _FONDO
-    for i, ancho in enumerate([22, 44, 14, 14, 18, 18], start=1):
+    for i, ancho in enumerate([22, 44, 14, 14, 18, 18, 44, 16], start=1):
         ws.column_dimensions[get_column_letter(i)].width = ancho
     ws.freeze_panes = "A2"
     for f in sorted(filas, key=lambda x: x["nombre"]):
-        ws.append([f["codigo_otter"], f["nombre"], f["precio_venta"], 0, "", f["rubro"]])
+        grupo = grupos.get(f["interno"], "")
+        codigos = f["barras"] or [f["codigo_otter"]]
+        for codigo in codigos:
+            ws.append([codigo, f["nombre"], f["precio_venta"], 0, "",
+                        f["rubro"], grupo, f["interno"]])
     wb.save(destino)
 
 

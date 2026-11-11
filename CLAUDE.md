@@ -452,32 +452,56 @@ re-litigar):
   en el `StockService` del local. Con el local viejo, los botones contestan "función no
   permitida".
 
-**Los GRUPOS (noviembre 2026).** Matías pidió que los "grupos" del sistema viejo pasaran a ser
-filtros de edición masiva de Otter. Mirando los `.DBF` reales (`MatiasPiti/proyect`, carpeta
-`bases/`) resultaron ser los **rubros de `ARC_RUB.DBF`: 18 definidos, 16 en uso** sobre 2500
-productos — ALMACEN 676, LIMPIEZA 375, BEBIDAS 266, KIOSCO 239, HIGIENE 226, VARIOS 184,
-LACTEOS 148, LA VIRGINIA 109, CONGELADOS 89, PERFUMERIA 89, SNACK 48, CIGARRILLOS 17, TABACO 17,
-PUCHOS 11, GAONA 5, NAVIDAD 1.
+**Los GRUPOS (noviembre 2026).** Matías pidió que los "grupos" con los que el dueño cambia
+precios en masa en el sistema viejo existieran también en Otter. **Hay dos cosas distintas y
+quedaron las dos.** La primera vez se entendió mal (se hicieron los rubros, y Matías aclaró que
+se refería a los otros): si vuelve a aparecer la palabra "grupo", son los de PRODUCTO.
 
-- **El `Otter_importar_*.xlsx` ahora lleva una columna `Rubro`.** Antes no la llevaba, así que
-  el rubro del sistema viejo **nunca entraba a Otter** (salía solo en la hoja que mira el dueño).
-- **El SUBRUBRO no se trae**: en el catálogo real 16 de las 20 combinaciones son
-  `<rubro> / GENERAL`, o sea que no agrupa nada.
-- Cada rubro queda como un **filtro guardado** con la marca `"origen": "rubro_sistema_viejo"`
-  adentro del JSON. Esa marca es lo que permite saber, en la importación siguiente, cuál se
-  puede volver a armar solo y cuál lo armó el dueño.
-- **Un filtro del dueño con el mismo nombre NO se pisa nunca**: va al informe diciendo por qué.
-  Y si el dueño edita uno de los nuestros (desde el Panel o el celular, que lo guardan **sin**
-  campos extra), pierde la marca y pasa a ser suyo — correcto, lo ajustó a mano.
-- El rubro se carga también en la **columna Rubro del producto** (`categoria`), pero **solo si
-  está vacía**: si el dueño puso una a mano en la pantalla de Precios, manda la suya.
-- **Un Excel sin columna Rubro no toca ningún grupo.** Es la compatibilidad con los archivos ya
+**1. Por PRODUCTO — 683, son los que pidió.** En el sistema viejo un producto es UNA entrada de
+`MAS_STO` con **varios códigos de barras** (`BAR_STO`): "SAPHIRUS TEXTIL 250ML." son **53 códigos
+que valen todos $4601**, y el dueño les cambia el precio una vez. **En Otter cada código es un
+producto suelto** (así entró el catálogo), así que para subirle el precio a ese producto había que
+cambiar 53 precios a mano. Los más grandes: SAPHIRUS TEXTIL 250ML 53, QUENTO SNACK MEDIANO 48,
+SAPHIRUS AEROSOL 35, AMBAR SAHUMERIOS 27, SAPHIRUS DIFUSOR 26. De 704 productos con código de
+barras, **683 tienen más de uno**; uno solo no forma grupo.
+
+**2. Por RUBRO — 16.** Los de `ARC_RUB.DBF`: ALMACEN 676, LIMPIEZA 375, BEBIDAS 266, KIOSCO 239,
+HIGIENE 226, VARIOS 184, LACTEOS 148, LA VIRGINIA 109, CONGELADOS 89, PERFUMERIA 89, SNACK 48,
+CIGARRILLOS 17, TABACO 17, PUCHOS 11, GAONA 5, NAVIDAD 1. Sirven para otra cosa ("subile 10% a
+toda la limpieza") y **Matías decidió dejarlos**. El SUBRUBRO no se trae: 16 de las 20
+combinaciones son `<rubro> / GENERAL`, no agrupa nada.
+
+**El `Otter_importar_*.xlsx` cambió, y esto era un bug aparte:** ahora emite **una fila por CÓDIGO
+DE BARRAS** (4596) y no una por producto viejo (2500). Con una fila por producto, la actualización
+de precios dejaba **~2000 códigos de Otter sin actualizar** — los que no son el "primero" de su
+producto. Lleva tres columnas nuevas que la carga masiva de siempre ignora: `Rubro`, `Grupo` y
+`Codigo interno`.
+
+- Cada grupo queda como un **filtro guardado** con la marca `"origen"` adentro del JSON
+  (`grupo_sistema_viejo` o `rubro_sistema_viejo`). Esa marca es lo que permite saber, en la
+  importación siguiente, cuál se puede volver a armar solo y cuál lo armó el dueño.
+- **El grupo por producto se reconoce por `cod_viejo`, no por el nombre.** Cuando dos productos
+  viejos se llaman igual (pasa 8 veces: MATARAZZO FIDEOS, BC MERMELADA, ELVIVE 200ML...) al nombre
+  se le agrega el precio para distinguirlos — y el precio cambia. Sin el código interno adentro,
+  cada importación dejaría un filtro huérfano al lado del nuevo. Con él, **se renombra**.
+- **Un filtro del dueño con el mismo nombre NO se pisa nunca**: va al informe diciendo por qué. Y
+  si el dueño edita uno de los nuestros (desde el Panel o el celular, que lo guardan **sin** campos
+  extra), pierde la marca y pasa a ser suyo — correcto, lo ajustó a mano.
+- El rubro se carga también en la **columna Rubro del producto** (`categoria`), pero **solo si está
+  vacía**: si el dueño puso una a mano, manda la suya.
+- **Un Excel sin esas columnas no toca ningún grupo.** Es la compatibilidad con los archivos ya
   generados: un archivo viejo nunca borra los grupos.
-- Los productos **ambiguos no entran a ningún grupo**: no se tocaron, así que meterlos diría que
-  sí se tocaron.
-- Verificado de punta a punta contra los `.DBF` REALES del cliente, no solo con datos de prueba:
-  2500 productos, los 16 grupos con los conteos exactos, 2499 rubros cargados (el 2500 era uno
-  puesto a mano, respetado), el filtro propio del dueño intacto, y reimportar no duplica nada.
+- Los productos **ambiguos no entran a ningún grupo**: no se tocaron, así que meterlos diría que sí.
+- **La lista de filtros del Panel pasó de un puñado a ~700, así que tiene buscador** (escribís
+  "saphirus" y quedan los de Saphirus), dice cuántos de cuántos se están viendo, creció a 8 filas
+  con barra, y el doble clic carga. Sin eso la pantalla era inusable.
+- Verificado de punta a punta contra los `.DBF` REALES del cliente: **4588 productos y 698 filtros
+  (682 por producto + 16 por rubro)**, SAPHIRUS TEXTIL con sus 53 todos a $4601, los 8 nombres
+  repetidos separados con su precio, y reimportar no crea ni duplica nada.
+- **Queda sin confirmar cuántos productos tiene la base del local.** Los 4588 salen de los `.DBF`
+  y coinciden con los 4587 de la sección del catálogo, pero nunca se miró el número real en el
+  Panel. Es lo primero que hay que verificar antes de aplicar: si fueran 2500, el emparejado por
+  nombre daría ambiguos en masa (12 productos "ARCOR JUGOS") y habría que rehacer esto.
 
 ### Decisiones que ya se tomaron (no re-litigar)
 
@@ -809,10 +833,12 @@ de la visita** (guía de la app, sección 2).
       actualizar **primero la PC del local y después la laptop de Leo** — las dos funciones
       nuevas son entradas de la allowlist, que vive en el local. Correr el ENSAYO contra la
       base real antes de aplicar: el número de productos que cambian de código es el dato que
-      nunca se midió. **Incluye los GRUPOS** (los 16 rubros del sistema viejo como filtros de
-      edición masiva): para eso el Excel hay que REGENERARLO con `scripts/generar_lista_precios.py`
-      desde los `.DBF` actuales de `C:\mmarket\bases` — los archivos ya generados no traen la
-      columna Rubro y no crean ningún grupo.
+      nunca se midió. **Incluye los GRUPOS** (683 por producto + 16 por rubro): para eso el
+      Excel hay que REGENERARLO con `scripts/generar_lista_precios.py` desde los `.DBF` actuales
+      de `C:\mmarket\bases` — los archivos ya generados tienen una fila por producto en vez de
+      una por código de barras, así que dejan ~2000 códigos sin actualizar y no crean ningún grupo.
+      **Antes de aplicar, mirar cuántos productos dice el Panel**: el diseño asume ~4588 (uno por
+      código de barras) y eso nunca se verificó en la base real.
 - [ ] **Rotar los dos tokens del cliente**: el de `[remoto]` y el del bot de Telegram quedaron
       visibles en una captura de pantalla mandada por chat. El de Telegram se revoca con `/revoke`
       en @BotFather; el de `[remoto]` se cambia en `C:\SistemaDual\config.ini`, se reinicia el

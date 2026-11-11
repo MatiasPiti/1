@@ -769,13 +769,33 @@ class AppDueno(tk.Tk):
     def _armar_bulk(self, frame):
         guardados = ttk.LabelFrame(frame, text="Filtros guardados", padding=10)
         guardados.pack(fill="x", pady=(0, 10))
-        self.lista_filtros = tk.Listbox(guardados, height=4, exportselection=False,
+
+        # Buscador: al traer los grupos del sistema viejo la lista pasó de un
+        # puñado de filtros a ~700 (uno por producto que tiene varios códigos
+        # de barras). Desplazar 700 entradas para encontrar "SAPHIRUS" no es
+        # viable, así que se escribe y quedan los que coinciden.
+        buscador = ttk.Frame(guardados)
+        buscador.pack(fill="x", pady=(0, 8))
+        ttk.Label(buscador, text="Buscar:").pack(side="left", padx=(0, 6))
+        self.buscar_filtro = ttk.Entry(buscador)
+        self.buscar_filtro.pack(side="left", fill="x", expand=True)
+        self.buscar_filtro.bind("<KeyRelease>", lambda e: self._refrescar_lista_filtros())
+        self.cuenta_filtros = ttk.Label(buscador, text="", style="Muted.TLabel")
+        self.cuenta_filtros.pack(side="left", padx=(8, 0))
+
+        fila = ttk.Frame(guardados)
+        fila.pack(fill="x")
+        self.lista_filtros = tk.Listbox(fila, height=8, exportselection=False,
                                          relief="flat", highlightthickness=1,
                                          highlightbackground="#E3E6ED")
         self.lista_filtros.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        ttk.Button(guardados, text="Cargar", command=self._cargar_filtro_guardado).pack(side="left", padx=2)
-        ttk.Button(guardados, text="Nuevo (vaciar)", command=self._nuevo_filtro).pack(side="left", padx=2)
-        ttk.Button(guardados, text="Eliminar", style="Danger.TButton", command=self._eliminar_filtro_guardado
+        agregar_scroll_vertical(self.lista_filtros)
+        # Doble clic = cargar: con la lista larga, ir hasta el botón cada vez
+        # es una vuelta de más.
+        self.lista_filtros.bind("<Double-Button-1>", lambda e: self._cargar_filtro_guardado())
+        ttk.Button(fila, text="Cargar", command=self._cargar_filtro_guardado).pack(side="left", padx=2)
+        ttk.Button(fila, text="Nuevo (vaciar)", command=self._nuevo_filtro).pack(side="left", padx=2)
+        ttk.Button(fila, text="Eliminar", style="Danger.TButton", command=self._eliminar_filtro_guardado
                    ).pack(side="left", padx=2)
         self._refrescar_lista_filtros()
 
@@ -879,9 +899,16 @@ class AppDueno(tk.Tk):
         self._refrescar_bulk_tree()
 
     def _refrescar_lista_filtros(self):
+        termino = self.buscar_filtro.get().strip().lower()
         self.lista_filtros.delete(0, "end")
-        for f in self.backend.filters.listar_filtros_guardados():
+        todos = self.backend.filters.listar_filtros_guardados()
+        mostrados = [f for f in todos if not termino or termino in f["nombre"].lower()]
+        for f in mostrados:
             self.lista_filtros.insert("end", f["nombre"])
+        # Decir cuántos hay y cuántos se están viendo: si no, con el buscador
+        # puesto parece que se perdieron filtros.
+        self.cuenta_filtros.config(
+            text=f"{len(mostrados)} de {len(todos)}" if termino else f"{len(todos)} filtros")
 
     def _cargar_filtro_guardado(self):
         sel = self.lista_filtros.curselection()
