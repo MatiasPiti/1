@@ -140,7 +140,12 @@ Si alguna fila dice NO: mandar ese archivo antes de seguir.
 EN LA LAPTOP (no hace falta la PC del local). Apuntar a la
 carpeta donde copiaste los .DBF del PASO 0:
 
+    venv\Scripts\pip install dbfread
     venv\Scripts\python scripts\generar_lista_precios.py E:\bases E:\lista
+
+(dbfread NO esta en requirements.txt a proposito: lo usa
+solo este script, no las apps. Sin instalarlo da
+"No module named 'dbfread'".)
 
 Imprime algo asi:
 
