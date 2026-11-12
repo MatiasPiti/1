@@ -78,35 +78,30 @@ corrió contra la base real y está descartado.
 
 ### DÓNDE QUEDÓ EL TRABAJO (11/11/2026) — leer esto primero
 
-**Despliegue de la lista de precios + los grupos, a mitad de camino.** Los pasos completos,
-copiables, están en **`scripts/lista_precios_PASOS.txt`** — ese archivo alcanza solo.
+**La lista de precios + los grupos quedaron APLICADOS en la PC del local** (11/11/2026, 22:23,
+con el Actualizador ya corrido y la revisión final entera en SI). Falta solo **actualizar la
+laptop de Leo** (Actualizador → Dueño Remoto) y probar en la caja un par de precios nuevos y un
+grupo (SAPHIRUS TEXTIL 250ML. con sus 53). Pasos en `scripts/lista_precios_PASOS.txt`.
 
-Lo que YA está hecho:
-- Todo el código, en `main` (`79d5dc7` y los anteriores). 23 pruebas en verde en Linux.
-- El merge a `main` desde `claude/memoria-repositorio-jhi4i9` ya se hizo (`c9433a7`).
-- Matías ya corrió las pruebas en Windows: 22 en verde y **`test_config_atomico.py` en rojo**, que
-  es un pendiente conocido y NO bloquea (ver la sección de pendientes).
+**La decisión abierta se resolvió con el ensayo: Otter SÍ tiene un producto por código de barras.**
+Excel regenerado de los `.DBF` de ese día: 2622 productos viejos → 4833 filas. Resultado real:
 
-Lo que FALTA, en orden:
-1. `build\build_all.bat` en la laptop de Matías (11 apps, tarda).
-2. Copiar al pendrive **8 carpetas**, no 5: las de siempre + `ApiCelular` + `OtterBlindaje` +
-   `USB_Mantenimiento`. Con `robocopy /MIR`, y mirando `$LASTEXITCODE >= 8` — un `Write-Host
-   "Listo"` suelto dice Listo aunque no se haya copiado nada (le pasó).
-3. Copiar `C:\mmarket\bases` (al menos `MAS_STO.DBF` y `BAR_STO.DBF`) de la PC del local: el
-   Excel hay que **regenerarlo**, los que ya están no traen las columnas nuevas.
-4. Actualizar **primero la PC del local**, después la laptop de Leo.
-5. **Correr el ENSAYO antes de aplicar.** Es lo más importante: ver abajo.
-
-**LA DECISIÓN QUE QUEDÓ ABIERTA, y cómo resolverla sin ir al local.** Todo esto asume que en Otter
-hay **un producto por cada código de barras (~4588)**, que es lo que dicen los `.DBF` y la sección
-del catálogo, pero **nunca se miró el número real en el Panel**. El ensayo lo responde solo, sin
-escribir nada:
-
-- **SIN RESOLVER cerca de 0** → son ~4588, aplicar tranquilo.
-- **SIN RESOLVER en miles** → son ~2500, NO aplicar: el emparejado por nombre estaría encontrando
-  12 productos llamados "ARCOR JUGOS" y dándolos por ambiguos. Hay que rehacer parte.
-
-En ningún caso se crean duplicados ni se toca nada: los ambiguos se dejan quietos a propósito.
+- 1292 precios cambiados, 3298 iguales, **2 cambios de código** (ENTRE AMIGOS y PUGLISI CABALLA,
+  este último de $3500 a $7300: mirarlo en góndola), **142 productos nuevos** (cargados en el
+  sistema viejo después de septiembre), 0 errores.
+- **Grupos: 603 creados** (587 por producto + 16 por rubro). **124 respetados**: Leo ya había
+  armado a mano filtros con el mismo nombre que el producto viejo (ALA 300ML., COCA COLA 1,5L.,
+  QUENTO SNACK MEDIANO…). No se tocan, como estaba decidido.
+- **99 SIN RESOLVER, quedan con su precio de antes** (no empeora nada). Tres tipos: un código de
+  barras que en el sistema viejo usan dos productos (BUCKINGHAM, MILKA OREO, OZ…); códigos NUEVOS
+  agregados a un producto que ya existe (AQUARIUS 1,5L., BELDENT, COCA COLA 1,5L.…: hoy no se
+  escanean y siguen sin escanearse, no se crean porque el nombre ya está tomado); y DON YEYO
+  LACTAL, con 2 productos de ese nombre en Otter. Si se quiere mejorar: los del segundo tipo se
+  podrían crear como nuevos cuando TODOS los productos de ese nombre ya los reclamó su código.
+- 31 productos de Otter no vienen en el Excel y quedaron intactos.
+- **Leo sigue cambiando los precios en el SISTEMA VIEJO**, no en Otter (confirmado por Matías). Si
+  eso cambia, esta reimportación pisaría lo que cambie en Otter: preguntarlo antes de repetirla.
+- Generar el Excel necesita `pip install dbfread` aparte (no está en `requirements.txt`).
 
 Últimos commits relevantes:
 - **Respaldo diario verificado + cartel de arranque** — el sistema no tenía NINGUNA copia
@@ -888,18 +883,9 @@ de la visita** (guía de la app, sección 2).
 - [ ] **Que el USB de Mantenimiento no asuma "Maestro" por descarte.** Apuntado a mano a
       `C:\Otter` en la laptop de Leo le metió adentro `MaestroDueno.exe` (regla 2). Ver la
       sección de arriba. Matías lo postergó el 21/9.
-- [ ] **Desplegar la reimportación de la lista de precios.** Hecho en el repo (botones
-      "Ensayar" y "Actualizar los precios" en la pestaña Carga Excel). Falta recompilar y
-      actualizar **primero la PC del local y después la laptop de Leo** — las dos funciones
-      nuevas son entradas de la allowlist, que vive en el local. Correr el ENSAYO contra la
-      base real antes de aplicar: el número de productos que cambian de código es el dato que
-      nunca se midió. **Incluye los GRUPOS** (683 por producto + 16 por rubro): para eso el
-      Excel hay que REGENERARLO con `scripts/generar_lista_precios.py` desde los `.DBF` actuales
-      de `C:\mmarket\bases` — los archivos ya generados tienen una fila por producto en vez de
-      una por código de barras, así que dejan ~2000 códigos sin actualizar y no crean ningún grupo.
-      **Antes de aplicar, correr el ENSAYO y mirar "SIN RESOLVER"**: cerca de 0 = aplicar;
-      en miles = la base tiene ~2500 y hay que rehacer parte (ver "Dónde quedó el trabajo").
-      Pasos completos y copiables en `scripts/lista_precios_PASOS.txt`.
+- [ ] **Desplegar la reimportación de la lista de precios.** APLICADA en la PC del local el
+      11/11/2026 (ver "Dónde quedó el trabajo"). Falta actualizar la laptop de Leo y resolver a
+      mano, si Leo quiere, los 99 sin resolver.
 - [ ] **Rotar los dos tokens del cliente**: el de `[remoto]` y el del bot de Telegram quedaron
       visibles en una captura de pantalla mandada por chat. El de Telegram se revoca con `/revoke`
       en @BotFather; el de `[remoto]` se cambia en `C:\SistemaDual\config.ini`, se reinicia el
