@@ -76,7 +76,66 @@ quedó vieja (tiene solo dos subidas manuales de archivos por la web): **el trab
 Ver "API del celular (octubre 2026)" más abajo: sobre esa rama vieja se armó un `ApiDueno` que se
 corrió contra la base real y está descartado.
 
-### DÓNDE QUEDÓ EL TRABAJO (11/11/2026) — leer esto primero
+### AUDITORÍA DE TODO EL SISTEMA (13/11/2026) — leer esto primero
+
+Matías pidió buscar fallas en todo el sistema y arreglarlas. Se leyó el núcleo, las cajas, el
+Panel, la conciliación de emergencia, el Actualizador, el Instalador y el Mantenimiento. **Todo lo
+de abajo está arreglado en `main`, con prueba que falla sin el arreglo (28 pruebas, verdes en
+Linux y en el CI de Windows). NADA de esto está en la PC del local todavía: falta compilar y
+actualizar, primero el local y después la laptop de Leo.**
+
+**Para mirar YA en el local, sin esperar a actualizar (precios que pudieron quedar mal el 11/11):**
+
+- **12 códigos de barras que en el sistema viejo usan DOS productos.** La reimportación les aplicó
+  el precio de la primera fila por abecedario, que puede ser el del OTRO producto, y el informe
+  decía "no se tocan". Escanearlos en Precios y ver si el precio es el del producto que dice:
+  `7798434460028` (BARRIGON BLANCO), `763571733462` (BUCKINGHAM SAL MARINA), `0707273535528`
+  (KB PERFUME ROPA), `7793551001895` / `7793551001888` / `7793551001840` (MARVAVIC ACEITUNAS),
+  `7622300631574` / `7622300990213` / `7622300844943` (MILKA; el `...990213` lo comparte con
+  "MILKA 155G. ( precio oferta )" de $10000), `7798349010028` (OZ), `7790742358608` (SERENISIMA
+  PROTEIN 1L.), `7791519002649` (SHARK ENCENDEDOR).
+- **PUGLISI CABALLA** (`7790748235095`): pasó de $3500 a $7300 emparejado por nombre contra una
+  de dos filas que se llaman igual. Puede no ser ese producto.
+
+Con la versión nueva, el Ensayo muestra para cada uno las filas en disputa con sus precios, que es
+con lo que se decide a mano.
+
+**Lo que se arregló, por lo que le pasa al negocio:**
+
+| Qué pasaba | Dónde |
+|---|---|
+| Reimportar la lista: un código de dos productos tomaba el precio del otro; dos productos viejos del mismo nombre se disputaban uno de Otter | `actualizacion_precios.planificar` |
+| El ajuste masivo cobraba $100 de más en precios redondos (3000 + 10 % daba 3400) | `bulk_edit.calcular_nuevo_precio` |
+| Repetir un aumento que "no contestó" desde el Dueño Remoto lo sumaba dos veces; el botón parecía muerto | Panel (`_aplicar_bulk`), `dueno_backend` |
+| Doble F5/F12 podía registrar la venta dos veces; "Reintentar facturación" sobre una venta ya facturada emitía otra factura | `caja_carrito._cobro_unico`, `sales.facturar_venta_arca` |
+| Una factura PDF con tabla sumaba el stock dos veces; "3.500" se leía 3,5 | `pdf_import` |
+| Emergencia: las ventas del pendrive no llegaban todas al Maestro; el stock se duplicaba al conciliar | `sync_export`, `reconciliation` |
+| Tras restaurar la copia, la Caja abría contra una base VACÍA una carpeta más arriba | `paths.set_base_override_to_parent_dir` |
+| Una base ocupada ("locked") se ofrecía restaurar como si estuviera dañada | `arranque`, `mantenimiento` |
+| Un `config.ini` guardado con el Bloc de notas (BOM) dejaba a Leo sin panel | `config._leer_texto` |
+| El botón "Probar" de Telegram no andaba | `dueno_backend` |
+| El USB de Mantenimiento le copiaba el Maestro a la laptop del dueño (regla 2) | `mantenimiento.tipo_de_instalacion` |
+| Si la copia del Actualizador se cortaba, quedaba un programa a medias y el reintento borraba el `config.ini` del Dueño Remoto | `actualizador.reemplazar_programa` |
+| El Instalador guardaba la dirección y el token del Dueño Remoto donde el programa no los lee | `instalador._instalar_remoto` |
+| Una oferta de $ fijo mayor que el precio hacía cobrar $0; un COMMIT que fallaba dejaba la Caja sin cobrar | `ofertas`, `db.transaction` |
+| Un producto de código corto no se encontraba por su código; un Excel con el código como número | `sales.buscar_productos`, `excel_import.texto_de_codigo` |
+
+El detalle de cada uno está en su commit y en la prueba que lo cuida (`tests/README.md`).
+
+**Decisiones que estaban ABIERTAS y esta auditoría cerró** (si Matías las quiere distintas, se
+revierten solas, cada una es un commit): el redondeo del ajuste masivo (ahora 3000 + 10 % = 3300),
+leer `config.ini` con `utf-8-sig`, el botón "Probar", las facturas PDF con "3.500", y el USB de
+Mantenimiento por descarte.
+
+**Lo que se encontró y NO se tocó** (está en "Lo que falta hacer"): ARCA sin probar contra
+Homologación, la conciliación de PRECIOS del USB del Dueño, la carpeta `tickets\` que crece sin
+tope, y el `remove` + `install` del StockService en el Actualizador.
+
+**Al desplegar esto:** los pendrives de emergencia ya grabados siguen sirviendo con el Maestro
+nuevo (saltea la carga del catálogo aunque venga en el archivo), pero para que "Preparar
+sincronización" exporte TODO hay que regrabarlos con el `USB_Caja` / `USB_Dueno` nuevos.
+
+### DÓNDE QUEDÓ EL TRABAJO (11/11/2026)
 
 **La lista de precios + los grupos quedaron APLICADOS en la PC del local** (11/11/2026, 22:23,
 con el Actualizador ya corrido y la revisión final entera en SI). Falta solo **actualizar la
@@ -92,8 +151,11 @@ Excel regenerado de los `.DBF` de ese día: 2622 productos viejos → 4833 filas
 - **Grupos: 603 creados** (587 por producto + 16 por rubro). **124 respetados**: Leo ya había
   armado a mano filtros con el mismo nombre que el producto viejo (ALA 300ML., COCA COLA 1,5L.,
   QUENTO SNACK MEDIANO…). No se tocan, como estaba decidido.
-- **99 SIN RESOLVER, quedan con su precio de antes** (no empeora nada). Tres tipos: un código de
-  barras que en el sistema viejo usan dos productos (BUCKINGHAM, MILKA OREO, OZ…); códigos NUEVOS
+- **99 SIN RESOLVER.** OJO, corregido el 13/11: de los tres tipos, los 12 códigos que en el
+  sistema viejo usan dos productos (BUCKINGHAM, MILKA OREO, OZ…) **pudieron tocarse**: se aplicó
+  la PRIMERA fila de ese código por abecedario —que puede ser la del otro producto— y el informe
+  solo listaba la segunda como "no se toca". Hay que mirarlos (ver la auditoría, arriba). Los
+  otros dos tipos sí quedaron como estaban: códigos NUEVOS
   agregados a un producto que ya existe (AQUARIUS 1,5L., BELDENT, COCA COLA 1,5L.…: hoy no se
   escanean y siguen sin escanearse, no se crean porque el nombre ya está tomado); y DON YEYO
   LACTAL, con 2 productos de ese nombre en Otter.
@@ -116,7 +178,7 @@ Excel regenerado de los `.DBF` de ese día: 2622 productos viejos → 4833 filas
 - `blindar_local` — reescrito: ahora vigila el PUERTO y no el estado del servicio, guarda la
   evidencia antes de tocar nada, y cubre batería. **Falta correrlo en la PC del local.**
 - Revisión de los 3 USBs antes de grabarlos: tres fallos encontrados y arreglados, con `tests/`
-  traído al repo (hoy 9 pruebas, todas en verde).
+  traído al repo (hoy 28 pruebas, todas en verde).
 - `16d9652` — memoria del proyecto en `CLAUDE.md`.
 - `3799aae` — pantalla de precios sin depender del Excel, ventanas que entran en pantallas chicas,
   scroll del carrito con barra + flechas.
@@ -477,6 +539,12 @@ re-litigar):
 - **Dos pasadas, y el orden importa.** Primero las filas cuyo código ya existe (reclaman su
   producto), después las que buscan por nombre entre los no reclamados. Al revés, cuando el
   código viejo de un producto pasa a ser el de otro, los dos se pelean por el mismo registro.
+- **Lo que está en disputa no se aplica (13/11/2026).** Un código que viene en dos filas con
+  precios distintos (en el sistema viejo ese código de barras lo usan dos productos) no se toca:
+  antes se aplicaba la primera fila por abecedario y solo la segunda iba al informe. Y si dos
+  filas del mismo nombre son productos viejos DISTINTOS (otro código interno) y en Otter hay uno
+  solo libre con ese nombre, ninguna se lo lleva. El 11/11 pasó con 12 códigos y con PUGLISI
+  CABALLA. Si las filas repetidas traen el mismo precio, se aplica una vez.
 - **Los productos de Otter que no vienen en el Excel quedan intactos**, y el informe dice
   cuántos son (los 8 de colisión cargados a mano, o los que el dueño creó en el Panel).
 - **Hay un ENSAYO que no escribe nada**, y es el botón 1 de la pantalla. `analizar()` y
@@ -751,6 +819,44 @@ producto. Lleva tres columnas nuevas que la carga masiva de siempre ignora: `Rub
   dejaría a Leo sin panel el día que la PC del local falle, que es exactamente el escenario para el
   que existe (misma lógica que `USB_Caja`).
 
+- **Decisiones de la auditoría del 13/11/2026** (cada una con su prueba; el porqué largo está en
+  el código):
+  - **Un cobro en curso ignora el siguiente, y el carrito se vacía en un `finally`**
+    (`CarritoTecladoMixin._cobro_unico` / `_carrito_cobrado`). La marca se baja SIEMPRE: si quedara
+    puesta, la caja no cobraría más.
+  - **Una venta se factura una sola vez**: el freno vive en `sales.facturar_venta_arca`, que es por
+    donde pasan la Caja, el Panel y el Dueño Remoto.
+  - **El Panel manda, con cada código, el precio que el dueño está viendo** (`esperados`, el mismo
+    freno de la app del celular). Un producto cuyo precio guardado ya no es ese no se toca. Por eso
+    repetir un aumento después de un corte no suma dos veces. Si el aumento "no contesta", la
+    grilla NO se refresca a propósito: mientras muestre los precios de antes, repetir es seguro.
+  - **La espera del Dueño Remoto son dos**: 8 s para que el local atienda, 2 minutos para la
+    respuesta. Con 20 s para todo, una operación larga daba "no se pudo conectar" con el local
+    trabajando.
+  - **En la reimportación, lo que está en disputa no se aplica**: un código que traen dos filas con
+    precios distintos, o un nombre que piden dos productos viejos distintos. Van TODAS las filas al
+    informe, con sus precios.
+  - **Cada exportación de un USB es COMPLETA** (`"completo": true` en el JSON), no "lo nuevo desde
+    la anterior": el USB no sabe si el archivo anterior se concilió. El Maestro saltea por UUID lo
+    que ya tiene.
+  - **La carga del catálogo en un pendrive (`ENTRADA_EXCEL`) no se reproduce en el Maestro**, salvo
+    para un producto que nació en ese USB (mismo `uuid_unico`), que entra con stock 0 y lo llevan
+    sus movimientos.
+  - **Base OCUPADA no es base DAÑADA.** Solo "not a database" / "malformed" ofrecen restaurar la
+    copia. "locked" / "unable to open" se reintentan y, si siguen, se avisa sin ofrecer nada. Vale
+    en `arranque` y en el USB de Mantenimiento.
+  - **`set_base_override_to_parent_dir()` se calcula desde la carpeta del `.exe`**, no desde la
+    base que esté puesta: llamarla dos veces da lo mismo que una. (Antes subía un nivel por
+    llamada, y tras restaurar la copia la Caja abría una base vacía en `C:\database`.)
+  - **Reemplazar un programa tiene UN solo camino** (`actualizador.reemplazar_programa`, sobre
+    `servicio_windows.reemplazar_carpeta`): si la copia falla, la versión anterior vuelve entera, y
+    antes de borrar una `<app>.anterior` vieja se le rescatan los datos del cliente.
+  - **El Instalador escribe la config del Dueño Remoto ADENTRO de `DuenoRemoto\`**, que es donde el
+    programa la lee, y su copia filtra los datos de prueba igual que el Actualizador.
+  - **La plata de una factura PDF se lee con `precios.leer_numero`**, como toda la plata tipeada.
+  - **Una oferta que dejaría el producto en $0 no se aplica**: se rechaza al crearla, y si el
+    precio bajó después, la Caja cobra el de lista.
+
 ### API del celular (octubre 2026)
 
 Leo pidió en el celular lo mismo que tiene en el Dueño Remoto. Quedó la app Android **"Panel Dueño"**
@@ -813,8 +919,9 @@ código → "Quitar umbral propio" → cargar 5 y 0 → "Guardar umbral de este 
 - **`Restart-Service` espera sin límite**: en algo que corre solo, `sc.exe stop` + espera acotada +
   `Stop-Process`, y `ExecutionTimeLimit` en la tarea. **STOP_PENDING no es parado**: el exe sigue
   bloqueado. Actualizar un servicio es `update`, nunca `remove` + `install` (error 1072).
-- **configparser no saca los comentarios al final de la línea**, y un config.ini guardado con BOM no lo
-  lee ninguna app: config.ini no se edita a mano.
+- **configparser no saca los comentarios al final de la línea**: config.ini no se edita a mano. (La
+  otra trampa era el BOM del Bloc de notas, que lo dejaba ilegible para todas las apps; desde el
+  13/11/2026 se lee con `utf-8-sig` y da igual. Un archivo mal formado de verdad sigue sin pisarse.)
 - `proxy_headers` de uvicorn confía en `X-Forwarded-For` desde 127.0.0.1: va en `False`. Un
   `logging.Filter` no tapa los tracebacks: el tapado va en el `Formatter`. FastAPI resuelve las
   dependencias **antes** del decorador del endpoint.
@@ -847,12 +954,35 @@ de la visita** (guía de la app, sección 2).
       compararlos en la laptop para ver si el ApiDueno viejo apagó umbrales 5/0 (ver arriba).
 - [ ] Sumar `http://<pc>:8766/api/salud` a Semáforo Clientes (otro repo): sin eso, el segundo
       programa 24/7 solo lo mira el watchdog.
-- [ ] Decisiones abiertas de la API del celular: redondeo del ajuste masivo (3000 + 10 % da 3400),
-      un "conteo de inventario" absoluto desde el celular (hoy cada carga se descuenta sola con las
-      ventas pendientes de los últimos 2 días), auditoría en la base, leer config.ini con `utf-8-sig`,
-      y la carrera de `_parar_servicio`/`_arrancar_servicio` del StockService en el Actualizador.
-- [ ] Commits aparte ya conocidos: el botón "Probar" de Telegram falla en el Panel y en DuenoRemoto
-      (falta `telegram_bot` en `dueno_backend`), y las facturas PDF leen "3.500" como 3,5.
+- [ ] Decisiones abiertas de la API del celular: un "conteo de inventario" absoluto desde el
+      celular (hoy cada carga se descuenta sola con las ventas pendientes de los últimos 2 días),
+      auditoría en la base, y la carrera de `_parar_servicio`/`_arrancar_servicio` del StockService
+      en el Actualizador (sigue haciendo `remove` + `install`, que puede dar el error 1072; el
+      reemplazo de la carpeta ahora reintenta mientras el servicio suelta el `.exe`).
+      *Cerradas el 13/11/2026:* el redondeo del ajuste masivo (3000 + 10 % = 3300) y leer
+      config.ini con `utf-8-sig`.
+- [x] El botón "Probar" de Telegram (faltaba `telegram_bot` en `dueno_backend`) y las facturas PDF
+      que leían "3.500" como 3,5. HECHO el 13/11/2026, junto con la factura con tabla que sumaba
+      el stock dos veces.
+- [ ] **Desplegar la auditoría del 13/11/2026** (ver arriba): `build\build_all.bat`, pendrive con
+      las 8 carpetas, Actualizador en la PC del local (con la Caja y el Panel cerrados) y después
+      en la laptop de Leo. Y mirar los 12 códigos compartidos + PUGLISI CABALLA.
+- [ ] **ARCA, encontrado leyendo el código y SIN PROBAR** (no se toca hasta tener Homologación):
+      la Factura B se arma con `ImpIVA` en 0 y sin el detalle de alícuotas (para un Responsable
+      Inscripto ARCA la rechaza; la C está bien); falta `CondicionIVAReceptorId` (RG 5616); la
+      fecha del comprobante es la de la VENTA, y ARCA rechaza más de 5 días de diferencia al
+      reintentar tarde; el candado de facturación es por proceso (la Caja y el Panel son dos); y
+      si ARCA autoriza pero la respuesta no llega, la venta queda "sin facturar" y reintentar
+      emite otra (habría que consultar el comprobante antes).
+- [ ] **La conciliación de PRECIOS del USB del Dueño no es confiable.** Compara `actualizado_en`,
+      que lo pisa cualquier movimiento de stock (también cada venta en el Maestro): un pendrive con
+      el catálogo viejo en el que se movió stock puede figurar "más reciente" y pisar un precio
+      nuevo del Maestro, y un cambio de precio hecho en el USB después de su primera exportación no
+      viaja. El resumen previo muestra cada conflicto y quién gana: leerlo. Arreglarlo de verdad
+      pide una fecha propia del precio.
+- [ ] **`tickets\` crece sin tope.** Sin impresora configurada cada venta deja un `.txt`. No es un
+      problema hoy, pero en un año son decenas de miles de archivos: cuando se configure la POS-58,
+      o antes, borrar los de más de N días desde el servicio.
 - [ ] **`test_config_atomico.py` falla en Windows cuando la máquina está cargada** (11/11/2026, en
       la laptop de Matías: sobrevivieron 159 y 157 de 160 claves, en dos corridas seguidas). **No
       es un flake**: `_candado_config` espera 2 s por el candado entre procesos y, si no lo
@@ -886,9 +1016,9 @@ de la visita** (guía de la app, sección 2).
       `cerrar_ticket` graba la venta), pero el control de stock no está funcionando en la práctica
       y las alertas de Telegram nunca van a servir. Es el pendiente que hace que media mitad del
       sistema no rinda.
-- [ ] **Que el USB de Mantenimiento no asuma "Maestro" por descarte.** Apuntado a mano a
-      `C:\Otter` en la laptop de Leo le metió adentro `MaestroDueno.exe` (regla 2). Ver la
-      sección de arriba. Matías lo postergó el 21/9.
+- [x] **Que el USB de Mantenimiento no asuma "Maestro" por descarte.** HECHO el 13/11/2026: la
+      carpeta del Dueño Remoto se reconoce y no se le toca nada (`tipo_de_instalacion` devuelve
+      `DUENO_REMOTO` / `DESCONOCIDA`, y el informe dice por qué).
 - [ ] **Desplegar la reimportación de la lista de precios.** APLICADA en la PC del local el
       11/11/2026 (ver "Dónde quedó el trabajo"). Falta actualizar la laptop de Leo y resolver a
       mano, si Leo quiere, los 99 sin resolver.
@@ -898,7 +1028,11 @@ de la visita** (guía de la app, sección 2).
       servicio **y hay que cargar el nuevo también en la laptop de Leo** (si no, se queda sin
       panel). Hacerlo cuando estén las dos máquinas a mano.
 - [ ] Probar el circuito de emergencia de punta a punta desde pendrives de verdad: vender offline
-      → "Preparar sincronización" → conciliar en el Maestro con `Ctrl+Shift+M`.
+      → "Preparar sincronización" → conciliar en el Maestro con `Ctrl+Shift+M`. **El 13/11/2026 se
+      probó por código por primera vez** (`tests/test_emergencia_conciliacion.py`: tres bases, se
+      vende, se exporta y se concilia) y aparecieron tres fallas, ya arregladas: ventas que no
+      llegaban, stock duplicado y producto nuevo contado dos veces. Falta la prueba con los
+      pendrives físicos, regrabados con esta versión.
 - [ ] Configurar la impresora térmica POS-58 en la PC del local.
 - [ ] Escribir las ACLs de Tailscale antes de sumar un segundo cliente.
 - [x] Cargar el token y el chat_id del bot de Telegram del cliente. HECHO — y en cuanto se
