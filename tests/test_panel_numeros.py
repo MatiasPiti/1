@@ -54,6 +54,14 @@ if distintos:
     fallos.append(f"leer_numero no lee como la hoja de precios: {distintos}")
 else:
     ok("leer_numero: '1.500' es mil quinientos, '1.500,50' lleva centavos, vacío o texto es None")
+# float() acepta "inf", "nan" y "1e999": como precio no son números (un precio
+# infinito quedaba guardado y la Caja lo mostraba así).
+raros = {t: precios.leer_numero(t) for t in ("inf", "-inf", "infinity", "nan", "1e999", float("inf"), float("nan"))
+         if precios.leer_numero(t) is not None}
+if raros:
+    fallos.append(f"leer_numero aceptó como precio algo que no es un número: {raros}")
+else:
+    ok("leer_numero no acepta 'inf', 'nan' ni '1e999' como precio")
 
 from apps.master_dueno.main import AppDueno  # noqa: E402
 
@@ -109,6 +117,39 @@ if not o or o["tipo_descuento"] != "PRECIO_FIJO" or o["valor"] != 1500:
     fallos.append(f"la oferta de precio fijo '1.500' quedó {o} (la Caja cobraría eso)")
 else:
     ok("una oferta de precio fijo '1.500' queda en $ 1.500 (no en $ 1,50)")
+
+# Una oferta de "$ fijo de descuento" igual o mayor que el precio dejaría el
+# producto en $ 0, y la Caja lo cobraría $ 0 sin avisar (es el mismo agujero
+# que el 100 % de descuento, que ya estaba cerrado).
+from pos_core import ofertas, sales
+products.crear_producto(codigo="7790600", nombre="Alfajor Triple", precio_venta=900.0, usuario="test")
+errores_mostrados.clear()
+escribir(app.oferta_codigo, "7790600")
+app.oferta_tipo.set("$ fijo de descuento")
+escribir(app.oferta_valor, "1.000")
+escribir(app.oferta_dias, "7")
+app._crear_oferta_nueva()
+if fila("SELECT 1 x FROM Ofertas WHERE producto_codigo = '7790600'") or not errores_mostrados:
+    fallos.append("se pudo crear una oferta de $ 1.000 de descuento sobre un producto de $ 900 "
+                   "(la Caja lo cobraría $ 0)")
+else:
+    ok("una oferta de $ fijo mayor que el precio se rechaza y dice por qué")
+
+# Y si la oferta era buena pero después le bajaron el precio al producto por
+# debajo del descuento: la Caja cobra el precio de lista, nunca $ 0.
+ofertas.crear_oferta(codigo="7790600", tipo_descuento="MONTO_FIJO", valor=500.0, descripcion="",
+                     dias=7, usuario="test")
+en_caja = [p for p in sales.buscar_productos("7790600") if p["codigo"] == "7790600"][0]
+if en_caja["precio_venta"] != 400.0 or not en_caja["en_oferta"]:
+    fallos.append(f"una oferta normal de $ 500 sobre $ 900 no dio $ 400 en la Caja: {en_caja}")
+with db.transaction() as conn:
+    conn.execute("UPDATE Productos SET precio_venta = 450 WHERE codigo = '7790600'")
+en_caja = [p for p in sales.buscar_productos("7790600") if p["codigo"] == "7790600"][0]
+if en_caja["precio_venta"] != 450.0:
+    fallos.append(f"con el precio por debajo del descuento, la Caja cobraría ${en_caja['precio_venta']:.2f} "
+                   f"(tiene que cobrar el de lista, $ 450, nunca $ 0)")
+else:
+    ok("si el precio queda por debajo del descuento, la Caja cobra el de lista y no $ 0")
 
 app.destroy()
 db.cerrar_conexion()

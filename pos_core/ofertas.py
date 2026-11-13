@@ -34,10 +34,18 @@ def crear_oferta(*, codigo: str, tipo_descuento: str, valor: float, descripcion:
 
     conn = get_connection()
     producto = conn.execute(
-        "SELECT nombre FROM Productos WHERE codigo = ? AND activo = 1", (codigo,)
+        "SELECT nombre, precio_venta FROM Productos WHERE codigo = ? AND activo = 1", (codigo,)
     ).fetchone()
     if producto is None:
         raise ValueError(f"No existe el producto con código '{codigo}'")
+    if tipo_descuento == "MONTO_FIJO" and valor >= float(producto["precio_venta"] or 0):
+        # El mismo agujero que el 100 % de arriba, por el otro lado: un
+        # descuento de $ 5.000 sobre un producto de $ 4.500 dejaba el precio
+        # efectivo en $ 0 y la Caja lo cobraba $ 0 sin ningún aviso.
+        raise ValueError(
+            f"El descuento (${valor:.2f}) es igual o mayor que el precio del producto "
+            f"(${float(producto['precio_venta'] or 0):.2f}): quedaría en $0. "
+            f"Si querías poner el precio de la promoción, elegí 'Precio fijo promocional'.")
 
     hoy = datetime.now().date()
     fecha_fin = hoy + timedelta(days=dias)
@@ -83,7 +91,16 @@ def precio_con_oferta(codigo: str, precio_base: float):
     oferta = oferta_activa_para(codigo)
     if not oferta:
         return precio_base, None
-    return _calcular_precio(precio_base, oferta["tipo_descuento"], oferta["valor"]), oferta
+    precio = _calcular_precio(precio_base, oferta["tipo_descuento"], oferta["valor"])
+    if precio <= 0 and precio_base > 0:
+        # La oferta dejaría el producto gratis. No pasa al crearla (se
+        # rechaza), pero sí si después le bajaron el precio al producto por
+        # debajo del descuento. Entre regalar la mercadería y cobrar el
+        # precio de lista, la Caja cobra el de lista: es lo mismo que pasa
+        # cuando la oferta vence. En el Panel la oferta se sigue viendo, con
+        # su "-> $0.00", para que el dueño la corrija.
+        return precio_base, None
+    return precio, oferta
 
 
 def listar_ofertas() -> list:

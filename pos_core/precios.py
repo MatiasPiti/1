@@ -20,6 +20,7 @@ recalcula es **qué campo tocó el dueño** (ver `recalcular`), porque es lo
     margen y saber a cuánto lo tengo que vender)
 """
 
+import math
 from datetime import datetime
 
 from pos_core.db import get_connection, transaction
@@ -79,7 +80,8 @@ def _num(valor):
     if valor is None:
         return None
     if isinstance(valor, (int, float)):
-        return float(valor)
+        numero = float(valor)
+        return numero if math.isfinite(numero) else None
     texto = str(valor).strip().replace("$", "").replace(" ", "")
     if not texto:
         return None
@@ -105,9 +107,12 @@ def _num(valor):
             texto = texto.replace(".", "")
 
     try:
-        return float(texto)
+        numero = float(texto)
     except ValueError:
         return None
+    # float() acepta "inf", "nan" y "1e999" (infinito): como precio no son
+    # números. Un precio infinito quedaba GUARDADO y la Caja lo mostraba así.
+    return numero if math.isfinite(numero) else None
 
 
 def leer_numero(texto):
