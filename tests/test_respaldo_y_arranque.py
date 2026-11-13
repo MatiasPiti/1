@@ -136,6 +136,11 @@ if not os.path.isfile(os.path.join(paths.logs_dir(), "arranque.log")):
 respuestas.append(True)
 dialogos.clear()
 ventana_construida = {"si": False}
+# Lo último que se vendió puede estar en el -wal y no en el .db. Al
+# restaurar el -wal se borra (tiene que borrarse), así que tiene que quedar
+# guardado junto con la base dañada.
+with open(paths.db_path() + "-wal", "wb") as f:
+    f.write(b"las ultimas ventas del dia")
 
 
 def _construir():
@@ -170,6 +175,144 @@ danadas = [f for f in os.listdir(paths.data_dir()) if ".danada_" in f]
 print("BASE DAÑADA GUARDADA:", danadas)
 if not danadas:
     fallos.append("borró la base dañada en vez de guardarla al lado")
+wal_guardado = [f for f in danadas if f.endswith("-wal")]
+if not wal_guardado:
+    fallos.append("al restaurar se perdió el -wal de la base dañada: ahí podían estar las últimas ventas")
+else:
+    with open(os.path.join(paths.data_dir(), wal_guardado[0]), "rb") as f:
+        if f.read() != b"las ultimas ventas del dia":
+            fallos.append("el -wal guardado junto a la base dañada no es el que había")
+
+# ---------------------------------------------------------------- #
+# 3. Base OCUPADA no es base DAÑADA
+# ---------------------------------------------------------------- #
+# "database is locked" o "unable to open database file" es que otro programa
+# la tiene tomada un momento (el antivirus, una actualización). La base está
+# sana. Antes se ofrecía igual "la base está dañada, ¿restauro la copia?": si
+# el cajero decía que sí, se pisaba una base buena con la de ayer y se
+# perdían las ventas del día.
+import sqlite3 as _sqlite3
+import time as _time
+
+_dormir_original = _time.sleep
+esperas = []
+_time.sleep = lambda s: esperas.append(s)
+try:
+    with open(paths.db_path(), "rb") as f:
+        base_sana = f.read()
+
+    for texto_error in ("database is locked", "unable to open database file"):
+        intentos = {"n": 0}
+
+        def _siempre_ocupada():
+            intentos["n"] += 1
+            raise _sqlite3.OperationalError(texto_error)
+
+        respuestas.clear()
+        respuestas.append(True)        # si preguntara, diría que SÍ a restaurar
+        dialogos.clear()
+        esperas.clear()
+        try:
+            arranque.iniciar("Otter Caja", _siempre_ocupada, lambda: None)
+            fallos.append(f"con '{texto_error}' dijo que abrió")
+        except SystemExit:
+            pass
+        if any(preguntar for _t, _m, preguntar in dialogos) or any("dañada" in t for t, _m, _p in dialogos):
+            fallos.append(f"con '{texto_error}' (base ocupada, no dañada) ofreció restaurar la copia: "
+                           f"decir que sí pisa una base sana con la de ayer")
+        elif not any("Otro programa" in (m or "") for _t, m, _p in dialogos):
+            fallos.append(f"con '{texto_error}' no explicó que la base está ocupada: {_resumen(dialogos)}")
+        elif intentos["n"] != arranque.REINTENTOS_BASE_OCUPADA + 1:
+            fallos.append(f"con '{texto_error}' probó {intentos['n']} veces; tenía que insistir "
+                           f"{arranque.REINTENTOS_BASE_OCUPADA + 1} antes de avisar")
+        else:
+            print(f"OK: '{texto_error}' se reintenta y, si sigue, avisa SIN ofrecer restaurar la copia")
+        with open(paths.db_path(), "rb") as f:
+            if f.read() != base_sana:
+                fallos.append(f"con '{texto_error}' se tocó la base")
+
+    # Si se libera enseguida (lo normal con el antivirus), la app abre sola.
+    intentos = {"n": 0}
+
+    def _ocupada_dos_veces():
+        intentos["n"] += 1
+        if intentos["n"] <= 2:
+            raise _sqlite3.OperationalError("database is locked")
+        preparar_base()
+
+    dialogos.clear()
+    abrio = {"si": False}
+    try:
+        arranque.iniciar("Otter Caja", _ocupada_dos_veces,
+                         lambda: abrio.__setitem__("si", True))
+    except SystemExit:
+        pass
+    if not abrio["si"] or dialogos:
+        fallos.append(f"la base estuvo ocupada un momento y la app no abrió sola: {_resumen(dialogos)}")
+    else:
+        print("OK: si la base se libera a los segundos, la app abre sola, sin ningún cartel")
+finally:
+    _time.sleep = _dormir_original
+
+# ---------------------------------------------------------------- #
+# 4. Después de restaurar, la Caja abre la base RESTAURADA
+# ---------------------------------------------------------------- #
+# Hasta acá se arrancó con una función de prueba. La Caja de verdad arranca
+# con su _preparar(), que fija la base en la carpeta PADRE del .exe. Tras
+# restaurar, ese arranque corre por segunda vez, y antes subía un nivel
+# más: la Caja abría sin ningún error contra una base NUEVA Y VACÍA en
+# C:\\database, justo después de haber restaurado bien la de verdad.
+import apps.master_caja.main as caja_maestro
+
+raiz = tempfile.mkdtemp(prefix="instalacion_")
+instalacion = os.path.join(raiz, "SistemaDual")
+os.makedirs(os.path.join(instalacion, "MaestroCaja"))
+argv0_original = sys.argv[0]
+sys.argv[0] = os.path.join(instalacion, "MaestroCaja", "MaestroCaja.py")   # donde estaría el .exe
+caja_maestro._unica_instancia = lambda *a, **k: True
+try:
+    _db.cerrar_conexion()
+    paths.set_base_override(None)
+    caja_maestro._preparar()
+    if os.path.dirname(os.path.dirname(paths.db_path())) != instalacion:
+        fallos.append(f"la Caja no usa la base de su instalación: {paths.db_path()}")
+    products.crear_producto(codigo="111", nombre="COCA COLA 1,5L.", precio_venta=2500.0,
+                            stock_inicial=5, usuario="test")
+    if not respaldo.hacer_copia()["hecha"]:
+        fallos.append("no se pudo hacer la copia diaria de la instalación de prueba")
+
+    # Otro día: la Caja se abre de nuevo y la base está rota.
+    _db.cerrar_conexion()
+    paths.set_base_override(None)
+    base_real = os.path.join(instalacion, "database", "stock.db")
+    with open(base_real, "wb") as f:
+        f.write(b"esto ya no es una base de datos\n" * 100)
+    for _sufijo in ("-wal", "-shm"):
+        if os.path.exists(base_real + _sufijo):
+            os.remove(base_real + _sufijo)
+
+    respuestas.clear()
+    respuestas.append(True)
+    dialogos.clear()
+    arranque.iniciar("Otter Caja", caja_maestro._preparar, lambda: None)
+
+    if os.path.abspath(paths.db_path()) != os.path.abspath(base_real):
+        fallos.append(f"después de restaurar, la Caja quedó usando {paths.db_path()} y no la base "
+                       f"restaurada de su instalación ({base_real})")
+    elif os.path.exists(os.path.join(raiz, "database")):
+        fallos.append("después de restaurar apareció una base nueva FUERA de la instalación")
+    else:
+        vistos = _db.get_connection().execute("SELECT COUNT(*) FROM Productos").fetchone()[0]
+        if vistos != 1:
+            fallos.append(f"después de restaurar la Caja ve {vistos} productos (tenía que ver 1)")
+        else:
+            print("OK: después de restaurar, la Caja abre la base restaurada (no una vacía una carpeta más arriba)")
+except SystemExit:
+    fallos.append("la Caja de verdad no abrió después de restaurar la copia")
+finally:
+    sys.argv[0] = argv0_original
+    _db.cerrar_conexion()
+    paths.set_base_override(base)
 
 print()
 if fallos:

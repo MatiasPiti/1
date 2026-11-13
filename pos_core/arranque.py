@@ -45,16 +45,58 @@ def _registrar(nombre_app: str, error: BaseException) -> str:
 
 
 def _parece_base_ilegible(error: BaseException) -> bool:
-    """¿El error es 'no puedo leer la base' y no otra cosa?
+    """¿El error es 'la base está DAÑADA' y no otra cosa?
 
     Se mira el texto y no solo el tipo porque sqlite3 usa DatabaseError
     para varias cosas distintas, y acá solo interesa el caso en que
-    restaurar una copia tiene sentido.
+    restaurar una copia tiene sentido: el archivo no es una base o está
+    roto por dentro.
+
+    "database is locked" y "unable to open database file" NO entran. Antes
+    entraban, y eso es que otro programa tiene la base ocupada un momento
+    (el antivirus revisándola, una actualización corriendo): la base está
+    sana. Ofrecerle al cajero "la base está dañada, ¿restauro la copia de
+    ayer?" en ese caso era invitarlo a pisar una base buena con una vieja,
+    y a perder las ventas del día. Para eso está _parece_base_ocupada.
     """
     texto = str(error).lower()
-    señales = ("not a database", "file is encrypted", "database disk image is malformed",
-               "database is locked", "unable to open database", "no such table")
+    señales = ("not a database", "file is encrypted", "database disk image is malformed")
     return any(s in texto for s in señales)
+
+
+def _parece_base_ocupada(error: BaseException) -> bool:
+    """¿El error es 'no pude entrar a la base AHORA'? Es pasajero: se
+    reintenta, y si sigue igual se avisa sin ofrecer restaurar nada."""
+    texto = str(error).lower()
+    return any(s in texto for s in ("database is locked", "database is busy",
+                                    "unable to open database"))
+
+
+# Cuánto se insiste cuando la base está ocupada antes de mostrar el cartel.
+REINTENTOS_BASE_OCUPADA = 3
+ESPERA_BASE_OCUPADA_S = 2.0
+
+
+def _preparar_esperando_la_base(preparar) -> None:
+    """Corre `preparar` y, si la base está ocupada, espera y prueba de nuevo.
+
+    Un antivirus que justo está mirando stock.db la deja "imposible de
+    abrir" por un instante. Sin esto, ese instante era un cartel de error a
+    las 8 de la mañana; con esto la Caja abre unos segundos más tarde.
+    """
+    for intento in range(REINTENTOS_BASE_OCUPADA + 1):
+        try:
+            preparar()
+            return
+        except Exception as error:
+            if intento == REINTENTOS_BASE_OCUPADA or not _parece_base_ocupada(error):
+                raise
+            try:
+                from pos_core.db import cerrar_conexion
+                cerrar_conexion()      # la próxima vuelta abre de cero
+            except Exception:
+                pass
+            time.sleep(ESPERA_BASE_OCUPADA_S)
 
 
 def _dialogo(titulo: str, mensaje: str, preguntar: bool = False) -> bool:
@@ -147,6 +189,18 @@ def _ofrecer_restaurar_copia(nombre_app: str) -> bool:
         if os.path.exists(destino):
             try:
                 shutil.copy2(destino, f"{destino}.danada_{sello}")
+                # Con sus dos archivos de al lado. Lo último que se vendió
+                # puede estar todavía en el -wal y no en el .db: se borra más
+                # abajo (tiene que borrarse), así que sin copiarlo acá esas
+                # ventas se perdían también de la copia "por si se puede
+                # recuperar algo". Con el mismo nombre + sufijo, que es como
+                # SQLite los busca al abrir la copia.
+                for sufijo in ("-wal", "-shm"):
+                    if os.path.exists(destino + sufijo):
+                        try:
+                            shutil.copy2(destino + sufijo, f"{destino}.danada_{sello}{sufijo}")
+                        except Exception:
+                            pass   # la copia de al lado es un extra: no frena nada
             except Exception as e:
                 # Que no se pueda guardar la dañada NO puede impedir
                 # restaurar: sin restaurar el negocio no abre, que es peor.
@@ -187,11 +241,27 @@ def iniciar(nombre_app: str, preparar, construir_ventana) -> None:
     la ventana ya lista, para hacerle mainloop().
     """
     try:
-        preparar()
+        _preparar_esperando_la_base(preparar)
     except BaseException as error:      # incluye SystemExit y KeyboardInterrupt
         if isinstance(error, SystemExit):
             raise
         ruta_log = _registrar(nombre_app, error)
+
+        if _parece_base_ocupada(error):
+            # La base está sana pero otro programa no la suelta. NO se ofrece
+            # restaurar nada: se dice qué pasa y qué probar.
+            _dialogo(
+                f"{nombre_app} no pudo abrir",
+                "Otro programa está usando la base de datos y no la suelta\n"
+                "(puede ser el antivirus, o una actualización que está corriendo).\n\n"
+                "Qué hacer:\n"
+                "1. Esperá un minuto y volvé a abrir.\n"
+                "2. Si sigue igual, reiniciá la computadora y volvé a abrir.\n"
+                "3. Si sigue igual, llamá a Matías.\n\n"
+                "No se perdió nada: la base no está dañada.\n\n"
+                f"Detalle: {error}"
+                + (f"\nQuedó anotado en:\n{ruta_log}" if ruta_log else ""))
+            raise SystemExit(1)
 
         if _parece_base_ilegible(error) and _ofrecer_restaurar_copia(nombre_app):
             try:

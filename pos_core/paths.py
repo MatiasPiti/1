@@ -26,8 +26,8 @@ def set_base_override(path: str) -> None:
     _base_override = path
 
 
-def get_base_path() -> str:
-    """Devuelve la carpeta base de la aplicación en ejecución.
+def _carpeta_del_programa() -> str:
+    """La carpeta donde REALMENTE está el programa, sin mirar ningún override.
 
     - Si corre "congelado" por PyInstaller (--onefile), sys._MEIPASS apunta
       a la carpeta temporal de extracción de recursos empaquetados, pero
@@ -38,11 +38,17 @@ def get_base_path() -> str:
     - Si corre como script .py normal (desarrollo), usamos la carpeta del
       archivo que se está ejecutando.
     """
-    if _base_override:
-        return _base_override
     if getattr(sys, "frozen", False):
         return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.abspath(sys.argv[0]))
+
+
+def get_base_path() -> str:
+    """Devuelve la carpeta base de la aplicación en ejecución: la fijada con
+    set_base_override() si hay una, y si no la del programa."""
+    if _base_override:
+        return _base_override
+    return _carpeta_del_programa()
 
 
 def set_base_override_to_parent_dir() -> None:
@@ -52,9 +58,17 @@ def set_base_override_to_parent_dir() -> None:
     C:\\SistemaDual\\MaestroDueno\\MaestroDueno.exe
     C:\\SistemaDual\\StockService\\StockService.exe
     Los tres, aplicando esto, terminan compartiendo C:\\SistemaDual\\database\\stock.db.
+
+    Se calcula SIEMPRE desde la carpeta real del ejecutable, no desde la
+    base que esté puesta en ese momento: así llamarla dos veces da lo mismo
+    que llamarla una. Antes subía un nivel por cada llamada, y hay un caso
+    en que se llama dos veces: cuando la base está dañada y el cajero acepta
+    restaurar la copia, el arranque se reintenta entero (pos_core/arranque).
+    La segunda vuelta dejaba la base en C:\\ y la Caja abría, sin ningún
+    error, contra una base NUEVA Y VACÍA en C:\\database — justo después de
+    haber restaurado bien la de verdad. Es la misma trampa de la regla 2.
     """
-    actual = get_base_path()
-    set_base_override(os.path.dirname(actual))
+    set_base_override(os.path.dirname(_carpeta_del_programa()))
 
 
 def get_resource_path(relative_path: str) -> str:
