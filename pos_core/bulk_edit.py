@@ -3,6 +3,8 @@
 Regla estricta del negocio: un aumento porcentual siempre redondea hacia
 ARRIBA a la centena más cercana (techo, no redondeo "al más cercano").
 Ejemplo obligatorio: 2500 + 3% = 2575  ->  2600 (no 2500, no 2575).
+Y un resultado que ya cae justo en la centena NO se toca: 3000 + 10% = 3300
+(ver calcular_nuevo_precio: daba 3400 por un error de redondeo binario).
 """
 
 import math
@@ -34,7 +36,15 @@ def calcular_nuevo_precio(precio_actual: float, *, porcentaje: float = None,
 
     if nuevo < 0:
         nuevo = 0
-    return redondear_a_centena_superior(nuevo) if redondear else round(nuevo, 2)
+    # A centavos ANTES del techo. Las cuentas con decimales binarios dejan
+    # "pelusa": 3000 * 1.10 no da 3300 sino 3300.0000000000005, y el techo a
+    # la centena lo llevaba a 3400 — cien pesos de más en un producto que ya
+    # caía justo en la centena (pasaba también con 6000, 7000, 11000... al
+    # 10 %, y con otros al 8 % y al 12 %). Ningún precio tiene fracciones de
+    # centavo, así que redondear a centavos saca la pelusa sin cambiar nada
+    # que sea de verdad: 2575.00 sigue yendo a 2600 y 3300.00 queda en 3300.
+    nuevo = round(nuevo, 2)
+    return redondear_a_centena_superior(nuevo) if redondear else nuevo
 
 
 def aplicar_ajuste_masivo(codigos: list, *, porcentaje: float = None, monto_fijo: float = None,

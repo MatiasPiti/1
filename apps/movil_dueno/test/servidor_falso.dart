@@ -80,7 +80,10 @@ Map<String, double?> recalcularComoLaPc(Map<String, dynamic> pedido) {
 num nuevoPrecioComoLaPc(double anterior, {double? porcentaje, double? montoFijo, bool redondear = true}) {
   var nuevo = porcentaje != null ? anterior * (1 + porcentaje / 100) : anterior + montoFijo!;
   if (nuevo < 0) nuevo = 0;
-  return redondear ? (nuevo / 100).ceil() * 100 : (nuevo * 100).round() / 100;
+  // A centavos antes del techo, como la PC: 3000 * 1.10 da 3300.0000000000005
+  // y sin esto la centena superior lo llevaba a 3400.
+  nuevo = (nuevo * 100).round() / 100;
+  return redondear ? (nuevo / 100).ceil() * 100 : nuevo;
 }
 
 /// Imita a services/api_celular.py (contrato 3): las formas salen del

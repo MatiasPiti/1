@@ -569,8 +569,10 @@ with B.cliente(app) as c:
               json={"codigos": [B.FIDEOS, B.BOLSA], "porcentaje": 10, "esperados": esperados})
     aplicado = {x["codigo"]: x for x in r.json()}
     fideos = fila("SELECT precio_venta FROM Productos WHERE codigo = ?", (B.FIDEOS,))["precio_venta"]
-    verificar(vista[0]["precio_nuevo"] == 3400 and aplicado[B.FIDEOS]["precio_nuevo"] == 3400 and fideos == 3400,
-              "la vista previa es lo que se aplica (3000 + 10 % = 3400 en las dos, con el redondeo de main)",
+    # 3000 + 10 % cae justo en la centena: tiene que quedar en 3300. Daba 3400
+    # (3000 * 1.10 = 3300.0000000000005 y el techo a la centena lo subía).
+    verificar(vista[0]["precio_nuevo"] == 3300 and aplicado[B.FIDEOS]["precio_nuevo"] == 3300 and fideos == 3300,
+              "la vista previa es lo que se aplica (3000 + 10 % = 3300 en las dos, sin los $ 100 de más)",
               f"vista {vista[0]}, aplicado {aplicado.get(B.FIDEOS)}, guardado {fideos}")
     verificar(aplicado[B.BOLSA]["ok"] is True, "un producto que ya estaba en $ 0 no frena el ajuste",
               f"bolsa: {aplicado.get(B.BOLSA)}")
@@ -614,7 +616,7 @@ with B.cliente(app) as c:
     pedir(c, "POST", "/api/precios/previsualizar", headers=H, esperado=422, json={"codigos": [B.FIDEOS]})
     pedir(c, "POST", "/api/precios/previsualizar", headers=H, esperado=422, json={"codigos": [], "porcentaje": 1})
     r = pedir(c, "POST", "/api/precios/aplicar", headers=H, esperado=422,
-              json={"codigos": [B.FIDEOS, B.CHICLE], "porcentaje": 10, "esperados": {B.FIDEOS: 3400}})
+              json={"codigos": [B.FIDEOS, B.CHICLE], "porcentaje": 10, "esperados": {B.FIDEOS: 3300}})
     verificar(r.json().get("codigo") == "dato_invalido", "'esperados' con otros códigos que la lista da 422",
               f"esperados distintos: {r.text}")
     # Un precio que cambió entre la vista previa y el aplicar: no se toca; los demás sí.

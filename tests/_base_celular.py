@@ -42,7 +42,7 @@ ALFAJOR = "7790004"     # SIN costo y con margen 0 (si tuviera margen, recalcula
 RAROS = "7790005"       # '_' y '%' en el nombre, venta anulada, fila de umbral propia INACTIVA
 INACTIVO = "7790006"    # desactivado a mano
 BOLSA = "7790007"       # precio 0 y stock 0
-FIDEOS = "7790008"      # precio 3000 (3000 + 10 % = 3400 con el redondeo de main)
+FIDEOS = "7790008"      # precio 3000 (3000 + 10 % = 3300 justo: antes daba 3400 por la pelusa binaria)
 CHICLE = "7790009"      # umbral propio 0/20 (activo)
 
 CONFIG_INI = f"""[general]
