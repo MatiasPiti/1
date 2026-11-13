@@ -34,6 +34,24 @@ def _mapear_columnas(encabezados: list) -> dict:
     return mapeo
 
 
+def texto_de_codigo(valor) -> str:
+    """El código de un producto tal como hay que guardarlo, venga como venga
+    la celda del Excel.
+
+    Si la columna Código quedó como NÚMERO (pasa al exportar desde Google
+    Sheets, o al tocar la planilla a mano), la celda llega como 7790895651755.0
+    y str() la deja en "7790895651755.0": un código que no existe. La carga
+    de siempre creaba un producto nuevo por cada fila, y la actualización de
+    precios, al no encontrar el código, intentaba cambiárselo a todos los
+    productos que emparejaba por nombre.
+    """
+    if isinstance(valor, bool):
+        return str(valor).strip()
+    if isinstance(valor, float) and valor.is_integer():
+        return str(int(valor))
+    return str(valor).strip()
+
+
 def _leer_filas(ruta: str):
     ext = os.path.splitext(ruta)[1].lower()
     if ext == ".csv":
@@ -65,7 +83,7 @@ def cargar_masivo(ruta: str, *, usuario: str, origen: str = "MAESTRO") -> dict:
         if not fila or all(str(c).strip() == "" for c in fila):
             continue
         try:
-            codigo = str(fila[mapeo["codigo"]]).strip()
+            codigo = texto_de_codigo(fila[mapeo["codigo"]])
             nombre = str(fila[mapeo["nombre"]]).strip()
             precio = float(fila[mapeo["precio_venta"]] or 0)
             stock = int(float(fila[mapeo["stock_inicial"]] or 0))

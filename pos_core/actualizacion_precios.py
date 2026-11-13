@@ -43,7 +43,7 @@ import uuid
 from datetime import datetime
 
 from pos_core.db import get_connection, transaction
-from pos_core.excel_import import _leer_filas, _mapear_columnas
+from pos_core.excel_import import _leer_filas, _mapear_columnas, texto_de_codigo
 from pos_core.matching import normalizar
 
 
@@ -92,14 +92,16 @@ def _leer_excel(ruta: str) -> list:
         if not fila or all(str(c).strip() == "" for c in fila):
             continue
         try:
-            codigo = str(fila[mapeo["codigo"]]).strip()
+            codigo = texto_de_codigo(fila[mapeo["codigo"]])
             nombre = str(fila[mapeo["nombre"]]).strip()
             precio = float(fila[mapeo["precio_venta"]] or 0)
             def celda(idx):
                 return str(fila[idx] or "").strip() if idx is not None and idx < len(fila) else ""
             rubro = celda(col_rubro)
             grupo = celda(col_grupo)
-            cod_viejo = celda(col_cod_viejo)
+            # El código interno también puede llegar como número (1410.0).
+            cod_viejo = (texto_de_codigo(fila[col_cod_viejo] or "")
+                         if col_cod_viejo is not None and col_cod_viejo < len(fila) else "")
             if not codigo or not nombre:
                 raise ValueError("código o nombre vacío")
             if precio < 0:

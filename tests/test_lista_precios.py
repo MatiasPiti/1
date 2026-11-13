@@ -736,6 +736,52 @@ else:
     print("OK: con una sola fila de ese nombre, el producto se recodifica como siempre")
 
 # --------------------------------------------------------------------- #
+# 14g. La columna Código guardada como NÚMERO en el Excel
+# --------------------------------------------------------------------- #
+# Si la planilla pasa por Google Sheets (o alguien la toca a mano), el código
+# puede quedar como número y la celda llega como 7790895651755.0. Leído tal
+# cual era "7790895651755.0", un código que no existe: la actualización no
+# encontraba ningún producto y trataba de cambiarles el código a todos los
+# que emparejaba por nombre.
+from pos_core import excel_import
+products.crear_producto(codigo="7790895651755", nombre="AQUARIUS POMELO 1,5L.", precio_venta=1500.0,
+                        usuario="test")
+# Así entrega openpyxl una celda numérica guardada con notación científica
+# (7.790895651755E12), que es como la escribe Google Sheets: como float. Se
+# reemplaza la lectura del archivo por esas filas, que es lo único que cambia.
+ruta_num = os.path.join(base, "codigo_numerico.xlsx")
+FILAS_NUM = [["Código", "Nombre", "Precio Venta", "Stock Inicial", "Proveedor", "Rubro", "Grupo",
+              "Codigo interno"],
+             [7790895651755.0, "AQUARIUS POMELO 1,5L.", 1700.0, 0, "", "BEBIDAS", "", 5100.0]]
+_leer_original = excel_import._leer_filas
+excel_import._leer_filas = lambda ruta: [list(f) for f in FILAS_NUM]
+actualizacion_precios._leer_filas = excel_import._leer_filas
+try:
+    plan_num = actualizacion_precios.analizar(ruta_num)
+    if plan_num["recodifican"] or plan_num["nuevos"] or plan_num["ambiguos"]:
+        fallos.append(f"con el código guardado como número, no se reconoció el producto: "
+                       f"recodifican={plan_num['recodifican']} nuevos={plan_num['nuevos']} "
+                       f"ambiguos={plan_num['ambiguos']}")
+    actualizacion_precios.aplicar(ruta_num, usuario="test")
+    if precio_de("7790895651755") != 1700.0 or precio_de("7790895651755.0") is not None:
+        fallos.append(f"con el código como número el precio no se actualizó (o se creó un producto "
+                       f"'...0'): {precio_de('7790895651755')} / {precio_de('7790895651755.0')}")
+    else:
+        print("OK: un código guardado como número en el Excel se lee bien (sin el '.0')")
+    antes_carga = cuantos_productos()
+    r_carga = excel_import.cargar_masivo(ruta_num, usuario="test")
+    if cuantos_productos() != antes_carga or r_carga["actualizados"] != 1:
+        fallos.append(f"la carga masiva con el código como número creó un producto de más: {r_carga}")
+    else:
+        print("OK: la carga masiva de siempre tampoco crea un producto '...0'")
+finally:
+    excel_import._leer_filas = _leer_original
+    actualizacion_precios._leer_filas = _leer_original
+if excel_import.texto_de_codigo(" 0707273535528 ") != "0707273535528" \
+        or excel_import.texto_de_codigo(1410) != "1410" or excel_import.texto_de_codigo("12-2") != "12-2":
+    fallos.append("texto_de_codigo cambió un código que venía bien (ceros a la izquierda, sufijo -2)")
+
+# --------------------------------------------------------------------- #
 # 15. El buscador de la lista de filtros (con ~700 no se puede desplazar)
 # --------------------------------------------------------------------- #
 app2 = AppDueno()

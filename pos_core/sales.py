@@ -176,11 +176,16 @@ def buscar_productos(termino: str, *, limite: int = 30) -> list:
     # convierte la búsqueda en un comodín y trae cualquier cosa.
     termino_escapado = termino.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     like = f"%{termino_escapado}%"
+    # El producto cuyo código es EXACTAMENTE lo que se tipeó va primero. Sin
+    # eso, con el orden por nombre y el tope de resultados, un producto de
+    # código corto no se podía encontrar por su código: tipear "100" trae todos
+    # los "...100G." y "...100ML." del catálogo, y el que TIENE el código 100
+    # quedaba afuera de los primeros 30.
     rows = conn.execute(
         """SELECT codigo, nombre, precio_venta FROM Productos
            WHERE activo = 1 AND (codigo LIKE ? ESCAPE '\\' OR nombre LIKE ? ESCAPE '\\')
-           ORDER BY nombre LIMIT ?""",
-        (like, like, limite),
+           ORDER BY CASE WHEN codigo = ? THEN 0 ELSE 1 END, nombre LIMIT ?""",
+        (like, like, termino, limite),
     ).fetchall()
 
     resultados = []

@@ -139,6 +139,33 @@ except Exception as e:
 finally:
     db.aplicar_migraciones = original
 
+# --- un producto se encuentra por su código aunque muchos otros lo contengan ---
+# Los productos sin código de barras llevan el código interno del sistema
+# viejo ("100", "1352"). Tipear "100" trae todos los "...100G." del catálogo,
+# ordenados por nombre y con tope de 30: el que TIENE el código 100 quedaba
+# afuera de la lista y no se podía vender por su código.
+from pos_core import sales as _sales
+products.crear_producto(codigo="100", nombre="ZZ BURMIT", precio_venta=900.0, usuario="test")
+for n in range(40):
+    products.crear_producto(codigo=f"77900{n:03d}99", nombre=f"ALFAJOR {n:02d} 100G.", precio_venta=500.0,
+                            usuario="test")
+encontrados = _sales.buscar_productos("100")
+if not encontrados or encontrados[0]["codigo"] != "100":
+    fallos.append(f"buscando '100' el producto de código 100 no sale primero "
+                   f"(sale {[p['codigo'] for p in encontrados[:3]]}...): con 40 productos que lo "
+                   f"contienen en el nombre, no se lo puede vender por su código")
+else:
+    print("CÓDIGO EXACTO -> sale primero aunque otros 40 productos lo contengan")
+caja = AppCaja()
+caja.update()
+caja.buscador.insert(0, "100")
+caja._on_buscar()
+caja.update()
+primera = caja.resultados.item(caja.resultados.get_children()[0], "values")
+if primera[0] != "100":
+    fallos.append(f"en la Caja, buscando '100' la primera fila es {primera}")
+caja.destroy()
+
 # --- un guardado que falla en el último paso no puede trabar la caja ---
 # Si el COMMIT falla (disco lleno, un error de E/S) la transacción puede
 # quedar abierta, y entonces toda venta siguiente reventaba con
