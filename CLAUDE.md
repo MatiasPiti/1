@@ -96,8 +96,14 @@ Excel regenerado de los `.DBF` de ese día: 2622 productos viejos → 4833 filas
   barras que en el sistema viejo usan dos productos (BUCKINGHAM, MILKA OREO, OZ…); códigos NUEVOS
   agregados a un producto que ya existe (AQUARIUS 1,5L., BELDENT, COCA COLA 1,5L.…: hoy no se
   escanean y siguen sin escanearse, no se crean porque el nombre ya está tomado); y DON YEYO
-  LACTAL, con 2 productos de ese nombre en Otter. Si se quiere mejorar: los del segundo tipo se
-  podrían crear como nuevos cuando TODOS los productos de ese nombre ya los reclamó su código.
+  LACTAL, con 2 productos de ese nombre en Otter.
+- **Leo reportó (13/11) que la caja daba "no registrado" con códigos que el sistema viejo sí
+  conocía: eran los del segundo tipo (~86).** Arreglado en `planificar()`: si el producto con ese
+  nombre lo reclamó una fila del **mismo código interno** del sistema viejo, el código es uno que
+  le agregaron a ese producto y se crea, con su precio y en su grupo. Si el código interno es otro,
+  sigue sin resolver. El informe los cuenta aparte en "Productos nuevos". **Falta: recompilar,
+  actualizar el local y volver a correr ensayo + aplicar con un Excel regenerado** (es idempotente:
+  lo ya aplicado no cambia). Un grupo que armó Leo a mano (AQUARIUS 1,5L.…) no los suma: es suyo.
 - 31 productos de Otter no vienen en el Excel y quedaron intactos.
 - **Leo sigue cambiando los precios en el SISTEMA VIEJO**, no en Otter (confirmado por Matías). Si
   eso cambia, esta reimportación pisaría lo que cambie en Otter: preguntarlo antes de repetirla.

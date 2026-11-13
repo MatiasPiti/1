@@ -129,6 +129,10 @@ def planificar(ruta: str) -> dict:
 
     actualizan, sin_cambios, recodifican, nuevos, ambiguos = [], [], [], [], []
     reclamados = set()     # productos de Otter ya tomados por alguna fila
+    # De qué producto del sistema viejo (código interno) es cada fila que
+    # reclamó un producto de Otter. Sirve para reconocer un código de barras
+    # que el sistema viejo le AGREGÓ a un producto que Otter ya tiene.
+    interno_del_reclamo = {}
     codigos_del_excel = set()
 
     # Primera pasada: las filas cuyo código YA existe en Otter. Van
@@ -148,6 +152,7 @@ def planificar(ruta: str) -> dict:
             pendientes.append(item)
             continue
         reclamados.add(item["codigo"])
+        interno_del_reclamo[item["codigo"]] = item.get("cod_viejo", "")
         destino = {"codigo": item["codigo"], "nombre": actual["nombre"],
                     "precio_viejo": actual["precio_venta"], "precio_nuevo": item["precio"],
                     "fila": item["fila"], "rubro": item.get("rubro", ""),
@@ -173,15 +178,27 @@ def planificar(ruta: str) -> dict:
         if not candidatos:
             # Ningún nombre libre coincide: o es un producto nuevo de
             # verdad, o su único candidato ya se lo llevó otra fila.
-            if por_nombre.get(_clave_nombre(item["nombre"])):
+            tomados = por_nombre.get(_clave_nombre(item["nombre"]))
+            if not tomados:
+                nuevos.append(item)
+            elif item.get("cod_viejo") and any(
+                    interno_del_reclamo.get(c) == item["cod_viejo"] for c in tomados):
+                # Es un código de barras que el sistema viejo le AGREGÓ a un
+                # producto que Otter ya tiene (un sabor nuevo de AQUARIUS
+                # 1,5L.): el mismo producto viejo, con su mismo precio, ya
+                # está en Otter con otro de sus códigos. No hay nada que
+                # adivinar, y sin crearlo la caja dice "no registrado" con un
+                # código que el sistema viejo sí conocía. Pasó el 11/11/2026
+                # con ~86 códigos.
+                nuevos.append({**item, "agregado": True})
+            else:
                 ambiguos.append({**item, "motivo":
                                   "el producto con ese nombre ya lo tomó otra fila del Excel"})
-            else:
-                nuevos.append(item)
             continue
 
         viejo = candidatos[0]
         reclamados.add(viejo)
+        interno_del_reclamo[viejo] = item.get("cod_viejo", "")
         actual = por_codigo[viejo]
         recodifican.append({"codigo_viejo": viejo, "codigo_nuevo": item["codigo"],
                              "nombre": actual["nombre"], "precio_viejo": actual["precio_venta"],
@@ -571,7 +588,10 @@ def informe_texto(plan: dict, *, ruta: str = "", aplicado: dict = None) -> str:
     L += [f"Cambian de precio:            {len(plan['actualizan'])}"]
     L += [f"Ya tenían ese precio:         {len(plan['sin_cambios'])}"]
     L += [f"Cambian de código de barras:  {len(plan['recodifican'])}"]
-    L += [f"Productos nuevos:             {len(plan['nuevos'])}"]
+    agregados = sum(1 for n in plan["nuevos"] if n.get("agregado"))
+    L += [f"Productos nuevos:             {len(plan['nuevos'])}"
+           + (f"  ({agregados} son códigos que le faltaban a un producto que ya estaba)"
+              if agregados else "")]
     L += [f"SIN RESOLVER (mirar abajo):   {len(plan['ambiguos'])}"]
     L += [f"Filas con error en el Excel:  {len(plan['errores'])}", ""]
 

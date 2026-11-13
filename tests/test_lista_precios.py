@@ -616,6 +616,48 @@ else:
     print("OK: un grupo por producto no pisa un filtro que armó el dueño")
 
 # --------------------------------------------------------------------- #
+# 14d. Un código de barras que el sistema viejo le AGREGÓ a un producto
+# --------------------------------------------------------------------- #
+# Pasó el 11/11/2026: en el sistema viejo a "AQUARIUS 1,5L." le cargaron un
+# sabor nuevo. Todos sus códigos se llaman igual, los que Otter ya tenía se
+# reclamaban por código, y el nuevo quedaba "SIN RESOLVER" porque el nombre
+# ya estaba tomado. Resultado: la caja decía "no registrado" con un código
+# que el sistema viejo sí conocía (~86 códigos). Si el que lo tomó es del
+# MISMO producto viejo (mismo código interno), no hay nada que adivinar.
+actualizacion_precios.aplicar(excel_grupos([
+    ("AQ1", "AQUARIUS 1,5L.", 1500.0, "BEBIDAS", "AQUARIUS 1,5L.", "5000"),
+    ("AQ2", "AQUARIUS 1,5L.", 1500.0, "BEBIDAS", "AQUARIUS 1,5L.", "5000"),
+], "aquarius1.xlsx"), usuario="test")
+ruta_aq = excel_grupos([
+    ("AQ1", "AQUARIUS 1,5L.", 1600.0, "BEBIDAS", "AQUARIUS 1,5L.", "5000"),
+    ("AQ2", "AQUARIUS 1,5L.", 1600.0, "BEBIDAS", "AQUARIUS 1,5L.", "5000"),
+    ("AQ3", "AQUARIUS 1,5L.", 1600.0, "BEBIDAS", "AQUARIUS 1,5L.", "5000"),
+    # Mismo nombre pero OTRO producto viejo: ahí sí no se sabe, no se toca.
+    ("AQ9", "AQUARIUS 1,5L.", 9999.0, "BEBIDAS", "", "6000"),
+], "aquarius2.xlsx")
+plan_aq = actualizacion_precios.analizar(ruta_aq)
+if [n["codigo"] for n in plan_aq["nuevos"]] != ["AQ3"]:
+    fallos.append(f"el código agregado no se planifica como nuevo: nuevos={plan_aq['nuevos']}")
+elif [a["codigo"] for a in plan_aq["ambiguos"]] != ["AQ9"]:
+    fallos.append(f"el de otro producto viejo con el mismo nombre no quedó sin resolver: "
+                   f"{plan_aq['ambiguos']}")
+elif "le faltaban a un producto" not in actualizacion_precios.informe_texto(plan_aq):
+    fallos.append("el informe no dice que hay códigos que le faltaban a un producto")
+else:
+    print("OK: el ensayo crea el código agregado y deja sin resolver el de otro producto")
+actualizacion_precios.aplicar(ruta_aq, usuario="test")
+g_aq = {f["nombre"]: f["definicion"] for f in filters.listar_filtros_guardados()}
+if precio_de("AQ3") != 1600.0:
+    fallos.append(f"el código agregado no quedó registrado con su precio: {precio_de('AQ3')}")
+elif precio_de("AQ9") is not None:
+    fallos.append("se creó el producto de otro código interno con el mismo nombre")
+elif sorted(p["codigo"] for p in filters.aplicar_filtro(g_aq["AQUARIUS 1,5L."])) \
+        != ["AQ1", "AQ2", "AQ3"]:
+    fallos.append("el código agregado no entró al grupo de su producto")
+else:
+    print("OK: el código que le faltaba se registra con su precio y entra a su grupo")
+
+# --------------------------------------------------------------------- #
 # 15. El buscador de la lista de filtros (con ~700 no se puede desplazar)
 # --------------------------------------------------------------------- #
 app2 = AppDueno()
