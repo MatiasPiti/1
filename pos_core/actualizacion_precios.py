@@ -135,6 +135,22 @@ def planificar(ruta: str) -> dict:
     interno_del_reclamo = {}
     codigos_del_excel = set()
 
+    # Un código que viene MÁS DE UNA VEZ con precios distintos: en el sistema
+    # viejo ese código de barras lo usan dos productos (MILKA OREO 155G. y
+    # MILKA 155G. "precio oferta" comparten uno). No hay forma de saber cuál
+    # de los dos es el producto de Otter, así que NINGUNA de esas filas se
+    # aplica. Antes se aplicaba la primera que aparecía —el Excel viene
+    # ordenado por nombre, o sea la primera por abecedario— y solo las demás
+    # iban al informe como "no se tocan": el 11/11/2026 doce productos
+    # quedaron con el precio de OTRO producto, y el informe decía que no se
+    # habían tocado. Si todas las filas traen el mismo precio no hay nada que
+    # adivinar: se aplica una sola vez.
+    precios_por_codigo = {}
+    for item in leidas:
+        precios_por_codigo.setdefault(item["codigo"], []).append(item["precio"])
+    en_disputa = {codigo: precios for codigo, precios in precios_por_codigo.items()
+                   if len(precios) > 1 and max(precios) - min(precios) >= 0.005}
+
     # Primera pasada: las filas cuyo código YA existe en Otter. Van
     # primero a propósito — reclaman su producto antes de que una fila de
     # la segunda pasada intente llevárselo por nombre. Sin esto, cuando el
@@ -142,9 +158,19 @@ def planificar(ruta: str) -> dict:
     # por el mismo registro.
     pendientes = []
     for item in leidas:
-        if item["codigo"] in codigos_del_excel:
-            ambiguos.append({**item, "motivo": "el código aparece más de una vez en el Excel"})
+        if item["codigo"] in en_disputa:
+            otros = ", ".join(f"${p:.2f}" for p in sorted(set(en_disputa[item["codigo"]])))
+            ambiguos.append({**item, "motivo":
+                              f"ese código lo usan {len(en_disputa[item['codigo']])} productos del "
+                              f"sistema viejo con precios distintos ({otros}): no se sabe cuál es"})
+            # El producto de Otter que tiene ese código queda apartado: no se
+            # le toca el precio, y tampoco puede llevárselo por nombre una fila
+            # de la segunda pasada (le cambiaría el código, que sigue vigente).
+            if item["codigo"] in por_codigo:
+                reclamados.add(item["codigo"])
             continue
+        if item["codigo"] in codigos_del_excel:
+            continue    # repetida con el mismo precio: ya se aplicó con la primera
         codigos_del_excel.add(item["codigo"])
 
         actual = por_codigo.get(item["codigo"])
@@ -168,6 +194,25 @@ def planificar(ruta: str) -> dict:
 
     # Segunda pasada: el código no está. ¿Es un producto que ya tenemos,
     # con el código de barras cambiado?
+    #
+    # Antes de emparejar por nombre se mira quién más quiere ese nombre. Si
+    # dos filas se llaman igual pero son productos DISTINTOS del sistema viejo
+    # (otro código interno: pasa con MATARAZZO FIDEOS, BC MERMELADA...) y en
+    # Otter hay un solo producto libre con ese nombre, dárselo a la primera
+    # es adivinar: se lleva el código y el PRECIO de un producto que puede no
+    # ser el suyo. El 11/11/2026 PUGLISI CABALLA pasó así de $3500 a $7300.
+    internos_por_nombre, filas_por_nombre = {}, {}
+    for item in pendientes:
+        clave = _clave_nombre(item["nombre"])
+        internos_por_nombre.setdefault(clave, set()).add(item.get("cod_viejo") or "")
+        filas_por_nombre[clave] = filas_por_nombre.get(clave, 0) + 1
+
+    def _nombre_en_disputa(clave: str) -> bool:
+        internos = internos_por_nombre.get(clave, set())
+        # Sin código interno (un Excel de los viejos) no se puede saber si dos
+        # filas del mismo nombre son el mismo producto: se toman por distintas.
+        return len(internos) > 1 or ("" in internos and filas_por_nombre.get(clave, 0) > 1)
+
     for item in pendientes:
         candidatos = [c for c in por_nombre.get(_clave_nombre(item["nombre"]), [])
                        if c not in reclamados]
@@ -194,6 +239,13 @@ def planificar(ruta: str) -> dict:
             else:
                 ambiguos.append({**item, "motivo":
                                   "el producto con ese nombre ya lo tomó otra fila del Excel"})
+            continue
+
+        if _nombre_en_disputa(_clave_nombre(item["nombre"])):
+            ambiguos.append({**item, "motivo":
+                              f"hay {filas_por_nombre[_clave_nombre(item['nombre'])]} filas del Excel con ese "
+                              f"nombre que en el sistema viejo son productos distintos: no se sabe cuál "
+                              f"es el de Otter"})
             continue
 
         viejo = candidatos[0]

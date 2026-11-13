@@ -658,6 +658,84 @@ else:
     print("OK: el código que le faltaba se registra con su precio y entra a su grupo")
 
 # --------------------------------------------------------------------- #
+# 14e. Un código de barras que en el sistema viejo usan DOS productos
+# --------------------------------------------------------------------- #
+# Pasó el 11/11/2026 con doce códigos: MILKA OREO 155G. y MILKA 155G.
+# "precio oferta" comparten el mismo código de barras. El Excel viene
+# ordenado por nombre, se aplicaba la PRIMERA fila y solo la segunda iba al
+# informe como "no se toca": el producto de Otter quedaba con el precio del
+# otro, y el informe decía que no se había tocado.
+products.crear_producto(codigo="DUP1", nombre="MILKA OREO 155G.", precio_venta=6000.0, usuario="test")
+ruta_dup = excel_grupos([
+    ("DUP1", "MILKA 155G. ( precio oferta )", 10000.0, "KIOSCO", "", "7000"),
+    ("DUP1", "MILKA OREO 155G.",              6500.0,  "KIOSCO", "", "7001"),
+], "duplicado.xlsx")
+plan_dup = actualizacion_precios.analizar(ruta_dup)
+informe_dup = actualizacion_precios.informe_texto(plan_dup)
+if plan_dup["actualizan"] or plan_dup["nuevos"] or plan_dup["recodifican"]:
+    fallos.append(f"con un código que usan dos productos se aplicó una de las filas: "
+                   f"{plan_dup['actualizan']} {plan_dup['nuevos']} {plan_dup['recodifican']}")
+elif sorted(a["nombre"] for a in plan_dup["ambiguos"]) != ["MILKA 155G. ( precio oferta )",
+                                                            "MILKA OREO 155G."]:
+    fallos.append(f"las DOS filas del código repetido tienen que ir al informe: {plan_dup['ambiguos']}")
+elif "$6500.00" not in informe_dup or "$10000.00" not in informe_dup:
+    fallos.append("el informe no muestra los dos precios en disputa, que es con lo que se decide a mano")
+elif any(n["codigo"] == "DUP1" for n in plan_dup["no_vienen"]):
+    fallos.append("el producto del código en disputa figura como 'no viene en el Excel'")
+else:
+    print("OK: un código que usan dos productos no se aplica: van las dos filas al informe, con sus precios")
+actualizacion_precios.aplicar(ruta_dup, usuario="test")
+if precio_de("DUP1") != 6000.0:
+    fallos.append(f"el producto de un código en disputa cambió de precio: quedó en {precio_de('DUP1')}")
+else:
+    print("OK: el producto de un código en disputa conserva su precio")
+
+# Si las dos filas traen el MISMO precio no hay nada que adivinar: se aplica.
+ruta_dup2 = excel_grupos([
+    ("DUP1", "MILKA 155G. ( precio oferta )", 6800.0, "KIOSCO", "", "7000"),
+    ("DUP1", "MILKA OREO 155G.",              6800.0, "KIOSCO", "", "7001"),
+], "duplicado_mismo_precio.xlsx")
+r_dup2 = actualizacion_precios.aplicar(ruta_dup2, usuario="test")
+if precio_de("DUP1") != 6800.0 or r_dup2["plan"]["ambiguos"]:
+    fallos.append(f"dos filas del mismo código con el MISMO precio tenían que aplicarse sin dudar: "
+                   f"{precio_de('DUP1')} {r_dup2['plan']['ambiguos']}")
+else:
+    print("OK: si las filas repetidas traen el mismo precio, se aplica una sola vez")
+
+# --------------------------------------------------------------------- #
+# 14f. Dos productos viejos DISTINTOS que se llaman igual y cambiaron de código
+# --------------------------------------------------------------------- #
+# El caso de PUGLISI CABALLA el 11/11/2026: en Otter había UN producto con
+# ese nombre (su código ya no venía), y en el Excel dos filas con ese nombre,
+# de dos productos distintos del sistema viejo. Se le daba a la primera: el
+# producto pasó de $3500 a $7300 con el código de quién sabe cuál de los dos.
+products.crear_producto(codigo="PUG-VIEJO", nombre="PUGLISI CABALLA", precio_venta=3500.0, usuario="test")
+filters.guardar_filtro_manual("Conservas", ["PUG-VIEJO"])
+ruta_pug = excel_grupos([
+    ("PUG-A", "PUGLISI CABALLA", 7300.0, "ALMACEN", "", "8000"),
+    ("PUG-B", "PUGLISI CABALLA", 3600.0, "ALMACEN", "", "8001"),
+], "puglisi.xlsx")
+actualizacion_precios.aplicar(ruta_pug, usuario="test")
+en_filtro = filters.aplicar_filtro({f["nombre"]: f["definicion"]
+                                     for f in filters.listar_filtros_guardados()}["Conservas"])
+if precio_de("PUG-VIEJO") != 3500.0 or precio_de("PUG-A") is not None or precio_de("PUG-B") is not None:
+    fallos.append("con dos productos viejos del mismo nombre peleando por uno de Otter, se adivinó: "
+                   f"PUG-VIEJO={precio_de('PUG-VIEJO')} PUG-A={precio_de('PUG-A')} PUG-B={precio_de('PUG-B')}")
+elif [(p["codigo"], p["precio_venta"]) for p in en_filtro] != [("PUG-VIEJO", 3500.0)]:
+    fallos.append(f"el filtro del dueño cambió por una fila que no se podía resolver: {en_filtro}")
+else:
+    print("OK: dos productos viejos del mismo nombre no se disputan el de Otter: queda como estaba")
+
+# El caso de siempre sigue andando: UNA sola fila con ese nombre es el mismo
+# producto con el código cambiado.
+ruta_pug2 = excel_grupos([("PUG-A", "PUGLISI CABALLA", 7300.0, "ALMACEN", "", "8000")], "puglisi2.xlsx")
+actualizacion_precios.aplicar(ruta_pug2, usuario="test")
+if precio_de("PUG-A") != 7300.0 or precio_de("PUG-VIEJO") is not None:
+    fallos.append("una sola fila con el nombre ya no recodifica el producto (se rompió el caso normal)")
+else:
+    print("OK: con una sola fila de ese nombre, el producto se recodifica como siempre")
+
+# --------------------------------------------------------------------- #
 # 15. El buscador de la lista de filtros (con ~700 no se puede desplazar)
 # --------------------------------------------------------------------- #
 app2 = AppDueno()
