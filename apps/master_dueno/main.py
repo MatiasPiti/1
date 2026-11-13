@@ -133,6 +133,31 @@ class AppDueno(tk.Tk):
         else:
             self._verificar_conexion_periodica()
 
+    def report_callback_exception(self, exc, val, tb):
+        """Un botón que falla por la conexión no puede fallar en silencio.
+
+        Los .exe no tienen consola: un error que nadie ataja en un botón se
+        pierde y en pantalla no pasa NADA. En el Dueño Remoto eso es lo que
+        se veía cada vez que se cortaba la conexión en medio de una acción
+        (guardar un filtro, cancelar una oferta, refrescar una lista): el
+        dueño apretaba, no pasaba nada, y apretaba de nuevo. Ahora un error
+        de conexión que nadie atajó se muestra. El resto sigue como siempre.
+        """
+        if isinstance(val, RemoteError):
+            import time
+            # Como mucho un cartel cada 3 segundos: un buscador que falla a
+            # cada tecla no puede tapar la pantalla de carteles.
+            if time.monotonic() - getattr(self, "_ultimo_aviso_conexion", -1e9) > 3:
+                try:
+                    messagebox.showwarning(
+                        "No se pudo completar la acción",
+                        f"{val}\n\nFijate el cartel de arriba: cuando vuelva a estar en verde, "
+                        f"probá de nuevo.")
+                finally:
+                    self._ultimo_aviso_conexion = time.monotonic()
+            return
+        super().report_callback_exception(exc, val, tb)
+
     def _verificar_conexion_periodica(self):
         # Nunca asumas que lo que ves está actualizado: si se corta la
         # conexión con el local (wifi, datos móviles, lo que sea), esto lo
@@ -969,8 +994,7 @@ class AppDueno(tk.Tk):
         except ValueError:
             messagebox.showerror("Error", "Porcentaje inválido")
             return
-        resultados = self.backend.bulk_edit.aplicar_ajuste_masivo(codigos, porcentaje=pct, usuario=USUARIO, origen=ORIGEN)
-        self._mostrar_resultado_bulk(resultados)
+        self._aplicar_bulk(codigos, porcentaje=pct)
 
     def _aplicar_bulk_fijo(self):
         codigos = self._codigos_seleccionados()
@@ -981,19 +1005,84 @@ class AppDueno(tk.Tk):
         if monto is None:
             messagebox.showerror("Error", "Monto inválido")
             return
-        resultados = self.backend.bulk_edit.aplicar_ajuste_masivo(codigos, monto_fijo=monto, usuario=USUARIO, origen=ORIGEN)
+        self._aplicar_bulk(codigos, monto_fijo=monto)
+
+    def _precios_en_pantalla(self, codigos):
+        """{código: precio que muestra la grilla del filtro}, o None si de
+        alguno no se sabe (ahí no se manda nada y queda como siempre)."""
+        esperados = {}
+        for codigo in codigos:
+            dato = self.filtro_nombres.get(codigo)
+            if dato is None:
+                return None
+            esperados[codigo] = dato[1]
+        return esperados
+
+    def _aplicar_bulk(self, codigos, **ajuste):
+        """Aplica el ajuste mandando, con cada código, el precio que el dueño
+        está VIENDO en la grilla.
+
+        Un producto cuyo precio guardado ya no es ese no se toca. Es lo que
+        hace seguro repetir: desde el Dueño Remoto, un aumento sobre un grupo
+        grande (ALMACEN son más de mil productos) puede tardar más que la
+        espera de la conexión; el Panel avisaba "sin conexión" —o no avisaba
+        nada— mientras el local seguía aplicando, y apretar de nuevo le sumaba
+        el aumento OTRA VEZ a lo que ya había subido. La app del celular ya
+        trabajaba así; el Panel no.
+        """
+        try:
+            resultados = self.backend.bulk_edit.aplicar_ajuste_masivo(
+                codigos, usuario=USUARIO, origen=ORIGEN,
+                esperados=self._precios_en_pantalla(codigos), **ajuste)
+        except Exception as e:
+            # No se refresca la grilla a propósito: mientras muestre los
+            # precios de ANTES, repetir no puede sumar el aumento dos veces.
+            messagebox.showerror(
+                "No se pudo confirmar el cambio",
+                f"{e}\n\n"
+                "No se sabe si el cambio llegó a aplicarse (puede estar aplicándose todavía).\n\n"
+                "Esperá un minuto, volvé a cargar el filtro y fijate los precios. Si no "
+                "cambiaron, aplicá de nuevo: lo que ya haya subido no se toca dos veces.")
+            return
         self._mostrar_resultado_bulk(resultados)
 
     def _mostrar_resultado_bulk(self, resultados):
         ok = [r for r in resultados if r["ok"]]
+        fallidos = [r for r in resultados if not r["ok"]]
         detalle = "\n".join(f"{r['codigo']}: ${r['precio_anterior']:.2f} -> ${r['precio_nuevo']:.2f}" for r in ok)
-        messagebox.showinfo("Edición masiva aplicada", f"{len(ok)} productos actualizados.\n\n{detalle[:1500]}")
-        for codigo in [r["codigo"] for r in ok]:
-            if codigo in self.filtro_nombres:
-                nombre, _ = self.filtro_nombres[codigo]
-                nuevo = next(r["precio_nuevo"] for r in ok if r["codigo"] == codigo)
-                self.filtro_nombres[codigo] = (nombre, nuevo)
+        for r in ok:
+            if r["codigo"] in self.filtro_nombres:
+                nombre, _ = self.filtro_nombres[r["codigo"]]
+                self.filtro_nombres[r["codigo"]] = (nombre, r["precio_nuevo"])
+
+        if fallidos:
+            # Los que no se tocaron se releen, así la grilla muestra lo que
+            # hay guardado de verdad y no el precio viejo que causó el rechazo.
+            try:
+                actuales = self.backend.filters.aplicar_filtro(
+                    {"tipo": "manual", "codigos": [r["codigo"] for r in fallidos]})
+                for p in actuales:
+                    self.filtro_nombres[p["codigo"]] = (p["nombre"], p["precio_venta"])
+            except Exception:
+                pass    # sin conexión la grilla queda como estaba; el cartel avisa igual
         self._refrescar_bulk_tree()
+
+        if not fallidos:
+            messagebox.showinfo("Edición masiva aplicada",
+                                 f"{len(ok)} productos actualizados.\n\n{detalle[:1500]}")
+            return
+        # Antes los que fallaban no aparecían en ningún lado: el cartel decía
+        # solo cuántos se habían actualizado.
+        no_tocados = "\n".join(f"{r['codigo']}: {r.get('error', '')}" for r in fallidos[:15])
+        if len(fallidos) > 15:
+            no_tocados += f"\n... y {len(fallidos) - 15} más."
+        messagebox.showwarning(
+            "Edición masiva: hubo productos que NO se tocaron",
+            f"{len(ok)} productos actualizados.\n"
+            f"{len(fallidos)} NO se tocaron:\n\n{no_tocados}\n\n"
+            "Si dice que el precio cambió mientras tanto, puede que el cambio ya estuviera "
+            "aplicado. La lista ahora muestra el precio guardado: fijate antes de aplicar de nuevo."
+            + (f"\n\nActualizados:\n{detalle[:800]}" if ok else ""))
 
     # ------------------------------------------------------------------ #
     # PDF

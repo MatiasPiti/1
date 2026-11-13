@@ -122,7 +122,132 @@ if en_pantalla != esperados:
     fallos.append(f"la grilla del filtro muestra {en_pantalla} y lo guardado es {esperados}")
 else:
     print("OK: la grilla del filtro muestra los mismos precios que quedaron guardados")
+# --------------------------------------------------------------------- #
+# 4. Repetir un aumento que "no contestó" no lo suma dos veces
+# --------------------------------------------------------------------- #
+# Desde el Dueño Remoto, un aumento sobre un grupo grande puede tardar más
+# que la espera de la conexión: el local lo aplica, pero al Panel le llega
+# un error (o, antes, nada). El dueño aprieta de nuevo — y el aumento se
+# sumaba otra vez a lo que ya había subido. Se simula eso: la primera vez el
+# cambio se aplica y la respuesta se pierde.
+from pos_core.dueno_backend import RemoteError
+
+carteles.clear()
+real = app.backend.bulk_edit.aplicar_ajuste_masivo
+llamadas = []
+
+
+def _se_aplica_pero_no_contesta(*a, **k):
+    llamadas.append(k)
+    real(*a, **k)
+    raise RemoteError("No se pudo conectar con el local: Read timed out.")
+
+
+app.backend.bulk_edit.aplicar_ajuste_masivo = _se_aplica_pero_no_contesta
+app._aplicar_bulk_pct()                         # +10 %: se aplica, pero el Panel no se entera
+app.update()
+tras_la_primera = {c: precio_de(c) for c in ("F1", "F2", "F3")}
+if tras_la_primera != {"F1": 3700.0, "F2": 3100.0, "F3": 8500.0}:
+    fallos.append(f"la prueba no llegó a aplicar el segundo aumento: {tras_la_primera}")
+if not carteles or carteles[-1][0] != "showerror":
+    fallos.append(f"el aumento no contestó y el Panel no avisó nada (el botón parecía muerto): {carteles[-1:]}")
+elif not llamadas or llamadas[0].get("esperados") != {"F1": 3300.0, "F2": 2800.0, "F3": 7700.0}:
+    fallos.append(f"el Panel no mandó los precios que estaba mostrando: {llamadas[:1]}")
+else:
+    print("OK: si el aumento no contesta, el Panel avisa y no da nada por hecho")
+
+app.backend.bulk_edit.aplicar_ajuste_masivo = real
+carteles.clear()
+app._aplicar_bulk_pct()                         # el dueño aprieta de nuevo
+app.update()
+tras_repetir = {c: precio_de(c) for c in ("F1", "F2", "F3")}
+if tras_repetir != tras_la_primera:
+    fallos.append(f"repetir el aumento lo sumó DOS veces: de {tras_la_primera} pasó a {tras_repetir}")
+elif not carteles or carteles[-1][0] != "showwarning" or "NO se tocaron" not in str(carteles[-1][1]):
+    fallos.append(f"repetir no dijo que esos productos no se tocaron: {carteles[-1:]}")
+else:
+    print("OK: repetir el aumento no lo suma dos veces, y el cartel dice qué no se tocó")
+en_pantalla = {app.bulk_tree.item(i, "values")[0]: float(app.bulk_tree.item(i, "values")[2])
+               for i in app.bulk_tree.get_children()}
+if en_pantalla != tras_la_primera:
+    fallos.append(f"después del rechazo la grilla muestra {en_pantalla} y lo guardado es {tras_la_primera}")
+else:
+    print("OK: después del rechazo la grilla muestra los precios que están guardados")
+
+# Y ahora sí, viendo los precios de verdad, un aumento nuevo se aplica.
+carteles.clear()
+app._aplicar_bulk_pct()
+app.update()
+if precio_de("F1") != 4100.0:          # 3700 + 10 % = 4070 -> 4100
+    fallos.append(f"con la grilla al día, un aumento nuevo no se aplicó: F1 quedó en {precio_de('F1')}")
+else:
+    print("OK: con la grilla al día, un aumento nuevo se aplica normalmente")
+
+# --------------------------------------------------------------------- #
+# 5. Un botón que falla por la conexión no falla en silencio
+# --------------------------------------------------------------------- #
+carteles.clear()
+app.after(0, lambda: (_ for _ in ()).throw(RemoteError("No se pudo conectar con el local: se cortó")))
+app.update()
+if not carteles or "No se pudo completar" not in str(carteles[-1][1][0]):
+    fallos.append(f"un error de conexión en un botón cualquiera no mostró ningún cartel: {carteles}")
+else:
+    print("OK: un error de conexión que nadie atajó se muestra en un cartel (antes no pasaba nada)")
+
 app.destroy()
+
+# --------------------------------------------------------------------- #
+# 6. Lo mismo desde el Dueño Remoto, contra la API levantada de verdad
+# --------------------------------------------------------------------- #
+# Los precios que el Panel está mostrando viajan por la red como parte del
+# pedido: si no llegaran bien, el aumento se rechazaría entero o, peor, se
+# aplicaría sin el freno.
+import socket
+from services import remote_api
+from pos_core.dueno_backend import RemoteBackend
+
+_libre = socket.socket()
+_libre.bind(("127.0.0.1", 0))
+puerto = _libre.getsockname()[1]
+_libre.close()
+servidor = remote_api.iniciar_servidor(puerto=puerto, token="token-de-prueba", escuchar_en="127.0.0.1")
+try:
+    remoto = AppDueno(backend=RemoteBackend(f"http://127.0.0.1:{puerto}", "token-de-prueba"))
+    remoto.update()
+    remoto.buscar_filtro.insert(0, "fideos")
+    remoto._refrescar_lista_filtros()
+    remoto.lista_filtros.selection_set(0)
+    remoto._cargar_filtro_guardado()
+    remoto.update()
+    antes = {c: precio_de(c) for c in ("F1", "F2", "F3")}
+    carteles.clear()
+    remoto.bulk_pct.insert(0, "10")
+    remoto._aplicar_bulk_pct()
+    remoto.update()
+    despues = {c: precio_de(c) for c in ("F1", "F2", "F3")}
+    esperado_remoto = {c: float(bulk_edit.calcular_nuevo_precio(p, porcentaje=10)) for c, p in antes.items()}
+    if despues != esperado_remoto or not carteles or carteles[-1][0] != "showinfo":
+        fallos.append(f"desde el Dueño Remoto, 'Aplicar %' dejó {despues} (esperado {esperado_remoto}); "
+                       f"cartel: {carteles[-1:]}")
+    else:
+        print("OK: desde el Dueño Remoto (API real) el aumento se aplica una vez, con el freno puesto")
+
+    # Otro programa cambia un precio mientras el Panel remoto tiene la lista abierta.
+    from pos_core import precios as _precios
+    _precios.actualizar_precios(codigo="F1", precio_final=9999, usuario="otro")
+    carteles.clear()
+    remoto._aplicar_bulk_pct()
+    remoto.update()
+    if precio_de("F1") != 9999.0:
+        fallos.append(f"un precio que cambió por otro lado se pisó igual: F1 quedó en {precio_de('F1')}")
+    elif not carteles or carteles[-1][0] != "showwarning":
+        fallos.append("un producto que no se tocó no apareció en ningún cartel")
+    else:
+        print("OK: un precio que cambió por otro lado mientras tanto no se pisa, y se avisa")
+    remoto.destroy()
+finally:
+    servidor.shutdown()
+    servidor.server_close()
 
 print()
 if fallos:

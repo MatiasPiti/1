@@ -103,7 +103,17 @@ class RemoteBackend:
     """Modo Dueño Remoto: cada `self.<modulo>.<función>(...)` termina
     siendo un POST a http://<PC del local>:<puerto>/rpc."""
 
-    def __init__(self, base_url: str, token: str, *, timeout: int = 20):
+    # Dos esperas distintas, porque son dos preguntas distintas:
+    #  - cuánto esperar a que el local CONTESTE EL LLAMADO (si está apagado o
+    #    sin VPN no va a contestar nunca: mejor enterarse en segundos);
+    #  - cuánto esperar la RESPUESTA una vez que atendió. Un aumento sobre un
+    #    grupo grande o la carga de un Excel tardan lo suyo, y con 20 s para
+    #    todo el Panel decía "no se pudo conectar" mientras el local seguía
+    #    trabajando — una invitación a apretar el botón de nuevo.
+    ESPERA_CONEXION_S = 8
+    ESPERA_RESPUESTA_S = 120
+
+    def __init__(self, base_url: str, token: str, *, timeout: int = ESPERA_RESPUESTA_S):
         import requests
         self._requests = requests
         base_url = (base_url or "").strip().rstrip("/")
@@ -131,7 +141,8 @@ class RemoteBackend:
 
     def _post(self, cuerpo: dict) -> dict:
         try:
-            resp = self._requests.post(f"{self.base_url}/rpc", timeout=self.timeout,
+            resp = self._requests.post(f"{self.base_url}/rpc",
+                                        timeout=(self.ESPERA_CONEXION_S, self.timeout),
                                         headers=self._headers(), json=cuerpo)
         except self._requests.RequestException as e:
             raise RemoteError(f"No se pudo conectar con el local: {e}")
