@@ -465,7 +465,8 @@ else:
 BOM = "\ufeff"
 base = nueva_base(BOM + CONFIG_REAL)
 ruta = os.path.join(base, "config.ini")
-if not leer_bytes(ruta).startswith(b"\xef\xbb\xbf"):
+bytes_con_bom = leer_bytes(ruta)
+if not bytes_con_bom.startswith(b"\xef\xbb\xbf"):
     falla("la prueba no llegó a escribir el BOM: no prueba nada")
 sin_bom = configparser.ConfigParser()
 sin_bom.read_dict(config._DEFAULTS)
@@ -482,7 +483,9 @@ for nombre, cargar in (("cargar_config()", config.cargar_config),
         falla(f"{nombre} con BOM no lee lo mismo que sin BOM")
     else:
         ok(f"{nombre} con un config.ini con BOM lee lo mismo que sin BOM (token incluido)")
-if leer_bytes(ruta) != (BOM + CONFIG_REAL).encode("utf-8"):
+# Contra los bytes que había, no contra el texto: en Windows el archivo se
+# guarda con \r\n y compararlo con el texto daba un falso "lo modificó".
+if leer_bytes(ruta) != bytes_con_bom:
     falla("leer un config.ini con BOM lo modificó")
 
 # Guardar encima conserva TODO lo que había y deja el archivo sin BOM.
