@@ -92,7 +92,37 @@ def tipo_de_instalacion(carpeta: str) -> str:
         return "USB_CAJA"
     if os.path.isfile(os.path.join(carpeta, "USB_Dueno.exe")):
         return "USB_DUENO"
-    return "MAESTRO"
+    # La laptop del dueño. Va ANTES que el Maestro y gana siempre: en una
+    # carpeta que tiene el Dueño Remoto no se instala el Maestro por ningún
+    # motivo (regla 2). El 21/9/2026 esta función devolvía "MAESTRO" por
+    # descarte, se la apuntó a C:\Otter en la laptop de Leo y le copió
+    # adentro MaestroCaja\, MaestroDueno\ y StockService\: el
+    # MaestroDueno.exe que abre perfecto, contra una base vacía.
+    if os.path.isdir(os.path.join(carpeta, "DuenoRemoto")) \
+            or os.path.isfile(os.path.join(carpeta, "DuenoRemoto.exe")):
+        return "DUENO_REMOTO"
+    # El Maestro se reconoce por lo que tiene, no por descarte: alguna de
+    # sus tres apps, o su base (una instalación a la que se le borraron los
+    # programas se sigue pudiendo reparar).
+    if any(os.path.isdir(os.path.join(carpeta, app))
+           for app in ("MaestroCaja", "MaestroDueno", "StockService")) \
+            or os.path.isfile(os.path.join(carpeta, "database", "stock.db")):
+        return "MAESTRO"
+    return "DESCONOCIDA"
+
+
+# Por qué NO se repara cada tipo que no es una instalación reparable desde
+# este USB. Se muestra tal cual en la pantalla y en el informe.
+MOTIVO_NO_SE_REPARA = {
+    "DUENO_REMOTO": ("Esta carpeta es una instalación del DUEÑO REMOTO (la laptop del dueño). "
+                     "Desde este USB no hay nada que repararle: no tiene base ni programas del "
+                     "Maestro, y copiárselos sería instalarle el MaestroDueno.exe, que abre sin "
+                     "errores contra una base vacía. El Dueño Remoto se mantiene con el "
+                     "OtterActualizador."),
+    "DESCONOCIDA": ("Esta carpeta no parece una instalación de Otter: no tiene las apps del "
+                    "Maestro, ni su base, ni un USB de emergencia. Elegí la carpeta de la "
+                    "instalación (por ejemplo C:\\SistemaDual) o la raíz del pendrive."),
+}
 
 
 # ---------------------------------------------------------------------- #
@@ -164,6 +194,16 @@ def verificar_y_reparar_db(carpeta_instalacion: str, log: list) -> None:
         finally:
             conn.close()
     except Exception as e:
+        if _base_ocupada(e):
+            # Otro programa la tiene tomada (la Caja a mitad de una venta, el
+            # antivirus mirándola). Eso NO es una base dañada: antes caía
+            # acá abajo, se la daba por corrupta y se le copiaba encima el
+            # backup más reciente — una base sana pisada con una vieja, y las
+            # ventas de por medio perdidas. No se toca; se avisa.
+            log.append(f"[DB] ATENCIÓN: no se pudo revisar la base ahora porque otro programa la "
+                        f"está usando ({e}). NO se tocó. Cerrá la Caja y el Panel y volvé a correr "
+                        f"el mantenimiento.")
+            return
         # Base tan dañada que ni se puede abrir para revisarla: se trata
         # igual que una corrupción detectada, no se aborta todo el
         # mantenimiento por esto.
@@ -204,6 +244,14 @@ def verificar_y_reparar_db(carpeta_instalacion: str, log: list) -> None:
     except Exception as e:
         log.append(f"[DB] ERROR reparando la base con .dump/.restore: {e}")
         _restaurar_backup_mas_reciente(db_path, carpeta_instalacion, log, excluir=backup_path)
+
+
+def _base_ocupada(error: BaseException) -> bool:
+    """¿El error es 'no pude entrar a la base AHORA' (ocupada), y no que
+    esté rota? Mismo criterio que pos_core.arranque._parece_base_ocupada."""
+    texto = str(error).lower()
+    return any(s in texto for s in ("database is locked", "database is busy",
+                                    "unable to open database"))
 
 
 def _base_abre_ok(db_path: str) -> bool:
@@ -646,6 +694,13 @@ def _rotar_reporte_si_hace_falta(reporte_path: str) -> None:
 def ejecutar_mantenimiento(carpeta_instalacion: str, tipo_instalacion: str = "MAESTRO") -> list:
     log = [f"=== Reporte de Mantenimiento — {_timestamp()} ===",
            f"Instalación objetivo: {carpeta_instalacion} ({tipo_instalacion})"]
+    if tipo_instalacion not in _MAPA_ESPEJO:
+        # No se corre NINGÚN paso: ni copiar programas, ni crear una base,
+        # ni tocar un config. Ver MOTIVO_NO_SE_REPARA.
+        log.append("[NO SE TOCÓ NADA] " + MOTIVO_NO_SE_REPARA.get(
+            tipo_instalacion, f"Tipo de instalación desconocido: {tipo_instalacion}."))
+        log.append("=== Fin del mantenimiento ===")
+        return log
     carpeta_usb_dev = get_base_path()
     db_path = os.path.join(carpeta_instalacion, "database", "stock.db")
 
@@ -758,8 +813,12 @@ class AppMantenimiento(tk.Tk):
             messagebox.showwarning("Falta la carpeta", "Elegí la carpeta de instalación a reparar.")
             return
         self.salida.delete("1.0", "end")
+        tipo = tipo_de_instalacion(carpeta)
+        if tipo in MOTIVO_NO_SE_REPARA:
+            # Se frena ACÁ, antes de correr nada, y se dice por qué.
+            messagebox.showwarning("No se reparó nada", MOTIVO_NO_SE_REPARA[tipo])
         try:
-            log = ejecutar_mantenimiento(carpeta, tipo_de_instalacion(carpeta))
+            log = ejecutar_mantenimiento(carpeta, tipo)
         except Exception as e:
             messagebox.showerror("Error inesperado", str(e))
             return
