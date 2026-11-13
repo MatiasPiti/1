@@ -65,7 +65,7 @@ Son chicos. Hacerlo apenas llegues, antes de tocar nada.
     venv\Scripts\pip install -r requirements.txt
     venv\Scripts\python tests\correr_todos.py
 
-Tienen que dar 23 en verde.
+Tienen que dar 28 en verde.
 
    OJO - test_config_atomico.py puede dar FALLA en Windows
    si la maquina esta cargada ("sobrevivieron 157 de 160").
@@ -205,6 +205,13 @@ Lo otro que vale mirar en el informe:
   - "GRUPOS - Por producto": tiene que decir que crea ~683.
   - "GRUPOS - Por rubro": ~16.
   - "Filtros guardados que ya existian": los del dueno.
+  - En SIN RESOLVER, las filas que dicen "ese codigo lo usan
+    2 productos del sistema viejo con precios distintos":
+    son codigos de barras compartidos por dos productos. NO
+    se tocan (antes se aplicaba la primera fila y el producto
+    podia quedar con el precio del otro: paso el 11/11 con 12
+    codigos). El informe muestra los dos precios: el correcto
+    se pone a mano en la pantalla de Precios del Panel.
 
 ===========================================================
  PASO 6 - APLICAR
