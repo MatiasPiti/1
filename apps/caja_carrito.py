@@ -83,6 +83,42 @@ class CarritoTecladoMixin:
         if self._editor_cantidad is not None:
             self._confirmar_cantidad(self._editor_linea_id, self._editor_cantidad.get())
 
+    # ------------------------------------------------------------------ #
+    # Cobrar una sola vez
+    # ------------------------------------------------------------------ #
+    def _cobro_unico(self, cobrar):
+        """Corre `cobrar` (registra la venta, imprime y muestra el cartel)
+        y, mientras no termine, ignora cualquier otro pedido de cobro.
+
+        El carrito de una venta sigue cargado hasta que se cierra el cartel
+        de "Venta cobrada". Si en ese rato se atiende un segundo F5/F12 —una
+        tecla apretada dos veces, o apretada de nuevo porque la pantalla
+        quedó quieta mientras contestaba ARCA— la misma venta se registraba
+        otra vez: dos tickets, dos descuentos de stock y, con F12, dos
+        facturas. La caja no cobraba dos veces al cliente, pero el arqueo no
+        cerraba y la factura de más solo se anula con una nota de crédito.
+
+        La marca se baja SIEMPRE (finally): si quedara puesta por un error,
+        la caja no cobraría más, que es peor que cualquier otra cosa.
+        """
+        if getattr(self, "_cobro_en_curso", False):
+            return
+        self._cobro_en_curso = True
+        try:
+            cobrar()
+        finally:
+            self._cobro_en_curso = False
+
+    def _carrito_cobrado(self):
+        """La venta ya quedó registrada: se vacía el carrito y se vuelve al
+        buscador. Se llama desde un `finally`, así que corre aunque falle la
+        impresión o el cartel: un carrito que queda cargado después de
+        cobrar es una venta que se puede registrar de nuevo con un F5."""
+        self._init_carrito()
+        self._refrescar_grilla_carrito()
+        self.buscador.delete(0, "end")
+        self._ir_a_buscador()
+
     def _nueva_linea(self, codigo: str, nombre: str, precio: float, cantidad: int = 1) -> dict:
         linea = {"_id": self._proximo_id_linea, "codigo": codigo, "nombre": nombre,
                  "cantidad": cantidad, "precio_unitario": precio}

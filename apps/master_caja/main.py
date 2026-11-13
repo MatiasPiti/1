@@ -194,23 +194,14 @@ class AppCaja(CarritoTecladoMixin, tk.Tk):
         self._refrescar_grilla_carrito(mostrar_linea_id=linea.get("_id"))
 
     def _cobrar_sin_facturar(self):
-        # Si el cajero dejó abierto el campo de cantidad y fue directo a
-        # cobrar, se aplica lo que escribió antes de calcular el total.
-        self._confirmar_edicion_pendiente()
-        if not self.carrito:
-            messagebox.showwarning("Carrito vacío", "Agregá al menos un producto antes de cobrar.")
-            return
-        try:
-            resultado = sales.cerrar_ticket(
-                self.carrito, metodo_pago=self.metodo_pago.get(), usuario=USUARIO, origen=ORIGEN)
-        except Exception as e:
-            messagebox.showerror("Error al cobrar", str(e))
-            return
-
-        mensaje = f"Ticket {resultado['venta_uuid'][:8]}... por ${resultado['total']:.2f}\n(cobrado sin factura)"
-        self._finalizar_cobro(resultado, mensaje)
+        # _cobro_unico: mientras esta venta no termine de cobrarse (hasta que
+        # se cierra el cartel), otro F5/F12 no hace nada. Ver caja_carrito.
+        self._cobro_unico(lambda: self._cobrar(facturar=False))
 
     def _cobrar_y_facturar(self):
+        self._cobro_unico(lambda: self._cobrar(facturar=True))
+
+    def _cobrar(self, *, facturar: bool):
         # Si el cajero dejó abierto el campo de cantidad y fue directo a
         # cobrar, se aplica lo que escribió antes de calcular el total.
         self._confirmar_edicion_pendiente()
@@ -224,26 +215,37 @@ class AppCaja(CarritoTecladoMixin, tk.Tk):
             messagebox.showerror("Error al cobrar", str(e))
             return
 
-        # La venta ya quedó registrada acá arriba: si la factura falla,
-        # NUNCA se deshace el cobro, solo se avisa que hay que facturarla
-        # después (ver Panel del Dueño, pestaña "Facturación ARCA").
+        # Desde acá la venta YA quedó registrada. Pase lo que pase con la
+        # factura, la impresión o el cartel, el carrito se vacía (finally):
+        # si quedara cargado, el próximo F5 cobraría la misma venta de nuevo.
+        try:
+            if facturar:
+                mensaje = self._facturar_venta_cobrada(resultado)
+            else:
+                mensaje = (f"Ticket {resultado['venta_uuid'][:8]}... por ${resultado['total']:.2f}\n"
+                           f"(cobrado sin factura)")
+            self._finalizar_cobro(resultado, mensaje)
+        finally:
+            self._carrito_cobrado()
+
+    def _facturar_venta_cobrada(self, resultado: dict) -> str:
+        """Factura con ARCA la venta recién cobrada y devuelve el texto del
+        cartel. Si la factura falla, NUNCA se deshace el cobro: solo se avisa
+        que hay que facturarla después (Panel del Dueño, 'Facturación ARCA')."""
         try:
             factura = sales.facturar_venta_arca(resultado["venta_uuid"])
-            mensaje = (f"Ticket {resultado['venta_uuid'][:8]}... por ${resultado['total']:.2f}\n"
-                       f"Factura {factura['tipo_comprobante']} Nº {factura['numero_comprobante']}\n"
-                       f"CAE: {factura['cae']}")
+            return (f"Ticket {resultado['venta_uuid'][:8]}... por ${resultado['total']:.2f}\n"
+                    f"Factura {factura['tipo_comprobante']} Nº {factura['numero_comprobante']}\n"
+                    f"CAE: {factura['cae']}")
         except Exception as e:
             # Cualquier falla facturando (ArcaError o algo inesperado): la
-            # venta YA se cobró arriba y no se deshace acá. Atajamos
-            # cualquier tipo de excepción, no solo ArcaError, para nunca
-            # dejar al cajero con el carrito colgado y sin ningún aviso
-            # después de haber cobrado de verdad.
-            mensaje = (f"Ticket {resultado['venta_uuid'][:8]}... por ${resultado['total']:.2f}\n\n"
-                       f"La venta se cobró OK, pero NO se pudo facturar con ARCA:\n{e}\n\n"
-                       f"Se puede reintentar después desde el Panel del Dueño "
-                       f"(pestaña 'Facturación ARCA').")
-
-        self._finalizar_cobro(resultado, mensaje)
+            # venta YA se cobró y no se deshace acá. Atajamos cualquier tipo
+            # de excepción, no solo ArcaError, para nunca dejar al cajero con
+            # el carrito colgado y sin ningún aviso después de haber cobrado.
+            return (f"Ticket {resultado['venta_uuid'][:8]}... por ${resultado['total']:.2f}\n\n"
+                    f"La venta se cobró OK, pero NO se pudo facturar con ARCA:\n{e}\n\n"
+                    f"Se puede reintentar después desde el Panel del Dueño "
+                    f"(pestaña 'Facturación ARCA').")
 
     def _finalizar_cobro(self, resultado: dict, mensaje: str):
         self._imprimir_venta(resultado["venta_uuid"], silencioso=True)
@@ -255,11 +257,6 @@ class AppCaja(CarritoTecladoMixin, tk.Tk):
             messagebox.showwarning("Venta registrada con avisos", mensaje)
         else:
             messagebox.showinfo("Venta cobrada", mensaje)
-
-        self._init_carrito()
-        self._refrescar_grilla_carrito()
-        self.buscador.delete(0, "end")
-        self._ir_a_buscador()
 
     def _imprimir_venta(self, venta_uuid: str, *, silencioso: bool = False):
         try:

@@ -116,10 +116,23 @@ def facturar_venta_arca(venta_uuid: str) -> dict:
 
     conn = get_connection()
     venta = conn.execute(
-        "SELECT total, fecha_hora FROM Ventas WHERE uuid_unico = ?", (venta_uuid,)
+        "SELECT total, fecha_hora, facturada, anulada, tipo_comprobante, numero_comprobante "
+        "FROM Ventas WHERE uuid_unico = ?", (venta_uuid,)
     ).fetchone()
     if venta is None:
         raise ValueError("Venta no encontrada")
+    # Una venta se factura UNA sola vez. La lista del Panel ("Reintentar
+    # facturación de la venta seleccionada") muestra todas las ventas del
+    # día, también las que ya tienen factura: sin este freno, elegir una de
+    # esas le pedía a ARCA un comprobante NUEVO por la misma venta y pisaba
+    # el CAE guardado. Una factura de más no se borra: hay que anularla con
+    # una nota de crédito.
+    if venta["facturada"]:
+        raise arca.ArcaError(
+            f"Esta venta ya está facturada (comprobante {venta['tipo_comprobante'] or ''} "
+            f"Nº {venta['numero_comprobante'] or ''}): no se vuelve a facturar.")
+    if venta["anulada"]:
+        raise arca.ArcaError("Esta venta está anulada: no se factura.")
 
     try:
         resultado = arca.facturar_venta(dict(venta))

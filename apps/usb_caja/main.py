@@ -179,6 +179,11 @@ class AppUsbCaja(CarritoTecladoMixin, tk.Tk):
         self._refrescar_grilla_carrito(mostrar_linea_id=linea.get("_id"))
 
     def _cobrar_sin_facturar(self):
+        # _cobro_unico: mientras esta venta no termine de cobrarse (hasta que
+        # se cierra el cartel), otro F5/F12 no hace nada. Ver caja_carrito.
+        self._cobro_unico(self._cobrar)
+
+    def _cobrar(self):
         # Si el cajero dejó abierto el campo de cantidad y fue directo a
         # cobrar, se aplica lo que escribió antes de calcular el total.
         self._confirmar_edicion_pendiente()
@@ -192,15 +197,16 @@ class AppUsbCaja(CarritoTecladoMixin, tk.Tk):
             messagebox.showerror("Error al cobrar", str(e))
             return
 
-        self._imprimir_venta(resultado["venta_uuid"], silencioso=True)
-
-        messagebox.showinfo("Venta cobrada (offline)",
-                             f"Ticket {resultado['venta_uuid'][:8]}... por ${resultado['total']:.2f}\n"
-                             f"Recordá 'Preparar sincronización' antes de sacar el USB.")
-        self._init_carrito()
-        self._refrescar_grilla_carrito()
-        self.buscador.delete(0, "end")
-        self._ir_a_buscador()
+        # Desde acá la venta YA quedó registrada. Pase lo que pase con la
+        # impresión o el cartel, el carrito se vacía (finally): si quedara
+        # cargado, el próximo F5 cobraría la misma venta de nuevo.
+        try:
+            self._imprimir_venta(resultado["venta_uuid"], silencioso=True)
+            messagebox.showinfo("Venta cobrada (offline)",
+                                 f"Ticket {resultado['venta_uuid'][:8]}... por ${resultado['total']:.2f}\n"
+                                 f"Recordá 'Preparar sincronización' antes de sacar el USB.")
+        finally:
+            self._carrito_cobrado()
 
     def _imprimir_venta(self, venta_uuid: str, *, silencioso: bool = False):
         try:
