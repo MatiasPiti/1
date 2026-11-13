@@ -289,6 +289,7 @@ class Instalador(tk.Tk):
 
     # ------------------------------------------------------------------ #
     def _copiar_apps(self, destino: str, apps: list):
+        from apps.actualizador.main import _ignorar_datos   # el MISMO filtro de datos
         os.makedirs(destino, exist_ok=True)
         for app in apps:
             origen_app = os.path.join(self.origen, app)
@@ -300,7 +301,11 @@ class Instalador(tk.Tk):
             self._log(f"Copiando {app}...")
             # dirs_exist_ok: reinstalar encima de una versión anterior es
             # un caso normal (actualizaciones), no un error.
-            shutil.copytree(origen_app, destino_app, dirs_exist_ok=True)
+            # ignore: lo que las apps se crean al probarlas desde dist\ (su
+            # config.ini, su database\, sus logs) NO viaja al cliente (regla
+            # 3). En el Dueño Remoto eso era un config.ini con la dirección y
+            # el token de las PRUEBAS, que la app leía al abrir.
+            shutil.copytree(origen_app, destino_app, dirs_exist_ok=True, ignore=_ignorar_datos)
         self._log("Archivos copiados.\n")
 
     def _crear_acceso_directo(self, nombre: str, ruta_exe: str):
@@ -535,7 +540,16 @@ class Instalador(tk.Tk):
                    " y tiene que haber una sola.)\n")
 
         self._copiar_apps(destino, APPS_REMOTO)
-        self._configurar(destino, {"conexion_remota": {"url": url, "token": token}})
+        # La config va ADENTRO de la carpeta del programa, que es donde el
+        # Dueño Remoto la lee (cada app guarda su config.ini al lado de su
+        # .exe; solo las tres del Maestro comparten el de la carpeta padre).
+        # Antes se escribía en la carpeta de instalación (C:\Otter\config.ini),
+        # un archivo que el programa no mira nunca: el instalador decía
+        # "Dirección y token guardados", probaba la conexión, daba CONECTADO,
+        # y al abrir el Dueño Remoto había que cargar todo de nuevo — con el
+        # token tipeado a mano, que es lo que la regla 4 dice que no se hace.
+        self._configurar(os.path.join(destino, APPS_REMOTO[0]),
+                         {"conexion_remota": {"url": url, "token": token}})
         self._log("Dirección y token guardados.\n")
 
         self._log("Probando la conexión con la PC del local...")
