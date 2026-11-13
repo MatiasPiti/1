@@ -113,6 +113,73 @@ def _devolver_datos_del_cliente(anterior: str, destino_app: str, log) -> None:
             log(f"    ATENCIÓN: no se pudo conservar {nombre}: {e}")
 
 
+def _rescatar_de_una_actualizacion_cortada(destino_app: str, log) -> None:
+    """Si quedó una carpeta <app>.anterior de una corrida que se cortó, que
+    no se pierda lo que había adentro.
+
+    <app>.anterior es la versión que estaba instalada, apartada mientras se
+    copia la nueva. Si la corrida anterior se cortó (se apagó la PC, se sacó
+    el pendrive, el antivirus frenó la copia), puede haber quedado ahí con
+    los datos del cliente adentro — en el Dueño Remoto, su config.ini con la
+    IP de Tailscale y el token reales. Borrarla sin mirar, que es lo que se
+    hacía, los perdía para siempre: y recuperarlos obliga a tipear el token a
+    mano (regla 4).
+
+    - Si la carpeta del programa NO está, la apartada es lo único que hay:
+      vuelve a su lugar.
+    - Si están las dos, la apartada puede ser un resto a medio borrar de una
+      actualización que salió bien, así que no se la da por buena entera:
+      solo se le rescatan los datos del cliente que la actual NO tenga.
+    """
+    anterior = destino_app + ".anterior"
+    if not os.path.isdir(anterior):
+        return
+    if not os.path.isdir(destino_app):
+        try:
+            os.rename(anterior, destino_app)
+            log("    (había quedado apartada la versión anterior de una actualización cortada: se repuso)")
+        except OSError as e:
+            log(f"    ATENCIÓN: no se pudo reponer la versión anterior que había quedado apartada: {e}")
+        return
+    for nombre in os.listdir(anterior):
+        if nombre.lower() not in _DATOS_DEL_CLIENTE:
+            continue
+        llegada = os.path.join(destino_app, nombre)
+        if os.path.exists(llegada):
+            continue        # la instalación actual ya tiene los suyos: mandan esos
+        origen = os.path.join(anterior, nombre)
+        try:
+            if os.path.isdir(origen):
+                shutil.copytree(origen, llegada)
+            else:
+                shutil.copy2(origen, llegada)
+            log(f"    (se rescató {nombre} del cliente de una actualización anterior que se cortó)")
+        except Exception as e:
+            log(f"    ATENCIÓN: no se pudo rescatar {nombre} de la actualización anterior: {e}")
+
+
+def reemplazar_programa(origen_app: str, destino_app: str, log) -> None:
+    """Reemplaza la carpeta de UN programa por la versión nueva, sin perder
+    los datos del cliente que vivan adentro. Lanza si no se puede.
+
+    Es el único camino para reemplazar un programa (la Caja, el Panel, el
+    servicio, el Dueño Remoto y la API del celular): si la copia falla a la
+    mitad, la versión anterior VUELVE a su lugar entera, con sus datos.
+    Antes el bucle de las apps tenía su propia vuelta atrás, que no andaba:
+    preguntaba si la carpeta nueva "no existía" justo después de que la
+    copia fallida la dejara creada a medias, así que nunca volvía. Quedaba
+    un programa a medio copiar (que no abre) y la versión buena apartada —
+    y el reintento empezaba por borrar esa versión buena, con el config.ini
+    del Dueño Remoto adentro.
+    """
+    from pos_core import servicio_windows
+    anterior = destino_app + ".anterior"
+    _rescatar_de_una_actualizacion_cortada(destino_app, log)
+    servicio_windows.reemplazar_carpeta(origen_app, destino_app, _ignorar_datos)
+    _devolver_datos_del_cliente(anterior, destino_app, log)
+    shutil.rmtree(anterior, ignore_errors=True)
+
+
 def _escritorio() -> str:
     """Dónde dejar los archivos que Matías se lleva o fotografía.
     La lógica (OneDrive, Escritorio en castellano) vive en pos_core.paths
@@ -251,15 +318,13 @@ def _parar_celular(log) -> bool:
 
 def _reemplazar_celular(origen: str, destino: str, log) -> bool:
     """Copia la versión nueva de ApiCelular. Nunca lanza: si falla, queda la anterior."""
-    from pos_core import servicio_windows
     log(f"Actualizando {APP_CELULAR}...")
     origen_app = os.path.join(origen, APP_CELULAR)
     destino_app = os.path.join(destino, APP_CELULAR)
-    anterior = destino_app + ".anterior"
     try:
-        servicio_windows.reemplazar_carpeta(origen_app, destino_app, _ignorar_datos)
-        _devolver_datos_del_cliente(anterior, destino_app, log)
-        shutil.rmtree(anterior, ignore_errors=True)
+        # reemplazar_programa usa servicio_windows.reemplazar_carpeta: reintenta
+        # el rename mientras el proceso que acaba de parar suelta el .exe.
+        reemplazar_programa(origen_app, destino_app, log)
         log(f"   {APP_CELULAR} actualizado.\n")
         return True
     except Exception as e:
@@ -807,23 +872,10 @@ class Actualizador(tk.Tk):
             #    Dueño Remoto el config vive ADENTRO, y sin esto se perdía.
             for app in apps:
                 self._log(f"Actualizando {app}...")
-                origen_app = os.path.join(self.origen, app)
-                destino_app = os.path.join(destino, app)
-                anterior = destino_app + ".anterior"
-                if os.path.exists(anterior):
-                    shutil.rmtree(anterior, ignore_errors=True)
-                if os.path.isdir(destino_app):
-                    # Se mueve la vieja en vez de borrarla: si la copia nueva
-                    # falla a la mitad, todavía existe con qué volver atrás.
-                    os.rename(destino_app, anterior)
-                try:
-                    shutil.copytree(origen_app, destino_app, ignore=_ignorar_datos)
-                except Exception:
-                    if os.path.isdir(anterior) and not os.path.isdir(destino_app):
-                        os.rename(anterior, destino_app)   # volver a la anterior
-                    raise
-                _devolver_datos_del_cliente(anterior, destino_app, self._log)
-                shutil.rmtree(anterior, ignore_errors=True)
+                # La vieja se aparta en vez de borrarse y, si la copia nueva
+                # falla a la mitad, vuelve a su lugar (ver reemplazar_programa).
+                reemplazar_programa(os.path.join(self.origen, app),
+                                    os.path.join(destino, app), self._log)
             self._log("Programas actualizados.\n")
 
             # 3b) La API del celular, adentro de su propio try (ver
