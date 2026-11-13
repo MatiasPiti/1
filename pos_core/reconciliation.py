@@ -15,6 +15,20 @@ Reglas clave:
    comparando 'actualizado_en', igual que se explica en la sección de
    Proceso de Pensamiento más abajo en el informe.
 4. Nada se aplica sin mostrar antes un resumen de diferencias (dry_run).
+5. La CARGA DEL CATÁLOGO en un pendrive no es mercadería que entró al
+   negocio. Al USB se le carga la lista exportada del Maestro, con el stock
+   de ese día, y cada producto queda con un movimiento ENTRADA_EXCEL por
+   esa cantidad. Reproducir esos movimientos acá le sumaba al Maestro el
+   stock del catálogo ENTERO otra vez (verificado: 20 cocas pasaban a 36
+   después de vender 4 desde el USB). Se saltean siempre, salvo para un
+   producto que NACIÓ en ese USB (no existía en el Maestro): ese entra con
+   stock 0 y sus movimientos lo llevan al stock que tenía en el pendrive.
+
+Limitación conocida, sin resolver: 'actualizado_en' lo pisa cualquier
+movimiento de stock, no solo un cambio de precio. Un USB con el catálogo
+viejo en el que se movió stock puede figurar como "más reciente" y pisar un
+precio más nuevo del Maestro. El resumen previo muestra cada conflicto de
+precio y quién gana: hay que leerlo antes de aplicar.
 """
 
 import json
@@ -33,6 +47,7 @@ class ResumenConciliacion:
     ventas_omitidas_duplicadas: int = 0
     movimientos_aplicados: int = 0
     movimientos_omitidos_duplicados: int = 0
+    movimientos_omitidos_carga_inicial: int = 0   # la carga del catálogo en el USB (regla 5)
     precios_actualizados: int = 0
     productos_nuevos: int = 0
     conflictos_precio: list = field(default_factory=list)   # se sobreescribió por ser más reciente
@@ -50,6 +65,53 @@ def _movimiento_existe(conn, mov_uuid: str) -> bool:
     return conn.execute(
         "SELECT 1 FROM Movimientos_Stock WHERE uuid_unico = ?", (mov_uuid,)
     ).fetchone() is not None
+
+
+def _uuid_de_productos(conn, codigos) -> dict:
+    """{codigo: uuid_unico} de los productos del Maestro con esos códigos."""
+    codigos = sorted({c for c in codigos if c})
+    encontrados = {}
+    for i in range(0, len(codigos), 500):
+        tanda = codigos[i:i + 500]
+        marcas = ",".join("?" for _ in tanda)
+        for r in conn.execute(
+                f"SELECT codigo, uuid_unico FROM Productos WHERE codigo IN ({marcas})", tanda):
+            encontrados[r["codigo"]] = r["uuid_unico"]
+    return encontrados
+
+
+def _productos_del_export(data: dict) -> list:
+    """Todos los productos que trae un export del Dueño: los pendientes y,
+    en los archivos nuevos, los que ya habían salido en otra exportación."""
+    return list(data.get("productos") or []) + list(data.get("productos_ya_exportados") or [])
+
+
+def _es_carga_inicial_del_usb(mov: dict, uuid_en_maestro: dict, uuid_en_usb: dict) -> bool:
+    """¿Este movimiento es la carga del catálogo en el pendrive (regla 5)?
+
+    Lo es un ENTRADA_EXCEL sobre un producto que el Maestro ya tiene POR SU
+    CUENTA. Si el producto del Maestro es el mismo registro que el del USB
+    (mismo uuid: lo creó una conciliación de este pendrive, ahora o antes),
+    nació en el USB y su ENTRADA_EXCEL sí es stock de verdad. Si el producto
+    no existe en el Maestro no se saltea: tiene que salir el error de siempre.
+    """
+    if mov.get("tipo") != "ENTRADA_EXCEL":
+        return False
+    codigo = mov.get("producto_codigo")
+    en_maestro = uuid_en_maestro.get(codigo)
+    if en_maestro is None:
+        return False
+    return en_maestro != uuid_en_usb.get(codigo)
+
+
+def es_export_completo(ruta_json: str) -> bool:
+    """¿El archivo trae TODO lo del USB (los de ahora) o solo lo nuevo desde
+    la exportación anterior (los de antes de noviembre 2026)? Con uno de los
+    viejos puede faltar lo que salió en un archivo anterior."""
+    try:
+        return bool(_leer_json(ruta_json).get("completo"))
+    except ValueError:
+        return False
 
 
 def _leer_json(ruta: str) -> dict:
@@ -122,9 +184,13 @@ def analizar_export_caja(ruta_json: str) -> ResumenConciliacion:
             resumen.ventas_nuevas += 1
             resumen.detalle.append(f"Venta nueva {venta['uuid_unico']} ({venta['fecha_hora']}) "
                                     f"${venta['total']}")
-    for mov in data.get("movimientos_stock", []):
+    movimientos = data.get("movimientos_stock", [])
+    uuid_en_maestro = _uuid_de_productos(conn, [m.get("producto_codigo") for m in movimientos])
+    for mov in movimientos:
         if _movimiento_existe(conn, mov["uuid_unico"]):
             resumen.movimientos_omitidos_duplicados += 1
+        elif _es_carga_inicial_del_usb(mov, uuid_en_maestro, {}):
+            resumen.movimientos_omitidos_carga_inicial += 1
         else:
             resumen.movimientos_aplicados += 1
     return resumen
@@ -172,7 +238,10 @@ def aplicar_export_caja(ruta_json: str, *, usuario_dev: str) -> ResumenConciliac
 
     # Movimientos de stock (las SALIDA_VENTA de más arriba también viajan
     # acá y son las que efectivamente descuentan el stock maestro)
-    for mov in data.get("movimientos_stock", []):
+    movimientos = data.get("movimientos_stock", [])
+    uuid_en_maestro = _uuid_de_productos(get_connection(),
+                                         [m.get("producto_codigo") for m in movimientos])
+    for mov in movimientos:
         try:
             # Chequeo de duplicado con una lectura simple (no un
             # `with transaction()` propio): _aplicar_movimiento_reproducido
@@ -184,6 +253,11 @@ def aplicar_export_caja(ruta_json: str, *, usuario_dev: str) -> ResumenConciliac
             # cuando en realidad siempre fueron dos pasos separados.
             if _movimiento_existe(get_connection(), mov["uuid_unico"]):
                 resumen.movimientos_omitidos_duplicados += 1
+                continue
+            # La Caja del USB no crea productos en el Maestro: cualquier
+            # ENTRADA_EXCEL suya es la carga del catálogo en el pendrive.
+            if _es_carga_inicial_del_usb(mov, uuid_en_maestro, {}):
+                resumen.movimientos_omitidos_carga_inicial += 1
                 continue
             delta = -mov["cantidad"] if mov["tipo"].startswith("SALIDA") else mov["cantidad"]
             _aplicar_movimiento_reproducido(mov, delta, usuario_dev)
@@ -224,6 +298,7 @@ def analizar_export_dueno(ruta_json: str) -> ResumenConciliacion:
         ).fetchone()
         if existente is None:
             resumen.productos_nuevos += 1
+            resumen.detalle.append(f"Producto nuevo {prod['codigo']} {prod.get('nombre', '')}")
         elif existente["precio_venta"] != prod["precio_venta"]:
             gana_usb = _es_mas_reciente(prod.get("actualizado_en"), existente["actualizado_en"])
             resumen.precios_actualizados += 1
@@ -233,11 +308,28 @@ def analizar_export_dueno(ruta_json: str) -> ResumenConciliacion:
                 "precio_usb": prod["precio_venta"],
                 "gana": "USB (más reciente)" if gana_usb else "Maestro (más reciente, se ignora el del USB)",
             })
-    for mov in data.get("movimientos_stock", []):
-        if not _movimiento_existe(conn, mov["uuid_unico"]):
-            resumen.movimientos_aplicados += 1
-        else:
+    # Los que ya habían salido en otra exportación: solo se crea el que falte.
+    ya_exportados = data.get("productos_ya_exportados") or []
+    en_maestro = _uuid_de_productos(conn, [p.get("codigo") for p in ya_exportados])
+    for prod in ya_exportados:
+        if prod.get("codigo") not in en_maestro:
+            resumen.productos_nuevos += 1
+            resumen.detalle.append(f"Producto nuevo {prod['codigo']} {prod.get('nombre', '')}")
+
+    # Lo que nace en esta misma conciliación cuenta como del USB: su carga
+    # inicial sí se aplica (ver _es_carga_inicial_del_usb).
+    uuid_en_usb = {p.get("codigo"): p.get("uuid_unico") for p in _productos_del_export(data)}
+    movimientos = data.get("movimientos_stock", [])
+    uuid_en_maestro = _uuid_de_productos(conn, [m.get("producto_codigo") for m in movimientos])
+    for codigo, uuid_usb in uuid_en_usb.items():
+        uuid_en_maestro.setdefault(codigo, uuid_usb)
+    for mov in movimientos:
+        if _movimiento_existe(conn, mov["uuid_unico"]):
             resumen.movimientos_omitidos_duplicados += 1
+        elif _es_carga_inicial_del_usb(mov, uuid_en_maestro, uuid_en_usb):
+            resumen.movimientos_omitidos_carga_inicial += 1
+        else:
+            resumen.movimientos_aplicados += 1
     return resumen
 
 
@@ -248,6 +340,26 @@ def aplicar_export_dueno(ruta_json: str, *, usuario_dev: str) -> ResumenConcilia
     data = _leer_json(ruta_json)
     resumen = ResumenConciliacion()
 
+    def _crear_producto_del_usb(conn, prod: dict) -> None:
+        # Entra con stock 0 y NO con el stock que tenía en el pendrive: ese
+        # stock ya viene explicado por sus movimientos (el alta, la carga del
+        # Excel, las entradas a mano), que se reproducen más abajo. Con las
+        # dos cosas quedaba contado dos veces: un producto creado en el USB
+        # con 10 unidades y 5 más después llegaba al Maestro con 30.
+        conn.execute(
+            """INSERT INTO Productos
+               (uuid_unico, codigo, nombre, precio_venta, precio_compra, stock,
+                stock_minimo, stock_maximo, proveedor, marca, categoria, subrubro,
+                costo_sin_iva, margen_ganancia, origen, sincronizado)
+               VALUES (?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,1)""",
+            (prod["uuid_unico"], prod["codigo"], prod["nombre"], prod["precio_venta"],
+             prod.get("precio_compra") or 0,
+             prod.get("stock_minimo") or 0, prod.get("stock_maximo") or 0,
+             prod.get("proveedor"), prod.get("marca"), prod.get("categoria"), prod.get("subrubro"),
+             prod.get("costo_sin_iva") or 0, prod.get("margen_ganancia") or 0,
+             "USB_DUENO"),
+        )
+
     for prod in data.get("productos", []):
         try:
             with transaction() as conn:
@@ -256,18 +368,7 @@ def aplicar_export_dueno(ruta_json: str, *, usuario_dev: str) -> ResumenConcilia
                     (prod["codigo"],),
                 ).fetchone()
                 if existente is None:
-                    conn.execute(
-                        """INSERT INTO Productos
-                           (uuid_unico, codigo, nombre, precio_venta, precio_compra, stock,
-                            stock_minimo, stock_maximo, proveedor, marca, categoria,
-                            origen, sincronizado)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)""",
-                        (prod["uuid_unico"], prod["codigo"], prod["nombre"], prod["precio_venta"],
-                         prod.get("precio_compra", 0), prod.get("stock", 0),
-                         prod.get("stock_minimo", 0), prod.get("stock_maximo", 0),
-                         prod.get("proveedor"), prod.get("marca"), prod.get("categoria"),
-                         "USB_DUENO"),
-                    )
+                    _crear_producto_del_usb(conn, prod)
                     resumen.productos_nuevos += 1
                 elif prod["precio_venta"] != existente["precio_venta"] and \
                         _es_mas_reciente(prod.get("actualizado_en"), existente["actualizado_en"]):
@@ -282,10 +383,30 @@ def aplicar_export_dueno(ruta_json: str, *, usuario_dev: str) -> ResumenConcilia
         except Exception as e:
             resumen.errores.append(f"Producto {prod.get('codigo')}: {e}")
 
-    for mov in data.get("movimientos_stock", []):
+    # Los que ya habían salido en otra exportación: solo se crea el que
+    # falte (su exportación anterior nunca se concilió). Nunca se les toca
+    # el precio: eso es solo para los pendientes de arriba.
+    for prod in data.get("productos_ya_exportados") or []:
+        try:
+            with transaction() as conn:
+                if conn.execute("SELECT 1 FROM Productos WHERE codigo = ?",
+                                (prod["codigo"],)).fetchone() is None:
+                    _crear_producto_del_usb(conn, prod)
+                    resumen.productos_nuevos += 1
+        except Exception as e:
+            resumen.errores.append(f"Producto {prod.get('codigo')}: {e}")
+
+    uuid_en_usb = {p.get("codigo"): p.get("uuid_unico") for p in _productos_del_export(data)}
+    movimientos = data.get("movimientos_stock", [])
+    uuid_en_maestro = _uuid_de_productos(get_connection(),
+                                         [m.get("producto_codigo") for m in movimientos])
+    for mov in movimientos:
         try:
             if _movimiento_existe(get_connection(), mov["uuid_unico"]):
                 resumen.movimientos_omitidos_duplicados += 1
+                continue
+            if _es_carga_inicial_del_usb(mov, uuid_en_maestro, uuid_en_usb):
+                resumen.movimientos_omitidos_carga_inicial += 1
                 continue
             delta = -mov["cantidad"] if mov["tipo"].startswith("SALIDA") else mov["cantidad"]
             _aplicar_movimiento_reproducido(mov, delta, usuario_dev)
@@ -321,6 +442,8 @@ def _escribir_log(resumen: ResumenConciliacion, ruta_json_origen: str, origen_us
             f.write(f"Ventas nuevas: {resumen.ventas_nuevas}\n")
             f.write(f"Ventas duplicadas omitidas: {resumen.ventas_omitidas_duplicadas}\n")
             f.write(f"Movimientos de stock aplicados: {resumen.movimientos_aplicados}\n")
+            f.write(f"Movimientos de carga del catálogo del USB (no se aplican): "
+                    f"{resumen.movimientos_omitidos_carga_inicial}\n")
             f.write(f"Precios actualizados: {resumen.precios_actualizados}\n")
             f.write(f"Productos nuevos: {resumen.productos_nuevos}\n")
             if resumen.errores:

@@ -108,10 +108,23 @@ class PanelSincronizacion(tk.Toplevel):
             return
 
         self.texto.insert("end", f"Archivo: {ruta}\n\n")
+        if not reconciliation.es_export_completo(ruta):
+            # Los archivos de antes de noviembre 2026 traían solo lo nuevo
+            # desde la exportación anterior: con uno de esos, lo que salió en
+            # un archivo previo NO está acá.
+            self.texto.insert(
+                "end",
+                "ATENCIÓN: este archivo lo generó una versión anterior del USB y trae solo lo\n"
+                "nuevo desde su exportación previa. Si el botón 'Preparar sincronización' se\n"
+                "apretó más de una vez, lo anterior está en los archivos con fecha de la misma\n"
+                "carpeta SYNC_DATA (export_..._AAAAMMDD_HHMMSS.json): aplicalos también, con\n"
+                "'Elegir JSON manualmente'. Repetir un archivo no duplica nada.\n\n")
         self.texto.insert("end", f"Ventas nuevas a importar: {resumen.ventas_nuevas}\n")
         self.texto.insert("end", f"Ventas duplicadas (se omiten): {resumen.ventas_omitidas_duplicadas}\n")
         self.texto.insert("end", f"Movimientos de stock a aplicar: {resumen.movimientos_aplicados}\n")
         self.texto.insert("end", f"Movimientos duplicados (se omiten): {resumen.movimientos_omitidos_duplicados}\n")
+        self.texto.insert("end", f"Carga del catálogo en el USB (no se aplica al stock del Maestro): "
+                                  f"{resumen.movimientos_omitidos_carga_inicial}\n")
         self.texto.insert("end", f"Productos nuevos: {resumen.productos_nuevos}\n")
         self.texto.insert("end", f"Precios a actualizar: {resumen.precios_actualizados}\n")
         if resumen.conflictos_precio:
