@@ -139,6 +139,38 @@ except Exception as e:
 finally:
     db.aplicar_migraciones = original
 
+# --- un guardado que falla en el último paso no puede trabar la caja ---
+# Si el COMMIT falla (disco lleno, un error de E/S) la transacción puede
+# quedar abierta, y entonces toda venta siguiente reventaba con
+# "transaction() anidada" hasta cerrar y abrir la Caja. Se provoca un COMMIT
+# que falla de verdad (una referencia que SQLite recién revisa al confirmar).
+import sqlite3
+conn = db.get_connection()
+conn.execute("CREATE TABLE IF NOT EXISTS _padre (id INTEGER PRIMARY KEY)")
+conn.execute("CREATE TABLE IF NOT EXISTS _hijo "
+             "(padre INTEGER REFERENCES _padre(id) DEFERRABLE INITIALLY DEFERRED)")
+fallo_el_commit = False
+try:
+    with db.transaction() as c:
+        c.execute("INSERT INTO _hijo VALUES (999)")
+except sqlite3.Error:
+    fallo_el_commit = True
+if not fallo_el_commit:
+    fallos.append("la prueba no logró que fallara el COMMIT: no prueba nada")
+elif conn.in_transaction:
+    fallos.append("después de un COMMIT que falló, la transacción quedó abierta")
+else:
+    from pos_core import sales
+    try:
+        venta = sales.cerrar_ticket(
+            [{"codigo": "7790001", "nombre": "Yerba", "cantidad": 1, "precio_unitario": 3500.0}],
+            metodo_pago="EFECTIVO", usuario="test")
+        print("COMMIT QUE FALLA -> la venta siguiente se cobra igual:", venta["total"])
+    except Exception as e:
+        fallos.append(f"después de un guardado que falló, la Caja ya no puede cobrar: {e}")
+if conn.execute("SELECT COUNT(*) FROM _hijo").fetchone()[0] != 0:
+    fallos.append("lo que no se pudo confirmar quedó guardado igual")
+
 print()
 if fallos:
     print("=== FALLOS REGRESIÓN ===")

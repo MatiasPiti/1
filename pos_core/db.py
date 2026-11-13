@@ -167,7 +167,21 @@ def transaction(path: str = None):
             pass
         raise
     else:
-        conn.execute("COMMIT")
+        try:
+            conn.execute("COMMIT")
+        except Exception:
+            # Un COMMIT que falla (disco lleno, un error de E/S) puede dejar
+            # la transacción ABIERTA. Si se deja así, toda transacción
+            # siguiente de este hilo revienta con "transaction() anidada" y la
+            # Caja no puede cobrar más hasta que la cierran y la abren: un
+            # error de un instante convertido en la caja trabada. Se deshace
+            # y recién ahí se avisa del error original.
+            try:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
 
 
 def integrity_check(path: str = None) -> str:
