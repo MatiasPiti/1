@@ -341,7 +341,74 @@ elif "token" not in r["detalle"].lower():
 else:
     print("OK: si Telegram rechaza el token, lo dice — y no lo escribe en el cartel")
 
+# ---------------------------------------------------------------- #
+# 12b. El BOTÓN "Probar", que es lo que aprieta el dueño
+# ---------------------------------------------------------------- #
+# Todo lo de arriba llama a probar_envio() directo. El botón no llegaba
+# nunca hasta ahí: el Panel la pide como self.backend.telegram_bot y ese
+# módulo no estaba en el backend, así que contestaba "'LocalBackend' object
+# has no attribute 'telegram_bot'" — en el Panel y en el Dueño Remoto.
+carteles = []
+messagebox.showinfo = lambda t, m="", **k: carteles.append(("info", t, m))
+messagebox.showwarning = lambda t, m="", **k: carteles.append(("aviso", t, m))
+messagebox.showerror = lambda t, m="", **k: carteles.append(("error", t, m))
+
+enviados.clear()
+tb.requests = type("R", (), {"post": staticmethod(_post_simulado),
+                              "RequestException": Exception})()
+app._probar_telegram()
+app.update()
+if not carteles or carteles[-1][0] != "info" or "enviado" not in carteles[-1][1].lower():
+    fallos.append(f"el botón 'Probar' del Panel no mandó el mensaje de prueba: {carteles[-1:]}")
+elif len(enviados) != 1 or "prueba" not in enviados[0].lower():
+    fallos.append(f"el botón 'Probar' dijo que mandó, pero a Telegram no salió nada: {enviados}")
+else:
+    print("OK: el botón 'Probar' del Panel manda el mensaje de prueba y lo dice")
+
+# Y con el bot destildado tiene que decir por qué no mandó (no un error raro).
+app.tg_habilitado.set(False)
+carteles.clear()
+app._probar_telegram()
+app.update()
+if not carteles or carteles[-1][0] != "aviso" or "destild" not in carteles[-1][2].lower():
+    fallos.append(f"con el bot destildado, 'Probar' no explicó por qué no manda: {carteles[-1:]}")
+else:
+    print("OK: con el bot destildado, 'Probar' explica por qué no manda")
 app.destroy()
+# "Probar" guarda lo que está en pantalla: el bot quedó apagado. Se vuelve a
+# prender para lo que sigue.
+config.actualizar_config_dict({"telegram": {"bot_token": "123456:SECRETO-DE-PRUEBA",
+                                            "chat_id_default": "999", "habilitado": "true"}})
+
+# El mismo botón desde el Dueño Remoto: el Panel contra la API levantada de
+# verdad, que es como lo aprieta Leo desde su casa.
+s_libre = socket.socket()
+s_libre.bind(("127.0.0.1", 0))
+puerto = s_libre.getsockname()[1]
+s_libre.close()
+servidor = remote_api.iniciar_servidor(puerto=puerto, token="token-de-prueba")
+try:
+    remoto = AppDueno(backend=RemoteBackend(f"http://127.0.0.1:{puerto}", "token-de-prueba"))
+    remoto.update()
+    carteles.clear()
+    enviados.clear()
+    remoto._probar_telegram()
+    remoto.update()
+    if not carteles or carteles[-1][0] != "info" or len(enviados) != 1:
+        fallos.append(f"el botón 'Probar' desde el Dueño Remoto no mandó el mensaje: "
+                       f"{carteles[-1:]} enviados={len(enviados)}")
+    else:
+        print("OK: el botón 'Probar' también anda desde el Dueño Remoto (API real, por red)")
+    remoto.destroy()
+finally:
+    try:
+        servidor.shutdown()
+    except Exception:
+        pass
+
+messagebox.showinfo = lambda *a, **k: None
+messagebox.showwarning = lambda *a, **k: None
+messagebox.showerror = lambda *a, **k: print("   ERROR DIALOG:", a)
 
 # ---------------------------------------------------------------- #
 # 13. Quitar el umbral GLOBAL conserva todos los personalizados
