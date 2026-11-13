@@ -161,6 +161,13 @@ def sumar_stock_por_factura_pdf(items: list, *, usuario: str, factura_nombre: st
     resultados = []
     for item in items:
         try:
+            # Una entrada de mercadería es siempre un entero positivo. Con un
+            # negativo esto RESTABA stock dejando un movimiento "ENTRADA_PDF"
+            # de cantidad negativa, y con una fracción dejaba stock con coma.
+            cantidad = item["cantidad"]
+            if isinstance(cantidad, bool) or not isinstance(cantidad, int) or cantidad <= 0:
+                raise ValueError(f"Cantidad inválida para sumar: {cantidad!r} (tiene que ser un "
+                                 f"entero mayor a 0)")
             nuevo_stock = _con_reintento_optimista(
                 item["codigo"], item["cantidad"],
                 lambda conn, producto, ns, it=item: _registrar_movimiento(

@@ -592,8 +592,10 @@ def factura_ya_aplicada(nombre: str, items: list, minutos: int = MINUTOS_FACTURA
 
 
 def es_precio_sospechoso(nuevo, actual) -> bool:
-    """Un precio leído del PDF muy distinto del costo guardado. Cubre el
-    "3.500" que pdf_import._normalizar_numero lee como 3,5."""
+    """Un precio leído del PDF muy distinto del costo guardado, o menor a
+    $ 10 si no hay con qué comparar. Nació para el "3.500" que pdf_import leía
+    como 3,5 (ya se lee bien: tres mil quinientos); queda como red para
+    cualquier renglón que se lea raro."""
     if nuevo is None:
         return False
     if actual is not None and actual > 0:
@@ -603,8 +605,11 @@ def es_precio_sospechoso(nuevo, actual) -> bool:
 
 
 def marcar_posibles_duplicados(items: list) -> list:
-    """El parser puede leer el mismo renglón por la tabla y por el texto: la
-    segunda aparición en adelante se marca (no se descarta)."""
+    """Renglones repetidos: la segunda aparición en adelante se marca (no se
+    descarta). El parser ya no devuelve dos veces el mismo renglón cuando lo
+    lee por la tabla y por el texto (ver pdf_import.parsear_factura_pdf); lo
+    que llega repetido acá es el mismo producto facturado dos veces de verdad,
+    y conviene que alguien lo mire."""
     vistos, marcas = set(), []
     for it in items:
         clave = (it.get("codigo") or (it.get("nombre") or "").upper().strip(), it.get("cantidad"),

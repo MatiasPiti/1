@@ -764,8 +764,15 @@ with B.cliente(app) as c:
               and coca[0]["emparejamiento"]["candidatos"][0]["codigo"] == B.COCA,
               "la línea sin código trae candidatos por nombre (y nada se aplica solo)", f"coca: {coca}")
     sueltas = [i for i in items if i["nombre"].lower().startswith("yerba")]
-    verificar(sueltas and sueltas[0]["precio_sospechoso"] is True,
-              "'3.500' leído como 3,5 sale marcado como precio sospechoso", f"yerba suelta: {sueltas}")
+    # "3.500" en una factura son tres mil quinientos. Se leía 3,5 (y salía
+    # marcado como sospechoso para que alguien lo viera); ahora se lee bien.
+    verificar(sueltas and sueltas[0]["precio_compra"] == 3500.0 and sueltas[0]["precio_sospechoso"] is False,
+              "'3.500' se lee tres mil quinientos (antes 3,5) y ya no sale como precio sospechoso",
+              f"yerba suelta: {sueltas}")
+    verificar(panel_celular.es_precio_sospechoso(3.5, None) and panel_celular.es_precio_sospechoso(3.5, 3500.0)
+              and not panel_celular.es_precio_sospechoso(3600.0, 3500.0),
+              "un precio de $ 3,50 (o 1000 veces menor que el costo guardado) sigue saliendo como sospechoso",
+              "es_precio_sospechoso dejó de marcar un precio absurdo")
     cafe = [i for i in items if i["codigo"] == B.CAFE]
     verificar(cafe and cafe[0]["existe"] and cafe[0]["emparejamiento"] is None and cafe[0]["nombre_sistema"],
               "la línea con código conocido se reconoce por código", f"café: {cafe}")

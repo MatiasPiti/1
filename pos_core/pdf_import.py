@@ -9,7 +9,11 @@ quedar sin sumar al stock).
 """
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
+
+from pos_core import matching
+from pos_core.precios import leer_numero
 
 
 @dataclass
@@ -90,16 +94,19 @@ _LINEAS_A_IGNORAR = re.compile(
 
 
 def _normalizar_numero(texto: str) -> float:
-    """Acepta tanto '3.500,00' (es-AR) como '3500.00' (en-US)."""
-    texto = texto.strip()
-    if "," in texto and "." in texto:
-        if texto.rfind(",") > texto.rfind("."):
-            texto = texto.replace(".", "").replace(",", ".")
-        else:
-            texto = texto.replace(",", "")
-    elif "," in texto:
-        texto = texto.replace(".", "").replace(",", ".")
-    return float(texto)
+    """El precio de un renglón, leído con el MISMO criterio que la hoja de
+    precios del Panel (precios.leer_numero): '3.500,00' y '3500.00' son tres
+    mil quinientos, y '3.500' también.
+
+    Ese último caso es el que estaba mal: se leía 3,5. Una factura argentina
+    que dice "3.500" está diciendo tres mil quinientos pesos, y el costo del
+    producto quedaba guardado en $ 3,50. Un solo criterio para leer plata en
+    todo el sistema; tenerlo copiado acá es lo que lo había dejado distinto.
+    """
+    numero = leer_numero(texto)
+    if numero is None:
+        raise ValueError(f"no es un número: {texto!r}")
+    return numero
 
 
 def _construir_item(m, *, con_codigo: bool):
@@ -142,6 +149,13 @@ def _parsear_linea(linea: str):
     return None
 
 
+def _clave_item(item: ItemFactura) -> tuple:
+    """Lo que identifica a un renglón de la factura, para reconocer el MISMO
+    renglón leído dos veces (por la tabla y por el texto de la página)."""
+    identidad = item.codigo or matching.normalizar(item.nombre)
+    return (identidad, item.cantidad, round(item.precio_compra, 2))
+
+
 def parsear_factura_pdf(ruta_pdf: str) -> ResultadoParsingPDF:
     import pdfplumber  # import perezoso: no hace falta si el módulo no se usa
 
@@ -150,6 +164,16 @@ def parsear_factura_pdf(ruta_pdf: str) -> ResultadoParsingPDF:
 
     with pdfplumber.open(ruta_pdf) as pdf:
         for pagina in pdf.pages:
+            # Cada página se lee de dos maneras: como tabla y como texto. Si la
+            # factura trae una tabla de verdad (con sus líneas), el mismo
+            # renglón aparece en las DOS lecturas, y antes entraba dos veces a
+            # la lista: "¿Aplicar 6 ítems?" para una factura de 3, y el stock
+            # se sumaba doble. Acá se anota qué entró por la tabla, y el texto
+            # solo agrega lo que la tabla no trajo. Con un contador y no un
+            # conjunto: dos renglones idénticos de verdad (el mismo producto
+            # facturado dos veces) siguen contando dos.
+            de_tabla = Counter()
+
             # 1) Intentar tablas estructuradas primero (más confiable que texto libre)
             for tabla in pagina.extract_tables() or []:
                 for fila in tabla:
@@ -160,6 +184,7 @@ def parsear_factura_pdf(ruta_pdf: str) -> ResultadoParsingPDF:
                     item = _parsear_linea(celda)
                     if item:
                         resultado.items.append(item)
+                        de_tabla[_clave_item(item)] += 1
 
             # 2) Texto plano línea por línea (facturas sin tabla real)
             texto = pagina.extract_text() or ""
@@ -167,6 +192,10 @@ def parsear_factura_pdf(ruta_pdf: str) -> ResultadoParsingPDF:
             for linea in texto.split("\n"):
                 item = _parsear_linea(linea)
                 if item:
+                    clave = _clave_item(item)
+                    if de_tabla[clave] > 0:
+                        de_tabla[clave] -= 1     # es el renglón que ya entró por la tabla
+                        continue
                     resultado.items.append(item)
                 elif linea.strip() and not _LINEAS_A_IGNORAR.match(linea.strip()):
                     resultado.lineas_no_reconocidas.append(linea.strip())
