@@ -67,9 +67,21 @@ _REINTENTOS_LECTURA = 40
 _ESPERA_LECTURA_S = 0.025
 
 
-def _leer_texto(ruta: str, encoding: str = "utf-8") -> str:
+def _leer_texto(ruta: str, encoding: str = "utf-8-sig") -> str:
     """El contenido de config.ini, reintentando el PermissionError pasajero
-    de Windows (como mucho 1 s). Cualquier otro error sale tal cual."""
+    de Windows (como mucho 1 s). Cualquier otro error sale tal cual.
+
+    Se lee con utf-8-sig: si alguien guardó el archivo con el Bloc de notas
+    y quedó con BOM (tres bytes invisibles al principio), se leen y se
+    descartan. Con utf-8 a secas configparser los tomaba como parte de la
+    primera línea, rechazaba el archivo ENTERO y todo lo que lee la config
+    se caía a la vez: la API remota no arrancaba (Leo sin panel, con el
+    watchdog reiniciando el servicio al cuete, porque él sí lo lee bien), el
+    bot de Telegram moría en silencio y los tickets dejaban de salir por la
+    impresora. Y para rotar el token de [remoto] hay que editar ese archivo
+    a mano. Un archivo sin BOM se lee exactamente igual que antes, y al
+    guardarlo se escribe sin BOM.
+    """
     for intento in range(_REINTENTOS_LECTURA):
         try:
             with open(ruta, "r", encoding=encoding) as f:
@@ -89,6 +101,9 @@ def cargar_config(estricto: bool = False) -> configparser.ConfigParser:
     no quedarse con los defaults solo porque otro programa estaba guardando
     en ese instante. estricto=True lanza ConfigIlegibleError si el archivo no
     existe, está vacío, no se puede abrir o configparser lo rechaza.
+
+    Un config.ini guardado con BOM (el Bloc de notas) NO es ilegible: se lee
+    igual que sin BOM, con o sin estricto (ver _leer_texto).
     """
     cfg = configparser.ConfigParser()
     cfg.read_dict(_DEFAULTS)
@@ -112,8 +127,6 @@ def cargar_config(estricto: bool = False) -> configparser.ConfigParser:
     try:
         cfg.read_string(texto, source=ruta)
     except configparser.Error as e:
-        # Incluye el BOM de un Bloc de notas: configparser no lo saca y
-        # rechaza el archivo entero (MissingSectionHeaderError).
         raise ConfigIlegibleError(f"{ruta} está mal formado: {type(e).__name__}") from e
     return cfg
 
@@ -334,7 +347,7 @@ def leer_config_celular(ruta: str = None) -> dict:
                  "puerto_remoto": PUERTO_REMOTO_POR_DEFECTO, "leido": False}
     try:
         cfg = configparser.ConfigParser(interpolation=None, strict=False)
-        cfg.read_string(_leer_texto(ruta or config_path(), "utf-8-sig"))
+        cfg.read_string(_leer_texto(ruta or config_path()))
     except Exception:
         return resultado
     try:

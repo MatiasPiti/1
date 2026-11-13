@@ -763,8 +763,9 @@ proceso = correr_cli(TMP, "habilitar")
 verificar(proceso.returncode == 0 and secciones(ruta_ini) == antes and config.leer_config_celular()["habilitado"]
           and "vuelve a escuchar" in proceso.stdout,
           "habilitar la vuelve a prender, y config.ini queda como estaba", f"habilitar: {proceso.stdout}")
-for nombre, contenido in (("con BOM", "﻿" + open(ruta_ini, encoding="utf-8").read()),
-                          ("mal formado", "esto no es un ini\n")):
+# Un config.ini mal formado no se toca (guardar encima pisaría el config real
+# con valores por defecto).
+for nombre, contenido in (("mal formado", "esto no es un ini\n"),):
     copia = tempfile.mkdtemp(prefix="ini_", dir=RAIZ_TMP)
     B.copiar_instalacion(TMP, copia)
     with open(os.path.join(copia, "config.ini"), "w", encoding="utf-8") as f:
@@ -777,6 +778,25 @@ for nombre, contenido in (("con BOM", "﻿" + open(ruta_ini, encoding="utf-8").r
     verificar(proceso.returncode == 1 and bytes_antes == bytes_despues and "no se tocó nada" in proceso.stdout,
               f"deshabilitar con un config.ini {nombre} sale con 1 y lo deja igual byte a byte",
               f"config.ini {nombre}: {proceso.returncode} {proceso.stdout}")
+
+# Un config.ini guardado con el Bloc de notas (con BOM) NO es ilegible: se lee
+# igual que sin BOM, así que el interruptor anda y no se pierde ningún valor.
+copia = tempfile.mkdtemp(prefix="ini_", dir=RAIZ_TMP)
+B.copiar_instalacion(TMP, copia)
+with open(ruta_ini, encoding="utf-8") as f:
+    texto_ini = f.read()
+with open(os.path.join(copia, "config.ini"), "w", encoding="utf-8") as f:
+    f.write("\ufeff" + texto_ini)
+antes_bom = secciones(ruta_ini)
+proceso = correr_cli(copia, "deshabilitar")
+despues_bom = secciones(os.path.join(copia, "config.ini"))
+esperado_bom = {s: dict(v) for s, v in antes_bom.items()}
+esperado_bom["api_celular"]["habilitado"] = "false"
+with open(os.path.join(copia, "config.ini"), "rb") as f:
+    quedo_con_bom = f.read().startswith(b"\xef\xbb\xbf")
+verificar(proceso.returncode == 0 and despues_bom == esperado_bom and not quedo_con_bom,
+          "deshabilitar con un config.ini con BOM funciona: cambia solo [api_celular] habilitado y no pierde nada",
+          f"config.ini con BOM: {proceso.returncode} {proceso.stdout} {despues_bom.get('api_celular')}")
 
 proceso = correr_cli(TMP, "cerrar-sesiones")
 verificar(proceso.returncode == 0 and "volver a ingresar el PIN" in proceso.stdout, "cerrar-sesiones rota la firma",

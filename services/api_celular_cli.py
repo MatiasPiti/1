@@ -128,10 +128,10 @@ def cerrar_sesiones() -> int:
 
 
 def cambiar_habilitado(habilitado: bool) -> int:
-    """El ÚNICO interruptor de la API (D21). Editar config.ini a mano tiene dos
-    trampas verificadas: un comentario al final de la línea cambia lo que se
-    lee, y un Bloc de notas que lo guarde con BOM hace que ninguna app lo pueda
-    leer (se cae también la Caja)."""
+    """El ÚNICO interruptor de la API (D21). Editar config.ini a mano tiene una
+    trampa verificada: un comentario al final de la línea cambia lo que se lee.
+    (La otra era el BOM del Bloc de notas, que dejaba el archivo ilegible para
+    todas las apps: desde noviembre 2026 se lee igual, ver config._leer_texto.)"""
     _configurar_logs()
     try:
         config.cargar_config(estricto=True)

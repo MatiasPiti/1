@@ -394,15 +394,21 @@ def abrir_dialogo_impresora(parent: tk.Misc) -> tk.Toplevel:
 
     PREDETERMINADA = "(Predeterminada de Windows)"
 
+    # La config se lee ANTES de crear la ventana. Si config.ini está mal
+    # formado, cargar_config lanza: hecho después, quedaba una ventanita
+    # vacía con el teclado y el mouse capturados (grab_set) y la Caja de
+    # atrás sin responder hasta que alguien la cerrara.
+    try:
+        actual = config.cargar_config().get("impresora", "nombre", fallback="")
+    except Exception:
+        actual = ""
+
     top = tk.Toplevel(parent)
     aplicar_tema(top)
     top.title("Configurar impresora de tickets")
     top.geometry("440x260")
     top.transient(parent)
     top.grab_set()
-
-    cfg = config.cargar_config()
-    actual = cfg.get("impresora", "nombre", fallback="")
 
     ttk.Label(top, text="Impresora para los tickets de venta:", style="Header.TLabel"
               ).pack(anchor="w", padx=16, pady=(16, 6))
@@ -437,8 +443,17 @@ def abrir_dialogo_impresora(parent: tk.Misc) -> tk.Toplevel:
         # releída: guardar el `cfg` cargado al abrir el diálogo pisaría
         # cualquier otro cambio hecho mientras esta ventana estuvo abierta
         # (por ejemplo el token de ARCA o el del bot de Telegram).
-        config.actualizar_config_dict(
-            {"impresora": {"nombre": "" if elegida == PREDETERMINADA else elegida}})
+        try:
+            config.actualizar_config_dict(
+                {"impresora": {"nombre": "" if elegida == PREDETERMINADA else elegida}})
+        except Exception as e:
+            # Sin esto el botón "Guardar" no hacía nada y no decía nada.
+            messagebox.showerror(
+                "No se pudo guardar",
+                f"No se pudo guardar la impresora: el archivo config.ini no se puede leer "
+                f"({type(e).__name__}).\n\nAvisale a Matías. Mientras tanto la Caja sigue "
+                f"vendiendo y los tickets se guardan en la carpeta 'tickets'.", parent=top)
+            return
         messagebox.showinfo("Impresora configurada",
                              f"A partir de ahora los tickets se imprimen en:\n{elegida}\n\n"
                              f"Esto queda guardado — no hace falta elegirla de nuevo.")

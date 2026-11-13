@@ -286,10 +286,13 @@ def iniciar_si_esta_habilitado():
     o mal configurada — igual que el bot de Telegram, es 'best effort'."""
     from pos_core import config
 
-    cfg = config.cargar_config()
-    if cfg.get("remoto", "habilitado", fallback="false").strip().lower() not in ("true", "1", "si", "sí"):
-        return None
     try:
+        # Adentro del try: un config.ini mal formado hace que cargar_config
+        # lance, y "nunca tira una excepción hacia arriba" tiene que valer
+        # también para ese caso (el servicio sigue con el stock y el respaldo).
+        cfg = config.cargar_config()
+        if cfg.get("remoto", "habilitado", fallback="false").strip().lower() not in ("true", "1", "si", "sí"):
+            return None
         puerto = int(cfg.get("remoto", "puerto", fallback="8765"))
         token = config.token_remoto()
         escuchar_en = cfg.get("remoto", "escuchar_en", fallback="0.0.0.0").strip() or "0.0.0.0"

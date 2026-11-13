@@ -421,7 +421,6 @@ casos_ilegibles = {
     "vacío": "",
     "solo espacios": "   \n\n  ",
     "mal formado": "esto no es un ini\nclave = valor\n",
-    "con BOM (Bloc de notas)": "﻿[general]\nnombre_local = Kiosco\n",
 }
 for nombre, contenido in casos_ilegibles.items():
     base = nueva_base(contenido)
@@ -454,6 +453,85 @@ if como_dict(config.cargar_config(estricto=True)) != como_dict(cargar_como_antes
     falla("con un config.ini sano, cargar_config(estricto=True) no da lo mismo que antes")
 else:
     ok("con un config.ini sano, estricto y no estricto dan lo mismo que antes")
+
+# --------------------------------------------------------------------- #
+# 5b. Un config.ini guardado con el Bloc de notas (con BOM) se lee igual
+# --------------------------------------------------------------------- #
+# Para rotar el token de [remoto] hay que editar config.ini a mano, y el
+# Bloc de notas de varios Windows 10 lo guarda con BOM: tres bytes invisibles
+# al principio. Con eso configparser rechazaba el archivo ENTERO y se caía
+# todo lo que lee la config: la API remota no arrancaba (Leo sin panel), el
+# bot de Telegram moría en silencio y los tickets no salían por la impresora.
+BOM = "\ufeff"
+base = nueva_base(BOM + CONFIG_REAL)
+ruta = os.path.join(base, "config.ini")
+if not leer_bytes(ruta).startswith(b"\xef\xbb\xbf"):
+    falla("la prueba no llegó a escribir el BOM: no prueba nada")
+sin_bom = configparser.ConfigParser()
+sin_bom.read_dict(config._DEFAULTS)
+sin_bom.read_string(CONFIG_REAL)
+for nombre, cargar in (("cargar_config()", config.cargar_config),
+                       ("cargar_config(estricto=True)", lambda: config.cargar_config(estricto=True))):
+    try:
+        leido = como_dict(cargar())
+    except Exception as e:
+        falla(f"{nombre} con un config.ini con BOM lanzó {type(e).__name__}: todo lo que lee la "
+              f"config se cae (API remota, Telegram, impresora)")
+        continue
+    if leido != como_dict(sin_bom):
+        falla(f"{nombre} con BOM no lee lo mismo que sin BOM")
+    else:
+        ok(f"{nombre} con un config.ini con BOM lee lo mismo que sin BOM (token incluido)")
+if leer_bytes(ruta) != (BOM + CONFIG_REAL).encode("utf-8"):
+    falla("leer un config.ini con BOM lo modificó")
+
+# Guardar encima conserva TODO lo que había y deja el archivo sin BOM.
+config.actualizar_config_dict({"impresora": {"nombre": "POS-58"}})
+despues = como_dict(config.cargar_config(estricto=True))
+esperado = como_dict(sin_bom)
+esperado["impresora"]["nombre"] = "POS-58"
+if despues != esperado:
+    falla("guardar sobre un config.ini con BOM perdió o cambió valores del cliente")
+elif despues["remoto"]["token"] != "TOKEN-REMOTO-DE-PRUEBA":
+    falla("guardar sobre un config.ini con BOM perdió el [remoto] token")
+elif leer_bytes(ruta).startswith(b"\xef\xbb\xbf"):
+    falla("después de guardar, config.ini sigue con BOM")
+else:
+    ok("guardar sobre un config.ini con BOM conserva todo (token incluido) y lo deja sin BOM")
+
+# La API remota tiene que arrancar con ese archivo: es lo que dejaba a Leo
+# sin panel. Y con un config.ini mal formado de verdad no puede lanzar (el
+# servicio sigue con el stock y el respaldo).
+import socket
+from services import remote_api
+
+_libre = socket.socket()
+_libre.bind(("127.0.0.1", 0))
+_puerto = _libre.getsockname()[1]
+_libre.close()
+base = nueva_base(BOM + CONFIG_REAL.replace("puerto = 8765",
+                                           f"puerto = {_puerto}\nescuchar_en = 127.0.0.1"))
+servidor = None
+try:
+    servidor = remote_api.iniciar_si_esta_habilitado()
+except Exception as e:
+    falla(f"iniciar_si_esta_habilitado lanzó con un config.ini con BOM: {type(e).__name__}")
+if servidor is None:
+    falla("con un config.ini con BOM la API remota no arranca: el Dueño Remoto queda sin conexión")
+else:
+    ok("con un config.ini con BOM la API remota arranca igual")
+    servidor.shutdown()
+    servidor.server_close()
+
+base = nueva_base("esto no es un ini\nclave = valor\n")
+try:
+    if remote_api.iniciar_si_esta_habilitado() is not None:
+        falla("con un config.ini mal formado la API remota dijo que arrancó")
+    else:
+        ok("con un config.ini mal formado la API remota no arranca, pero tampoco tira el servicio")
+except Exception as e:
+    falla(f"iniciar_si_esta_habilitado lanzó {type(e).__name__} con un config.ini mal formado: "
+          f"en el servicio eso es no arrancar")
 
 # --------------------------------------------------------------------- #
 # 6. leer_config_celular: la regla del primer token, igual que el watchdog
