@@ -82,6 +82,30 @@ class LocalBackend:
         return True
 
 
+# Los errores de la capa de abajo (urllib3) que significan "no se llegó a
+# conectar": el pedido nunca salió de esta computadora. Se miran por nombre
+# y no importando la clase, porque cambian entre versiones de la librería.
+_ERRORES_SIN_CONEXION = {"NewConnectionError", "NameResolutionError", "ConnectTimeoutError"}
+
+
+def _nunca_salio(error) -> bool:
+    """¿El pedido no llegó a salir? (el local apagado, Tailscale cortado, un
+    nombre que no se puede resolver). Recorre el error y los que lo causaron."""
+    vistos = 0
+    while error is not None and vistos < 8:
+        if type(error).__name__ in _ERRORES_SIN_CONEXION:
+            return True
+        siguiente = getattr(error, "reason", None)
+        if not isinstance(siguiente, BaseException):
+            argumentos = getattr(error, "args", ())
+            siguiente = argumentos[0] if argumentos and isinstance(argumentos[0], BaseException) else None
+        if siguiente is None:
+            siguiente = error.__cause__ or error.__context__
+        error = siguiente
+        vistos += 1
+    return False
+
+
 class RemoteError(Exception):
     """Cualquier problema hablando con el local: sin conexión, token
     inválido, o la propia función remota falló (p.ej. ARCA rechazó una
@@ -139,13 +163,42 @@ class RemoteBackend:
         except self._requests.RequestException:
             return False
 
+    def _explicar(self, error) -> str:
+        """Por qué no se pudo, en castellano y SIN la dirección del local.
+
+        El texto de requests trae adentro la IP de Tailscale y el puerto
+        ("HTTPConnectionPool(host='100.x.y.z', port=8765): Max retries
+        exceeded with url: /rpc (Caused by..."): ese cartel es el que el
+        dueño fotografía para preguntar qué pasa, y una foto es un chat igual
+        (regla 4). Además de no entenderse.
+
+        Distingue lo único que al dueño le cambia qué hacer: si el pedido NO
+        llegó a salir (se puede repetir tranquilo) o si se cortó cuando el
+        local ya lo había recibido (puede haberse hecho igual).
+        """
+        excepciones = self._requests.exceptions
+        if isinstance(error, (excepciones.MissingSchema, excepciones.InvalidSchema,
+                              excepciones.InvalidURL)):
+            return ("No se pudo conectar con el local: la dirección cargada no es válida. "
+                    "Revisala en la pantalla de conexión.")
+        if isinstance(error, excepciones.ConnectTimeout) or _nunca_salio(error):
+            return ("No se pudo conectar con el local: no contesta. Revisá que la PC del local esté "
+                    "prendida y Tailscale conectado en las dos computadoras. No se cambió nada.")
+        if isinstance(error, excepciones.ReadTimeout):
+            return ("No se pudo conectar con el local: recibió el pedido pero tardó demasiado en "
+                    "contestar. Puede que lo haya hecho igual: fijate antes de repetirlo.")
+        return (f"No se pudo conectar con el local: se cortó la conexión en el medio "
+                f"({type(error).__name__}). Puede que lo haya hecho igual: fijate antes de repetirlo.")
+
     def _post(self, cuerpo: dict) -> dict:
         try:
             resp = self._requests.post(f"{self.base_url}/rpc",
                                         timeout=(self.ESPERA_CONEXION_S, self.timeout),
                                         headers=self._headers(), json=cuerpo)
         except self._requests.RequestException as e:
-            raise RemoteError(f"No se pudo conectar con el local: {e}")
+            # "from None": que el error original, con la dirección, tampoco
+            # quede encadenado en una traza.
+            raise RemoteError(self._explicar(e)) from None
 
         if resp.status_code == 401:
             raise RemoteError("Token remoto inválido — revisar la configuración de conexión.")

@@ -314,6 +314,39 @@ finally:
     _db.cerrar_conexion()
     paths.set_base_override(base)
 
+# ---------------------------------------------------------------- #
+# 5. Si la VENTANA no se puede armar, también se avisa
+# ---------------------------------------------------------------- #
+# Hasta acá, lo que fallaba era preparar la base. Si lo que falla es armar
+# la ventana (un módulo que no entró en el .exe, una pantalla que se cae al
+# dibujarse), el programa moría igual que antes de que existiera este
+# cartel: doble clic y no pasa nada.
+dialogos.clear()
+ruta_log_arranque = os.path.join(paths.logs_dir(), "arranque.log")
+if os.path.exists(ruta_log_arranque):
+    os.remove(ruta_log_arranque)
+
+
+def _ventana_que_no_arma():
+    raise ImportError("No module named 'algo_que_falto_en_el_exe'")
+
+
+try:
+    arranque.iniciar("Otter Caja", lambda: None, _ventana_que_no_arma)
+    fallos.append("la ventana no se pudo armar y el arranque siguió como si nada")
+except SystemExit:
+    if len(dialogos) != 1 or "no pudo abrir" not in dialogos[0][0]:
+        fallos.append(f"la ventana no se pudo armar y no hubo cartel: {dialogos}")
+    elif "algo_que_falto_en_el_exe" not in dialogos[0][1]:
+        fallos.append(f"el cartel no dice qué falló: {dialogos[0][1]}")
+    elif not os.path.isfile(ruta_log_arranque):
+        fallos.append("la ventana no se pudo armar y no quedó nada en logs/arranque.log")
+    else:
+        print("OK: si la ventana no se puede armar, hay cartel y queda en logs/arranque.log")
+except Exception as e:
+    fallos.append(f"la ventana no se pudo armar y el programa murió con {type(e).__name__}, sin cartel: "
+                   f"es el doble clic que no hace nada")
+
 print()
 if fallos:
     print("=== FALLOS ===")

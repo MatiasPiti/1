@@ -233,6 +233,49 @@ def _ofrecer_restaurar_copia(nombre_app: str) -> bool:
         return False
 
 
+PASOS_EN_EL_LOCAL = ("Qué hacer:\n"
+                     "1. Anotá o sacale una foto a este cartel.\n"
+                     "2. Probá conectar el USB de Mantenimiento y usar\n"
+                     "   'REPARAR TODO AUTOMÁTICAMENTE'.\n"
+                     "3. Si sigue igual, llamá a Matías.")
+
+
+def _cerrar_ventana_a_medias() -> None:
+    """Si la ventana quedó a medio armar, se la saca de la pantalla antes de
+    mostrar el cartel: una ventana vacía atrás del cartel confunde más."""
+    try:
+        import tkinter as tk
+        raiz = getattr(tk, "_default_root", None)
+        if raiz is not None:
+            raiz.destroy()
+    except Exception:
+        pass
+
+
+def construir_avisando(nombre_app: str, construir_ventana, pasos: str = PASOS_EN_EL_LOCAL):
+    """Arma la ventana y la devuelve. Si no puede, lo dice en un cartel y lo
+    deja escrito, en vez de morir en silencio.
+
+    `iniciar` solo cubría `preparar`. Un error al ARMAR la ventana (un módulo
+    que no entró en el .exe, una pantalla que se cae al dibujarse) dejaba el
+    mismo síntoma que este archivo existe para evitar: doble clic y no pasa
+    nada, sin cartel y sin una línea en ningún log.
+    """
+    try:
+        return construir_ventana()
+    except BaseException as error:      # incluye KeyboardInterrupt
+        if isinstance(error, SystemExit):
+            raise
+        ruta_log = _registrar(nombre_app, error)
+        _cerrar_ventana_a_medias()
+        _dialogo(
+            f"{nombre_app} no pudo abrir",
+            f"{type(error).__name__}: {error}\n\n"
+            f"{pasos}\n\n"
+            + (f"El detalle técnico quedó en:\n{ruta_log}" if ruta_log else ""))
+        raise SystemExit(1)
+
+
 def iniciar(nombre_app: str, preparar, construir_ventana) -> None:
     """Arranca la app avisando si no puede.
 
@@ -279,14 +322,10 @@ def iniciar(nombre_app: str, preparar, construir_ventana) -> None:
             _dialogo(
                 f"{nombre_app} no pudo abrir",
                 f"{error}\n\n"
-                "Qué hacer:\n"
-                "1. Anotá o sacale una foto a este cartel.\n"
-                "2. Probá conectar el USB de Mantenimiento y usar\n"
-                "   'REPARAR TODO AUTOMÁTICAMENTE'.\n"
-                "3. Si sigue igual, llamá a Matías.\n\n"
+                f"{PASOS_EN_EL_LOCAL}\n\n"
                 + (f"El detalle técnico quedó en:\n{ruta_log}" if ruta_log else ""))
             raise SystemExit(1)
 
-    ventana = construir_ventana()
+    ventana = construir_avisando(nombre_app, construir_ventana)
     if ventana is not None:
         ventana.mainloop()

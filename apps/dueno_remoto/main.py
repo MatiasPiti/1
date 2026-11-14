@@ -28,7 +28,7 @@ from tkinter import ttk, messagebox
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from pos_core import config
+from pos_core import arranque, config
 from pos_core.dueno_backend import RemoteBackend
 from apps.theme import aplicar_tema, habilitar_copiar_pegar_global
 
@@ -68,7 +68,16 @@ class PantallaConexion(tk.Tk):
         ttk.Button(self, text="Conectar", style="Accent.TButton", command=self._conectar
                    ).pack(anchor="w", padx=20, pady=16)
 
-        cfg = config.obtener_config_dict().get("conexion_remota", {})
+        try:
+            cfg = config.obtener_config_dict().get("conexion_remota", {})
+        except Exception:
+            # Un config.ini que no se puede leer no puede dejar al dueño sin
+            # panel: se abre con los campos vacíos y la conexión se carga a
+            # mano. (Antes esto se caía acá, sin ventana y sin ningún cartel.)
+            cfg = {}
+            self.lbl_estado.config(
+                text="No se pudo leer la conexión guardada en esta computadora. "
+                     "Cargá la dirección y el token de nuevo.")
         if cfg.get("url"):
             self.entry_url.insert(0, cfg["url"])
         if cfg.get("token"):
@@ -98,19 +107,46 @@ class PantallaConexion(tk.Tk):
                      "(Tailscale) conectada en las dos PCs, y que la dirección/token sean correctos.")
             return
 
-        config.actualizar_config_dict({"conexion_remota": {"url": url, "token": token}})
+        try:
+            config.actualizar_config_dict({"conexion_remota": {"url": url, "token": token}})
+        except Exception:
+            # Ya conectó: no poder GUARDAR la conexión no es motivo para no
+            # entrar. Sin esto la ventana se quedaba en "Probando conexión..."
+            # para siempre, con el local contestando bien.
+            messagebox.showwarning(
+                "Conectado, pero no se pudo guardar",
+                "La conexión anda, pero no se pudo guardar en esta computadora:\n"
+                "la próxima vez va a haber que cargar la dirección y el token de nuevo.\n\n"
+                "Avisale a Matías.", parent=self)
         self.backend_listo = backend
         self.destroy()
 
 
+# En la laptop del dueño no hay nada que reparar con el USB de Mantenimiento
+# (ese USB es para la PC del local): los pasos del cartel son otros.
+PASOS_EN_LA_LAPTOP = ("Qué hacer:\n"
+                      "1. Sacale una foto a este cartel.\n"
+                      "2. Cerralo y volvé a abrir el programa.\n"
+                      "3. Si sigue igual, mandale la foto a Matías.")
+NOMBRE_APP = "Otter Dueño Remoto"
+
+
+def _armar_panel(backend):
+    from apps.master_dueno.main import AppDueno
+    return AppDueno(backend=backend)
+
+
 def main():
-    pantalla = PantallaConexion()
+    # El .exe no tiene consola: si algo falla al abrir, sin esto no se ve
+    # NADA (ver pos_core/arranque.py). Va por pasos porque son dos ventanas.
+    pantalla = arranque.construir_avisando(NOMBRE_APP, PantallaConexion, PASOS_EN_LA_LAPTOP)
     pantalla.mainloop()
     if pantalla.backend_listo is None:
         return  # se cerró la ventana sin conectar
 
-    from apps.master_dueno.main import AppDueno
-    AppDueno(backend=pantalla.backend_listo).mainloop()
+    panel = arranque.construir_avisando(
+        NOMBRE_APP, lambda: _armar_panel(pantalla.backend_listo), PASOS_EN_LA_LAPTOP)
+    panel.mainloop()
 
 
 if __name__ == "__main__":
