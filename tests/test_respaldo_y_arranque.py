@@ -55,17 +55,48 @@ if segunda["hecha"]:
     fallos.append("hizo dos copias el mismo día")
 
 # Las viejas se borran; las de la ventana se conservan.
-vieja = os.path.join(paths.backups_dir(), "stock_2020-01-01.db")
-with open(vieja, "wb") as f:
-    f.write(b"copia vieja")
-antigua = (datetime.now() - timedelta(days=60)).timestamp()
-os.utime(vieja, (antigua, antigua))
+def _copia_de_hace(dias):
+    fecha = datetime.now() - timedelta(days=dias)
+    ruta = os.path.join(paths.backups_dir(), f"stock_{fecha:%Y-%m-%d}.db")
+    with open(ruta, "wb") as f:
+        f.write(b"copia de prueba")
+    os.utime(ruta, (fecha.timestamp(), fecha.timestamp()))
+    return ruta
+
+
+# El servicio andando todos los días: hoy + 13 días + una de hace 60.
+recientes = [_copia_de_hace(d) for d in range(1, 14)]
+vieja = _copia_de_hace(60)
 borradas = respaldo.limpiar_viejas()
 print("LIMPIEZA:", borradas)
 if os.path.exists(vieja):
     fallos.append("no borró la copia de 60 días")
 if not os.path.isfile(copias[0]["ruta"]):
     fallos.append("¡borró la copia de hoy!")
+if not all(os.path.isfile(r) for r in recientes):
+    fallos.append("borró copias de los últimos 14 días")
+
+# El servicio estuvo parado tres semanas (vacaciones, la PC rota, o el
+# servicio en Stopped como en septiembre): las copias que hay son todas
+# "viejas". Al volver, la primera copia NO puede borrarlas todas de un saque
+# y dejar al negocio con una sola.
+for r in recientes:
+    os.remove(r)
+de_antes = [_copia_de_hace(d) for d in range(20, 34)]       # 14 copias, de antes del parate
+borradas = respaldo.limpiar_viejas()
+quedan = [c["archivo"] for c in respaldo.listar_copias()]
+if len(quedan) < respaldo.MINIMO_A_CONSERVAR:
+    fallos.append(f"el servicio volvió después de tres semanas parado y de las 15 copias quedaron "
+                   f"{len(quedan)}: las de antes del parate eran la única vuelta atrás")
+elif not os.path.isfile(copias[0]["ruta"]):
+    fallos.append("¡borró la copia de hoy!")
+elif len(borradas) != 1 or os.path.exists(de_antes[-1]):
+    fallos.append(f"tenía que irse solo la más vieja (entra una, sale una) y se fueron: {borradas}")
+else:
+    print(f"OK: después de un parate largo no se borran todas las copias de golpe (quedan {len(quedan)})")
+for r in de_antes:
+    if os.path.exists(r):
+        os.remove(r)
 
 # ---------------------------------------------------------------- #
 # 2. La base se rompe: el sistema tiene que avisar y ofrecer la copia

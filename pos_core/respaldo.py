@@ -38,6 +38,9 @@ from pos_core.paths import backups_dir, db_path
 log = logging.getLogger("stock_daemon")
 
 DIAS_A_CONSERVAR = 14
+# Piso: nunca se baja de esta cantidad de copias, tengan la antigüedad que
+# tengan (ver limpiar_viejas).
+MINIMO_A_CONSERVAR = 14
 
 # Con menos de esto en disco no se intenta la copia: llenar el disco es
 # justamente una de las formas de corromper la base viva, y el remedio no
@@ -71,13 +74,36 @@ def hay_copia_de_hoy(fecha: datetime = None) -> bool:
     return os.path.isfile(ruta_de_hoy(fecha))
 
 
-def limpiar_viejas(dias: int = DIAS_A_CONSERVAR) -> list:
-    """Borra las copias de más de `dias`. Devuelve lo que borró."""
+def limpiar_viejas(dias: int = DIAS_A_CONSERVAR, minimo: int = MINIMO_A_CONSERVAR) -> list:
+    """Borra las copias de más de `dias`, sin dejar nunca menos de `minimo`.
+    Devuelve lo que borró.
+
+    El piso existe por un caso que ya se dio: el servicio parado más de dos
+    semanas (septiembre de 2026; y es lo que pasa cada vez que el negocio
+    cierra por vacaciones, o con la PC rota). Las copias las hace el
+    servicio, así que en ese tiempo no entra ninguna nueva; y al volver, la
+    primera copia borraba TODAS las anteriores de un saque, por viejas. El
+    negocio quedaba con una sola copia, la de ese minuto — y si en esas
+    semanas alguien había roto algo sin darse cuenta (la Caja y el Panel
+    andan sin el servicio), las copias de antes eran la única vuelta atrás.
+    Lo mismo si el reloj de la PC salta para adelante.
+
+    Con el piso, las copias viejas se van de a una, a medida que entran las
+    nuevas: con el servicio andando todos los días quedan las mismas 14 de
+    siempre.
+    """
     limite = datetime.now() - timedelta(days=dias)
-    borradas = []
+    copias = []
     for ruta in glob.glob(os.path.join(backups_dir(), "stock_*.db")):
         try:
-            if datetime.fromtimestamp(os.path.getmtime(ruta)) < limite:
+            copias.append((os.path.getmtime(ruta), ruta))
+        except OSError:
+            pass
+    copias.sort(reverse=True)            # la más nueva primero
+    borradas = []
+    for modificada, ruta in copias[max(minimo, 0):]:
+        try:
+            if datetime.fromtimestamp(modificada) < limite:
                 os.remove(ruta)
                 borradas.append(os.path.basename(ruta))
         except OSError:

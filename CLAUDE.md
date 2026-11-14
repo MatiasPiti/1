@@ -139,6 +139,7 @@ con lo que se decide a mano.
 | Si el Dueño Remoto fallaba al abrir no había cartel ni log; lo mismo la Caja y el Panel si fallaba ARMAR la ventana | `arranque.construir_avisando`, `apps/dueno_remoto` |
 | El Dueño Remoto no abría con su `config.ini` ilegible, y se quedaba en "Probando conexión..." si no podía guardarlo | `apps/dueno_remoto` |
 | En el Panel, una cantidad mal tipeada mostraba el error de Python, y el porcentaje "10,5" no se aceptaba | `apps/master_dueno` |
+| Si el servicio estuvo parado más de 14 días (pasó en septiembre; pasa en vacaciones), al volver hacía la copia de hoy y **borraba todas las anteriores de un saque** | `respaldo.limpiar_viejas` |
 
 El detalle de cada uno está en su commit y en la prueba que lo cuida (`tests/README.md`).
 
@@ -899,6 +900,9 @@ producto. Lleva tres columnas nuevas que la carga masiva de siempre ignora: `Rub
   - **El cartel de conexión del Dueño Remoto no muestra la dirección** y distingue "no se cambió
     nada" (el pedido no salió) de "puede que lo haya hecho igual" (se cortó con el local
     trabajando). `RemoteError` siempre sale con `from None`.
+  - **Nunca quedan menos de 14 copias diarias**, tengan la antigüedad que tengan
+    (`respaldo.MINIMO_A_CONSERVAR`): una copia se borra solo si tiene más de 14 días Y hay 14 más
+    nuevas. Con el servicio andando todos los días es lo mismo de siempre.
   - **Todo arranque pasa por `arranque.construir_avisando`**: también el del Dueño Remoto, y
     también el error al ARMAR la ventana. Un `.exe` sin consola no puede fallar sin cartel.
 
