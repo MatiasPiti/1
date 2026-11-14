@@ -151,6 +151,66 @@ if en_caja["precio_venta"] != 450.0:
 else:
     ok("si el precio queda por debajo del descuento, la Caja cobra el de lista y no $ 0")
 
+# El porcentaje del ajuste masivo se escribe con coma ("10,5"): antes daba
+# "Porcentaje inválido" sin decir por qué. Y lo que no es un número no toca nada.
+from pos_core import bulk_edit
+products.crear_producto(codigo="7790700", nombre="Fideos Tirabuzón", precio_venta=2000.0, usuario="test")
+app.filtro_codigos = ["7790700"]
+app.bulk_tree.selection_set(())
+errores_mostrados.clear()
+escribir(app.bulk_pct, "10,5")
+app._aplicar_bulk_pct()
+p = fila("SELECT precio_venta FROM Productos WHERE codigo = '7790700'")
+esperado = bulk_edit.calcular_nuevo_precio(2000.0, porcentaje=10.5)
+if errores_mostrados or not p or p["precio_venta"] != esperado:
+    fallos.append(f"un aumento de '10,5' % dejó el producto en {p} (tenía que quedar en {esperado}); "
+                   f"carteles: {errores_mostrados}")
+else:
+    ok(f"el porcentaje '10,5' (con coma) se entiende: $ 2.000 pasa a $ {esperado:.0f}")
+for raro in ("nan", "inf", "diez", ""):
+    errores_mostrados.clear()
+    escribir(app.bulk_pct, raro)
+    app._aplicar_bulk_pct()
+    ahora = fila("SELECT precio_venta FROM Productos WHERE codigo = '7790700'")["precio_venta"]
+    if ahora != esperado or not errores_mostrados:
+        fallos.append(f"un porcentaje '{raro}' cambió el precio a {ahora} o no avisó nada")
+        break
+else:
+    ok("un porcentaje que no es un número ('nan', 'inf', texto, vacío) avisa y no toca ningún precio")
+
+# Una cantidad mal tipeada en la pestaña Stock avisa en castellano (el cartel
+# mostraba el error de Python: "invalid literal for int() with base 10").
+for texto in ("1.000", "doce", ""):
+    errores_mostrados.clear()
+    escribir(app.stock_codigo, "7790700")
+    escribir(app.stock_cantidad, texto)
+    app._sumar_stock()
+    app._restar_stock()
+    mostrado = " ".join(str(x) for e in errores_mostrados for x in e)
+    if len(errores_mostrados) != 2 or "invalid literal" in mostrado or "números enteros" not in mostrado:
+        fallos.append(f"con la cantidad '{texto}' el cartel fue: {errores_mostrados}")
+        break
+    if fila("SELECT stock FROM Productos WHERE codigo = '7790700'")["stock"] != 0:
+        fallos.append(f"con la cantidad '{texto}' se movió el stock")
+        break
+else:
+    ok("una cantidad mal tipeada en Stock avisa en castellano y no mueve nada")
+errores_mostrados.clear()
+escribir(app.stock_cantidad, "12")
+app._sumar_stock()
+if errores_mostrados or fila("SELECT stock FROM Productos WHERE codigo = '7790700'")["stock"] != 12:
+    fallos.append(f"sumar 12 al stock no funcionó: {errores_mostrados}")
+
+errores_mostrados.clear()
+escribir(app.um_min, "veinte")
+escribir(app.um_max, "0")
+app._guardar_umbrales()
+mostrado = " ".join(str(x) for e in errores_mostrados for x in e)
+if not errores_mostrados or "invalid literal" in mostrado:
+    fallos.append(f"un umbral global mal tipeado mostró: {errores_mostrados}")
+else:
+    ok("un umbral global mal tipeado avisa en castellano")
+
 app.destroy()
 db.cerrar_conexion()
 print()

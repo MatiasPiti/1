@@ -13,6 +13,7 @@ Remoto (RemoteBackend, ver apps/dueno_remoto/main.py) que habla con el
 Maestro por HTTP a través de una VPN privada tipo Tailscale.
 """
 
+import math
 import os
 import sys
 import tkinter as tk
@@ -31,6 +32,14 @@ from apps.theme import (aplicar_tema, estriar_treeview, tag_fila,
 
 USUARIO = os.environ.get("USERNAME", "dueño")
 ORIGEN = "MAESTRO"
+
+
+def _leer_entero(texto):
+    """El entero que se tipeó en un campo de cantidad, o None si no lo es."""
+    try:
+        return int((texto or "").strip())
+    except ValueError:
+        return None
 
 
 class AppDueno(tk.Tk):
@@ -729,19 +738,36 @@ class AppDueno(tk.Tk):
             self.tree_stock_actual.insert("", "end", values=(r["codigo"], r["nombre"], r["stock"]),
                                            tags=(tag_fila(i),))
 
+    def _cantidad_de_stock(self):
+        """La cantidad tipeada en la pestaña Stock, o None (ya avisado) si no
+        es un entero. Antes el cartel mostraba el error de Python tal cual:
+        "invalid literal for int() with base 10: '1.000'"."""
+        cantidad = _leer_entero(self.stock_cantidad.get())
+        if cantidad is None:
+            messagebox.showerror(
+                "Cantidad inválida",
+                "Poné la cantidad en números enteros, sin puntos ni comas (por ejemplo 12).")
+        return cantidad
+
     def _sumar_stock(self):
+        cantidad = self._cantidad_de_stock()
+        if cantidad is None:
+            return
         try:
             self.backend.stock_service.sumar_stock_manual(
-                self.stock_codigo.get().strip(), int(self.stock_cantidad.get()),
+                self.stock_codigo.get().strip(), cantidad,
                 usuario=USUARIO, origen=ORIGEN)
             self._refrescar_stock_actual()
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
     def _restar_stock(self):
+        cantidad = self._cantidad_de_stock()
+        if cantidad is None:
+            return
         try:
             self.backend.stock_service.restar_stock_manual(
-                self.stock_codigo.get().strip(), int(self.stock_cantidad.get()),
+                self.stock_codigo.get().strip(), cantidad,
                 usuario=USUARIO, origen=ORIGEN)
             self._refrescar_stock_actual()
         except Exception as e:
@@ -989,10 +1015,19 @@ class AppDueno(tk.Tk):
         if not codigos:
             messagebox.showwarning("Nada para aplicar", "Agregá productos al filtro primero.")
             return
+        # "10,5" es diez y medio: acá se escribe con coma, y float() a secas lo
+        # rechazaba con un "Porcentaje inválido" que no decía por qué. El punto
+        # se deja como decimal (no como separador de miles): en un porcentaje
+        # nadie escribe "1.500", y leerlo como mil quinientos por ciento sería
+        # el peor error posible de esta pantalla.
         try:
-            pct = float(self.bulk_pct.get())
+            pct = float(self.bulk_pct.get().strip().replace(",", "."))
+            if not math.isfinite(pct):
+                raise ValueError
         except ValueError:
-            messagebox.showerror("Error", "Porcentaje inválido")
+            messagebox.showerror("Porcentaje inválido",
+                                 "Poné el porcentaje en números (por ejemplo 10 o 10,5; "
+                                 "con un menos adelante para bajar).")
             return
         self._aplicar_bulk(codigos, porcentaje=pct)
 
@@ -1685,9 +1720,12 @@ class AppDueno(tk.Tk):
             campo.insert(0, str(actual.get(clave, 0)))
 
     def _guardar_umbrales(self):
+        minimo = _leer_entero(self.um_min.get() or "0")
+        maximo = _leer_entero(self.um_max.get() or "0")
+        if minimo is None or maximo is None:
+            messagebox.showerror("Error", "Mínimo/Máximo tienen que ser números enteros.")
+            return
         try:
-            minimo = int(self.um_min.get() or 0)
-            maximo = int(self.um_max.get() or 0)
             self.backend.alerts.set_umbral_global(minimo, maximo)
         except Exception as e:
             messagebox.showerror("Error", str(e))
