@@ -156,7 +156,7 @@ def _cargar_config_o_ilegible():
     try:
         return config.cargar_config()
     except configparser.Error as e:
-        raise config.ConfigIlegibleError(f"config.ini mal formado: {type(e).__name__}") from e
+        raise config.ConfigIlegibleError(f"config.ini mal formado: {type(e).__name__}") from None
 
 
 def telegram_habilitado() -> bool:

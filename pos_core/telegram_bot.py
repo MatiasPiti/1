@@ -8,6 +8,7 @@ sistema offline-first (todo lo demás -cobrar, descontar stock- sigue
 funcionando sin internet aunque Telegram falle).
 """
 
+import logging
 import threading
 import time
 from datetime import datetime, timedelta
@@ -17,8 +18,17 @@ import requests
 from pos_core.config import cargar_config
 from pos_core.db import get_connection, transaction
 
+# El mismo logger que el servicio de stock: ahí es donde tiene archivo. En el
+# Panel (que también corre un monitor mientras está abierto) no lo tiene y
+# el aviso se pierde sin molestar.
+log = logging.getLogger("stock_daemon")
+
 API_BASE = "https://api.telegram.org/bot{token}/{method}"
 _COOLDOWN = timedelta(hours=4)  # no repetir la misma alerta antes de este tiempo
+# Si Telegram no contesta (sin internet, o frenó los envíos por mandar muchos
+# juntos), los que siguen tampoco van a salir: se corta la vuelta y se sigue
+# en la próxima, en vez de esperar 10 segundos por cada producto.
+_MAX_FALLAS_SEGUIDAS = 3
 
 
 def enviar_mensaje(texto: str, *, chat_id: str = None, timeout: int = 10) -> bool:
@@ -126,8 +136,87 @@ def _productos_fuera_de_umbral():
     ).fetchall()
 
 
-def revisar_umbrales_y_alertar():
+def _en_cooldown(ultima, ahora: datetime) -> bool:
+    """¿Esa alerta se mandó hace menos de 4 horas?
+
+    Una fecha que no se puede leer (base vieja, edición manual) cuenta como
+    "sin cooldown" y se reescribe al mandar: nunca debe cortar la revisión
+    del RESTO de los productos. Y una fecha a más de 4 horas en el FUTURO
+    tampoco frena: es de cuando el reloj de la PC estaba mal, y esperar a
+    que "pase" dejaría ese producto sin avisar por años.
+    """
+    if not ultima:
+        return False
+    try:
+        return abs(ahora - datetime.fromisoformat(ultima)) < _COOLDOWN
+    except (TypeError, ValueError):
+        return False
+
+
+def _reservar_alerta(codigo: str):
+    """Anota "esta alerta se está mandando ahora", SOLO si nadie la mandó en
+    las últimas 4 horas. Devuelve (marca, anterior) si la reservó, o None si
+    otro ya la mandó.
+
+    Se anota ANTES de mandar, y la pregunta y la anotación van en la misma
+    transacción. Las alertas las revisan dos programas a la vez —el servicio
+    de stock, todo el día, y el Panel del Dueño mientras está abierto— y
+    cada uno miraba el "ya se mandó" que había leído al empezar su vuelta:
+    cuando las dos vueltas se pisaban, el mismo aviso llegaba dos veces. Con
+    la reserva, el segundo ve que ya está tomada.
+
+    Solo se anota CUÁNDO, en su tabla propia (Alertas_Enviadas). Antes esto
+    escribía en Configuracion_Alertas, y para un producto que usaba el
+    umbral global le creaba una fila propia con el valor del global
+    CONGELADO adentro: al dueño le pasó exactamente eso — puso 20/20,
+    salieron las alertas, y después poner 0/0 no apagó nada. Anotar el
+    cooldown no puede configurar nada.
+    """
     ahora = datetime.now()
+    marca = ahora.isoformat(timespec="milliseconds")
+    with transaction() as conn:
+        fila = conn.execute(
+            "SELECT ultima_alerta_enviada FROM Alertas_Enviadas WHERE producto_codigo = ?",
+            (codigo,)).fetchone()
+        anterior = fila["ultima_alerta_enviada"] if fila else None
+        if _en_cooldown(anterior, ahora):
+            return None
+        conn.execute(
+            """INSERT INTO Alertas_Enviadas (producto_codigo, ultima_alerta_enviada)
+               VALUES (?, ?)
+               ON CONFLICT(producto_codigo) DO UPDATE SET
+                   ultima_alerta_enviada = excluded.ultima_alerta_enviada""",
+            (codigo, marca))
+    return marca, anterior
+
+
+def _devolver_reserva(codigo: str, marca: str, anterior) -> None:
+    """El envío no salió: se deja como estaba, para reintentarlo en la
+    próxima vuelta. Solo si la marca sigue siendo la nuestra."""
+    with transaction() as conn:
+        if anterior is None:
+            conn.execute(
+                "DELETE FROM Alertas_Enviadas WHERE producto_codigo = ? AND ultima_alerta_enviada = ?",
+                (codigo, marca))
+        else:
+            conn.execute(
+                "UPDATE Alertas_Enviadas SET ultima_alerta_enviada = ? "
+                "WHERE producto_codigo = ? AND ultima_alerta_enviada = ?",
+                (anterior, codigo, marca))
+
+
+def revisar_umbrales_y_alertar():
+    # Con el bot apagado o sin token no se manda nada: tampoco se anota ni se
+    # reserva nada (enviar_mensaje hace la misma pregunta; acá es para no
+    # escribir en la base por cada producto que califica).
+    cfg = cargar_config()
+    if cfg.get("telegram", "habilitado", fallback="false").lower() != "true":
+        return
+    if not cfg.get("telegram", "bot_token", fallback=""):
+        return
+    chat_por_defecto = cfg.get("telegram", "chat_id_default", fallback="")
+
+    fallas_seguidas = 0
     for row in _productos_fuera_de_umbral():
         alerta = None
         if row["stock_minimo"] and row["stock"] <= row["stock_minimo"]:
@@ -137,38 +226,23 @@ def revisar_umbrales_y_alertar():
 
         if not alerta:
             continue
-
-        ultima = row["ultima_alerta_enviada"]
-        if ultima:
-            try:
-                if (ahora - datetime.fromisoformat(ultima)) < _COOLDOWN:
-                    continue
-            except (TypeError, ValueError):
-                # Fecha guardada con un formato que no se puede leer (base
-                # vieja, edición manual): se trata como "sin cooldown" y se
-                # reescribe más abajo con un valor válido. Nunca debe cortar
-                # la revisión del RESTO de los productos.
-                pass
+        if not (row["chat_id"] or chat_por_defecto):
+            continue          # no hay a quién mandársela
+        # Primero contra lo leído al empezar la vuelta (barato, sin escribir)...
+        if _en_cooldown(row["ultima_alerta_enviada"], datetime.now()):
+            continue
+        # ...y recién ahí la reserva, que vuelve a preguntar con la base de ahora.
+        reserva = _reservar_alerta(row["codigo"])
+        if reserva is None:
+            continue          # la mandó el otro programa hace un instante
 
         if enviar_mensaje(alerta, chat_id=row["chat_id"]):
-            with transaction() as conn:
-                # Solo se anota CUÁNDO se mandó, en su tabla propia.
-                #
-                # Antes esto escribía en Configuracion_Alertas, y para un
-                # producto que usaba el umbral global le creaba una fila
-                # propia con el valor del global CONGELADO adentro. Desde
-                # ese momento el global dejaba de aplicarle: al dueño le
-                # pasó exactamente eso — puso 20/20, salieron las alertas,
-                # y después poner 0/0 no apagó nada, porque 0/0 cambiaba un
-                # número que ya nadie miraba. Anotar el cooldown no puede
-                # configurar nada.
-                conn.execute(
-                    """INSERT INTO Alertas_Enviadas (producto_codigo, ultima_alerta_enviada)
-                       VALUES (?, ?)
-                       ON CONFLICT(producto_codigo) DO UPDATE SET
-                           ultima_alerta_enviada = excluded.ultima_alerta_enviada""",
-                    (row["codigo"], ahora.isoformat(timespec="milliseconds")),
-                )
+            fallas_seguidas = 0
+            continue
+        _devolver_reserva(row["codigo"], *reserva)
+        fallas_seguidas += 1
+        if fallas_seguidas >= _MAX_FALLAS_SEGUIDAS:
+            return
 
 
 class MonitorAlertas(threading.Thread):
@@ -180,11 +254,20 @@ class MonitorAlertas(threading.Thread):
         self._detener = threading.Event()
 
     def run(self):
+        ultimo_error = None
         while not self._detener.is_set():
             try:
                 revisar_umbrales_y_alertar()
-            except Exception:
-                pass  # un fallo de red/DB puntual no debe matar el hilo de alertas
+                ultimo_error = None
+            except Exception as e:
+                # Un fallo de red o de la base no debe matar el hilo de
+                # alertas, pero tampoco puede quedar mudo: si las alertas no
+                # llegan, hasta ahora no había dónde leer por qué. Se anota
+                # una vez por error distinto, no en cada vuelta de 5 minutos.
+                descripcion = f"{type(e).__name__}: {e}"
+                if descripcion != ultimo_error:
+                    ultimo_error = descripcion
+                    log.exception("No se pudieron revisar las alertas de stock")
             self._detener.wait(self.intervalo_segundos)
 
     def detener(self):

@@ -431,16 +431,34 @@ for nombre, contenido in casos_ilegibles.items():
         falla(f"cargar_config(estricto=True) con un config.ini {nombre} no lanzó ConfigIlegibleError")
     except config.ConfigIlegibleError:
         ok(f"cargar_config(estricto=True) con un config.ini {nombre}: ConfigIlegibleError")
-    # Sin estricto: EXACTAMENTE como antes (mismos valores, o la misma excepción).
+    # Sin estricto: como antes (mismos valores, o un error de configparser).
     try:
         esperado = ("valor", como_dict(cargar_como_antes()))
     except Exception as e:
         esperado = ("error", type(e))
+    error_de_ahora = None
     try:
         obtenido = ("valor", como_dict(config.cargar_config()))
     except Exception as e:
         obtenido = ("error", type(e))
-    if obtenido != esperado:
+        error_de_ahora = e
+    if esperado[0] == "error" and issubclass(esperado[1], configparser.Error):
+        # El archivo mal formado es el único caso que cambió, y a propósito:
+        # sigue siendo un error de configparser (quien lo atrapaba lo sigue
+        # atrapando), pero dice EN QUÉ línea y no QUÉ dice la línea. El de
+        # antes traía pegado el texto de la línea rota, que puede ser la del
+        # token, y ese mensaje sale en el cartel de arranque de la Caja.
+        if not isinstance(error_de_ahora, configparser.Error):
+            falla(f"cargar_config() sin estricto con un config.ini {nombre} ya no da un error de "
+                  f"configparser: ahora {obtenido}")
+        elif "esto no es un ini" in f"{error_de_ahora} {error_de_ahora!r}":
+            falla(f"el error de un config.ini {nombre} muestra el texto de la línea rota: {error_de_ahora}")
+        elif "línea 1" not in str(error_de_ahora):
+            falla(f"el error de un config.ini {nombre} no dice en qué línea está: {error_de_ahora}")
+        else:
+            ok(f"cargar_config() sin estricto con un config.ini {nombre}: error de configparser que "
+               f"dice la línea y no lo que dice")
+    elif obtenido != esperado:
         falla(f"cargar_config() sin estricto con un config.ini {nombre} cambió de comportamiento: "
               f"antes {esperado[0]} {esperado[1] if esperado[0] == 'error' else ''}, ahora {obtenido[0]}")
     else:

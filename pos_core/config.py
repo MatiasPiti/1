@@ -58,6 +58,31 @@ class ConfigIlegibleError(Exception):
     """
 
 
+class ConfigMalFormadoError(configparser.Error):
+    """config.ini está, pero configparser lo rechaza.
+
+    El mensaje dice EN QUÉ línea, nunca QUÉ dice la línea. El error de
+    configparser trae pegado el texto de la línea que no entendió, y esa
+    línea puede ser la del token de [remoto] o la del bot de Telegram. Este
+    mensaje termina en el cartel de arranque de la Caja o en un log, y una
+    foto de cualquiera de los dos es un chat igual (regla 4).
+
+    Hereda de configparser.Error: quien ya atrapaba el error de configparser
+    lo sigue atrapando.
+    """
+
+
+def _mal_formado(error: configparser.Error, ruta: str) -> ConfigMalFormadoError:
+    lineas = [numero for numero, _texto in (getattr(error, "errors", None) or [])]
+    if not lineas and getattr(error, "lineno", None):
+        lineas = [error.lineno]
+    donde = ""
+    if lineas:
+        donde = (" en la línea " if len(lineas) == 1 else " en las líneas ") + \
+            ", ".join(str(n) for n in lineas[:10])
+    return ConfigMalFormadoError(f"{ruta} está mal formado{donde} ({type(error).__name__})")
+
+
 # En Windows, abrir config.ini justo mientras otro programa lo reemplaza
 # (el os.replace de guardar_config) da PermissionError por un instante: el
 # archivo viejo queda "pendiente de borrar" mientras se cambia por el nuevo.
@@ -96,8 +121,9 @@ def cargar_config(estricto: bool = False) -> configparser.ConfigParser:
     """La config de la app: los valores por defecto pisados por config.ini.
 
     estricto=False es el comportamiento de siempre (si el archivo no está o
-    no se puede abrir quedan los defaults; uno mal formado lanza el error de
-    configparser), con un solo agregado: el reintento de _leer_texto, para
+    no se puede abrir quedan los defaults; uno mal formado lanza un error de
+    configparser, ConfigMalFormadoError, que dice la línea pero no lo que
+    dice), con un solo agregado: el reintento de _leer_texto, para
     no quedarse con los defaults solo porque otro programa estaba guardando
     en ese instante. estricto=True lanza ConfigIlegibleError si el archivo no
     existe, está vacío, no se puede abrir o configparser lo rechaza.
@@ -115,7 +141,12 @@ def cargar_config(estricto: bool = False) -> configparser.ConfigParser:
             # Igual que configparser.read: un archivo que no está o no se
             # puede abrir se ignora y quedan los valores por defecto.
             return cfg
-        cfg.read_string(texto, source=ruta)
+        try:
+            cfg.read_string(texto, source=ruta)
+        except configparser.Error as e:
+            # "from None": que el error original (con el texto de la línea)
+            # tampoco aparezca encadenado en una traza.
+            raise _mal_formado(e, ruta) from None
         return cfg
 
     try:
@@ -127,7 +158,7 @@ def cargar_config(estricto: bool = False) -> configparser.ConfigParser:
     try:
         cfg.read_string(texto, source=ruta)
     except configparser.Error as e:
-        raise ConfigIlegibleError(f"{ruta} está mal formado: {type(e).__name__}") from e
+        raise ConfigIlegibleError(f"{ruta} está mal formado: {type(e).__name__}") from None
     return cfg
 
 

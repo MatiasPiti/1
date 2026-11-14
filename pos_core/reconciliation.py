@@ -187,7 +187,7 @@ def analizar_export_caja(ruta_json: str) -> ResumenConciliacion:
     movimientos = data.get("movimientos_stock", [])
     uuid_en_maestro = _uuid_de_productos(conn, [m.get("producto_codigo") for m in movimientos])
     for mov in movimientos:
-        if _movimiento_existe(conn, mov["uuid_unico"]):
+        if _movimiento_existe(conn, mov["uuid_unico"]) or _salida_ya_descontada(conn, mov):
             resumen.movimientos_omitidos_duplicados += 1
         elif _es_carga_inicial_del_usb(mov, uuid_en_maestro, {}):
             resumen.movimientos_omitidos_carga_inicial += 1
@@ -196,13 +196,68 @@ def analizar_export_caja(ruta_json: str) -> ResumenConciliacion:
     return resumen
 
 
+def _salida_ya_descontada(conn, mov: dict) -> bool:
+    """¿La salida de esta línea de venta ya está descontada en el Maestro,
+    aunque sea con otro identificador?
+
+    Pasa cuando el que la descontó fue el servicio de stock: revisa cada 5
+    segundos las ventas recientes que no tienen su salida y la aplica él. Si
+    una conciliación anterior dejó la venta grabada y el movimiento sin
+    aplicar (un error de ese momento), el servicio la descontó después; al
+    repetir la conciliación, el movimiento del pendrive es la MISMA salida y
+    no se aplica otra vez.
+    """
+    return (mov.get("tipo") == "SALIDA_VENTA" and bool(mov.get("ticket_uuid"))
+            and stock_service.salida_de_venta_ya_aplicada(
+                conn, mov["ticket_uuid"], mov["producto_codigo"]))
+
+
 def aplicar_export_caja(ruta_json: str, *, usuario_dev: str) -> ResumenConciliacion:
     """Aplica ventas + movimientos de stock del USB Caja a la DB maestra.
-    Cada venta+su detalle+su descuento de stock se procesan en una única
-    transacción atómica por venta, para que una venta nunca quede
-    "medio importada"."""
+
+    PRIMERO los movimientos de stock y DESPUÉS las ventas, y el orden importa.
+    El servicio de stock corre todo el día en esta misma PC y cada 5 segundos
+    busca ventas recientes sin su salida de stock para aplicarla él. Con las
+    ventas grabadas primero, las encontraba "sin descontar" en medio de la
+    conciliación, las descontaba, y después llegaba el movimiento del
+    pendrive por la misma venta: el stock bajaba DOS veces (3 unidades
+    vendidas en la emergencia, 6 menos en el Maestro). Así, cuando una venta
+    aparece, su salida ya está.
+
+    Cada movimiento y cada venta (con su detalle) va en su propia
+    transacción. Si se corta a la mitad, se repite la conciliación: lo que
+    ya entró se saltea por su identificador.
+    """
     data = _leer_json(ruta_json)
     resumen = ResumenConciliacion()
+
+    # Movimientos de stock: las SALIDA_VENTA que viajan acá son las que
+    # efectivamente descuentan el stock maestro.
+    movimientos = data.get("movimientos_stock", [])
+    uuid_en_maestro = _uuid_de_productos(get_connection(),
+                                         [m.get("producto_codigo") for m in movimientos])
+    for mov in movimientos:
+        try:
+            # Chequeo de duplicado con una lectura simple (no un
+            # `with transaction()` propio): _aplicar_movimiento_reproducido
+            # ya abre su propia transacción atómica (vía
+            # stock_service._con_reintento_optimista), y SQLite no admite
+            # anidar un BEGIN dentro de otro.
+            if _movimiento_existe(get_connection(), mov["uuid_unico"]):
+                resumen.movimientos_omitidos_duplicados += 1
+                continue
+            # La Caja del USB no crea productos en el Maestro: cualquier
+            # ENTRADA_EXCEL suya es la carga del catálogo en el pendrive.
+            if _es_carga_inicial_del_usb(mov, uuid_en_maestro, {}):
+                resumen.movimientos_omitidos_carga_inicial += 1
+                continue
+            delta = -mov["cantidad"] if mov["tipo"].startswith("SALIDA") else mov["cantidad"]
+            if _aplicar_movimiento_reproducido(mov, delta, usuario_dev):
+                resumen.movimientos_aplicados += 1
+            else:
+                resumen.movimientos_omitidos_duplicados += 1
+        except Exception as e:
+            resumen.errores.append(f"Movimiento {mov.get('uuid_unico')}: {e}")
 
     detalle_por_venta = {}
     for linea in data.get("detalle_ventas", []):
@@ -236,44 +291,22 @@ def aplicar_export_caja(ruta_json: str, *, usuario_dev: str) -> ResumenConciliac
         except Exception as e:
             resumen.errores.append(f"Venta {venta.get('uuid_unico')}: {e}")
 
-    # Movimientos de stock (las SALIDA_VENTA de más arriba también viajan
-    # acá y son las que efectivamente descuentan el stock maestro)
-    movimientos = data.get("movimientos_stock", [])
-    uuid_en_maestro = _uuid_de_productos(get_connection(),
-                                         [m.get("producto_codigo") for m in movimientos])
-    for mov in movimientos:
-        try:
-            # Chequeo de duplicado con una lectura simple (no un
-            # `with transaction()` propio): _aplicar_movimiento_reproducido
-            # ya abre su propia transacción atómica (vía
-            # stock_service._con_reintento_optimista), y SQLite no admite
-            # anidar un BEGIN dentro de otro — envolver este SELECT en su
-            # propia transacción vacía además daba la falsa impresión de
-            # que "chequear + aplicar" era una sola operación atómica,
-            # cuando en realidad siempre fueron dos pasos separados.
-            if _movimiento_existe(get_connection(), mov["uuid_unico"]):
-                resumen.movimientos_omitidos_duplicados += 1
-                continue
-            # La Caja del USB no crea productos en el Maestro: cualquier
-            # ENTRADA_EXCEL suya es la carga del catálogo en el pendrive.
-            if _es_carga_inicial_del_usb(mov, uuid_en_maestro, {}):
-                resumen.movimientos_omitidos_carga_inicial += 1
-                continue
-            delta = -mov["cantidad"] if mov["tipo"].startswith("SALIDA") else mov["cantidad"]
-            _aplicar_movimiento_reproducido(mov, delta, usuario_dev)
-            resumen.movimientos_aplicados += 1
-        except Exception as e:
-            resumen.errores.append(f"Movimiento {mov.get('uuid_unico')}: {e}")
-
     _escribir_log(resumen, ruta_json, "USB_CAJA")
     return resumen
 
 
-def _aplicar_movimiento_reproducido(mov: dict, delta: int, usuario_dev: str):
+def _aplicar_movimiento_reproducido(mov: dict, delta: int, usuario_dev: str) -> bool:
     """Reproduce en el maestro un movimiento ya validado en el USB,
     conservando su UUID original (para no volver a aplicarlo si este
     mismo JSON se concilia por error una segunda vez) y su fecha/hora
-    original (para que los reportes históricos sean correctos)."""
+    original (para que los reportes históricos sean correctos).
+
+    Devuelve False, sin tocar nada, si es la salida de una línea de venta
+    que en el Maestro ya está descontada (ver _salida_ya_descontada). Esa
+    pregunta se hace adentro de la misma transacción que descuenta: es lo
+    que impide que el servicio de stock y esta conciliación descuenten los
+    dos la misma venta.
+    """
     def _mov(conn, producto, nuevo_stock):
         conn.execute(
             """INSERT INTO Movimientos_Stock
@@ -284,7 +317,10 @@ def _aplicar_movimiento_reproducido(mov: dict, delta: int, usuario_dev: str):
              nuevo_stock, mov.get("motivo"), mov.get("ticket_uuid"), mov["usuario"],
              mov["origen"], mov["fecha_hora"], datetime.now().isoformat(timespec="milliseconds")),
         )
-    stock_service._con_reintento_optimista(mov["producto_codigo"], delta, _mov)
+    aplicado = stock_service._con_reintento_optimista(
+        mov["producto_codigo"], delta, _mov,
+        ya_aplicado=lambda conn: _salida_ya_descontada(conn, mov))
+    return aplicado is not None
 
 
 def analizar_export_dueno(ruta_json: str) -> ResumenConciliacion:
@@ -409,8 +445,10 @@ def aplicar_export_dueno(ruta_json: str, *, usuario_dev: str) -> ResumenConcilia
                 resumen.movimientos_omitidos_carga_inicial += 1
                 continue
             delta = -mov["cantidad"] if mov["tipo"].startswith("SALIDA") else mov["cantidad"]
-            _aplicar_movimiento_reproducido(mov, delta, usuario_dev)
-            resumen.movimientos_aplicados += 1
+            if _aplicar_movimiento_reproducido(mov, delta, usuario_dev):
+                resumen.movimientos_aplicados += 1
+            else:
+                resumen.movimientos_omitidos_duplicados += 1
         except Exception as e:
             resumen.errores.append(f"Movimiento {mov.get('uuid_unico')}: {e}")
 

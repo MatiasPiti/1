@@ -24,6 +24,7 @@ import time
 from logging.handlers import RotatingFileHandler
 
 from pos_core.paths import logs_dir, set_base_override_to_parent_dir
+from pos_core.registro import FormatterQueTapa
 
 # Este demonio SIEMPRE es parte del Maestro (nunca corre en un USB), y
 # tiene que apuntar a la MISMA database/ que Caja y Dueño Maestro (ver
@@ -46,11 +47,26 @@ from pos_core.sales import CODIGO_SIN_BARRA
 _handler = RotatingFileHandler(
     os.path.join(logs_dir(), "stock_daemon.log"),
     maxBytes=2 * 1024 * 1024, backupCount=4, encoding="utf-8")
-_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+# Con el formato que tapa secretos: este es el log que se copia al Escritorio
+# con la evidencia del blindaje y se manda. El token del bot va en la URL de
+# Telegram y el de [remoto] en cada pedido: ninguno puede quedar acá.
+_handler.setFormatter(FormatterQueTapa("%(asctime)s %(levelname)s %(message)s"))
 log = logging.getLogger("stock_daemon")
 log.setLevel(logging.INFO)
 if not log.handlers:
     log.addHandler(_handler)
+
+# La API remota escribe en su propio logger ("remote_api"), y desde que este
+# archivo dejó de usar basicConfig ese logger se quedó sin ningún lugar donde
+# escribir: "No se pudo iniciar la API remota" (el puerto ocupado, la
+# dirección de escuchar_en que no existe) y el error de cada función que
+# falla se perdían. Justo lo que hay que leer cuando el Dueño Remoto no
+# conecta. Van al mismo archivo, de WARNING para arriba: el renglón por cada
+# pedido (INFO) lo llenaría con el chequeo de /health de cada 20 segundos.
+_log_remota = logging.getLogger("remote_api")
+_log_remota.setLevel(logging.WARNING)
+if not _log_remota.handlers:
+    _log_remota.addHandler(_handler)
 
 INTERVALO_SEGUNDOS = 5
 
@@ -124,20 +140,32 @@ def _respaldar_si_corresponde():
 def ciclo_watchdog():
     _respaldar_si_corresponde()
     pendientes = _ventas_con_stock_pendiente()
+    siguen_pendientes = set()
     for p in pendientes:
         clave = (p["venta_uuid"], p["producto_codigo"])
+        siguen_pendientes.add(clave)
         try:
-            stock_service.descontar_por_venta(
+            # solo_si_falta: la lista de pendientes se armó hace un instante,
+            # sin candado. Si en el medio otro aplicó esa salida (una
+            # conciliación de un pendrive de emergencia, que trae las ventas
+            # Y sus movimientos), descontarla acá también bajaba el stock dos
+            # veces. La pregunta se repite adentro de la transacción.
+            aplicado = stock_service.descontar_por_venta(
                 p["producto_codigo"], p["cantidad"], ticket_uuid=p["venta_uuid"],
-                usuario=p["usuario"], origen="MAESTRO")
+                usuario=p["usuario"], origen="MAESTRO", solo_si_falta=True)
             _fallas_ya_registradas.discard(clave)
-            log.info("Descuento diferido aplicado: venta=%s producto=%s",
-                      p["venta_uuid"], p["producto_codigo"])
+            if aplicado is not None:
+                log.info("Descuento diferido aplicado: venta=%s producto=%s",
+                          p["venta_uuid"], p["producto_codigo"])
         except Exception:
             if clave not in _fallas_ya_registradas:
                 _fallas_ya_registradas.add(clave)
                 log.exception("Fallo aplicando descuento diferido: venta=%s producto=%s",
                                p["venta_uuid"], p["producto_codigo"])
+    # Lo que ya no está pendiente (se aplicó, o la venta salió de la ventana
+    # de días) se olvida: este proceso corre meses sin reiniciarse y, con el
+    # catálogo en stock 0, cada línea vendida deja acá una falla.
+    _fallas_ya_registradas.intersection_update(siguen_pendientes)
 
 
 def main():

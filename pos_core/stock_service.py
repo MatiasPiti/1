@@ -69,14 +69,40 @@ def _aplicar_delta_con_version(conn, producto_row, delta: int):
     return cur.rowcount == 1, nuevo_stock
 
 
-def _con_reintento_optimista(codigo: str, delta: int, aplicar_movimiento, max_intentos=5):
+def salida_de_venta_ya_aplicada(conn, ticket_uuid: str, codigo: str) -> bool:
+    """¿Ya se descontó del stock ESTA línea de ESTA venta?
+
+    Un ticket lleva una sola línea por producto (escanear dos veces el mismo
+    suma cantidad en la misma línea), así que venta + producto identifican
+    el descuento. Es la misma pregunta que se hace el servicio de stock para
+    decidir qué ventas tienen el descuento pendiente.
+    """
+    if not ticket_uuid:
+        return False
+    return conn.execute(
+        "SELECT 1 FROM Movimientos_Stock WHERE producto_codigo = ? AND ticket_uuid = ? "
+        "AND tipo = 'SALIDA_VENTA' LIMIT 1", (codigo, ticket_uuid)).fetchone() is not None
+
+
+def _con_reintento_optimista(codigo: str, delta: int, aplicar_movimiento, max_intentos=5,
+                              ya_aplicado=None):
     """Reintenta la transacción completa si el versionado optimista
     detecta una escritura concurrente. Cada intento es su propia
-    transacción SQL (BEGIN IMMEDIATE ... COMMIT/ROLLBACK)."""
+    transacción SQL (BEGIN IMMEDIATE ... COMMIT/ROLLBACK).
+
+    `ya_aplicado(conn)`, si se pasa, se pregunta ADENTRO de la transacción,
+    antes de tocar nada: si devuelve True no se aplica nada y se devuelve
+    None. Tiene que ser adentro porque BEGIN IMMEDIATE es lo único que pone
+    en fila a dos programas que quieren escribir lo mismo (el servicio de
+    stock y una conciliación): preguntando afuera, los dos ven "falta" y
+    los dos descuentan.
+    """
     ultimo_error = None
     for _ in range(max_intentos):
         try:
             with transaction() as conn:
+                if ya_aplicado is not None and ya_aplicado(conn):
+                    return None
                 producto = _get_producto_for_update(conn, codigo)
                 if producto["stock"] + delta < 0:
                     raise StockInsuficienteError(
@@ -103,10 +129,16 @@ class _ConcurrenciaError(Exception):
 # --------------------------------------------------------------------- #
 
 def descontar_por_venta(codigo: str, cantidad: int, *, ticket_uuid: str, usuario: str,
-                         origen: str = "MAESTRO") -> int:
+                         origen: str = "MAESTRO", solo_si_falta: bool = False):
     """Descuenta stock dentro de LA MISMA transacción que registra el
     movimiento. Se llama desde el evento 'ticket cerrado' de la Caja,
-    nunca deja stock a medio actualizar."""
+    nunca deja stock a medio actualizar.
+
+    Con solo_si_falta=True (lo usa el servicio de stock cuando reintenta un
+    descuento que quedó pendiente) no hace nada y devuelve None si esa línea
+    de esa venta ya tiene su salida: entre que el servicio la vio pendiente
+    y este momento, otro pudo haberla aplicado (una conciliación en curso).
+    """
     if cantidad <= 0:
         raise ValueError(f"Cantidad inválida para descontar: {cantidad} (tiene que ser mayor a 0)")
 
@@ -115,7 +147,11 @@ def descontar_por_venta(codigo: str, cantidad: int, *, ticket_uuid: str, usuario
             conn, producto_codigo=codigo, tipo="SALIDA_VENTA", cantidad=cantidad,
             stock_resultante=nuevo_stock, motivo=f"Venta ticket {ticket_uuid}",
             ticket_uuid=ticket_uuid, usuario=usuario, origen=origen)
-    return _con_reintento_optimista(codigo, -cantidad, _mov)
+
+    ya_aplicado = None
+    if solo_si_falta:
+        ya_aplicado = lambda conn: salida_de_venta_ya_aplicada(conn, ticket_uuid, codigo)
+    return _con_reintento_optimista(codigo, -cantidad, _mov, ya_aplicado=ya_aplicado)
 
 
 def sumar_stock_manual(codigo: str, cantidad: int, *, usuario: str, motivo: str = "Alta manual",

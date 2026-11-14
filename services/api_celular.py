@@ -40,7 +40,7 @@ from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
-from pos_core import acceso_celular, config, db, panel_celular, paths
+from pos_core import acceso_celular, config, db, panel_celular, paths, registro
 
 FIRMA = "otter-api-celular"
 # 3: alta de productos (POST /api/productos, /api/catalogo/valores) y filtros
@@ -84,26 +84,9 @@ TEXTOS_PIN = {
 # Logs
 # --------------------------------------------------------------------- #
 
-class FormatterQueTapa(logging.Formatter):
-    """Tapa secretos en el texto FINAL (mensaje + traceback).
-
-    Va en el Formatter y no en un logging.Filter a propósito: el traceback
-    lo arma el Formatter DESPUÉS de los filtros, y con un filtro el token
-    del bot aparecía entero en la traza de una excepción (verificado).
-    """
-
-    PATRONES = (
-        re.compile(r"bot\d+:[\w-]+"),            # URL de Telegram con el token del bot
-        re.compile(r"\b\d{5,}:[\w-]{8,}"),        # el token del bot suelto
-        re.compile(r"Bearer \S+"),                # encabezado Authorization
-        re.compile(r"v2\.[\w-]+\.[\w-]+"),        # token de sesión de la app
-    )
-
-    def format(self, record):
-        texto = super().format(record)
-        for patron in self.PATRONES:
-            texto = patron.sub("[TAPADO]", texto)
-        return texto
+# El tapado de secretos vive en pos_core.registro: lo usa también el log del
+# servicio de stock. Se deja el nombre acá porque es por donde se lo busca.
+FormatterQueTapa = registro.FormatterQueTapa
 
 
 _handlers_propios = []
