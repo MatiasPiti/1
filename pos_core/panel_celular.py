@@ -84,6 +84,11 @@ def _cooldown() -> timedelta:
     return telegram_bot._COOLDOWN
 
 
+def _en_cooldown(ultima, ahora) -> bool:
+    from pos_core import telegram_bot
+    return telegram_bot._en_cooldown(ultima, ahora)
+
+
 def ruta_base_datos() -> str:
     return os.path.join(paths.get_base_path(), "database", "stock.db")
 
@@ -351,7 +356,12 @@ def _alertas() -> list:
         if tipo is None:
             continue
         ultima = _fecha(f["ultima_alerta_enviada"])
-        proximo = ultima + cooldown if ultima is not None and ahora < ultima + cooldown else None
+        # La MISMA pregunta que se hace el bot antes de mandar (una fecha a
+        # más de 4 horas en el futuro, de cuando el reloj de la PC estaba mal,
+        # no frena): si acá se calculara aparte, el celular diría "próximo
+        # aviso dentro de 3 años" mientras el bot ya está avisando.
+        proximo = ultima + cooldown if ultima is not None and _en_cooldown(
+            f["ultima_alerta_enviada"], ahora) else None
         resultado.append({
             "codigo": f["codigo"], "nombre": f["nombre"], "stock": f["stock"],
             "stock_minimo": f["stock_minimo"], "stock_maximo": f["stock_maximo"], "tipo": tipo,

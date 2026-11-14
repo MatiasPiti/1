@@ -76,13 +76,20 @@ quedó vieja (tiene solo dos subidas manuales de archivos por la web): **el trab
 Ver "API del celular (octubre 2026)" más abajo: sobre esa rama vieja se armó un `ApiDueno` que se
 corrió contra la base real y está descartado.
 
-### AUDITORÍA DE TODO EL SISTEMA (13/11/2026) — leer esto primero
+### AUDITORÍA DE TODO EL SISTEMA (13 y 14/11/2026) — leer esto primero
 
-Matías pidió buscar fallas en todo el sistema y arreglarlas. Se leyó el núcleo, las cajas, el
-Panel, la conciliación de emergencia, el Actualizador, el Instalador y el Mantenimiento. **Todo lo
-de abajo está arreglado en `main`, con prueba que falla sin el arreglo (28 pruebas, verdes en
-Linux y en el CI de Windows). NADA de esto está en la PC del local todavía: falta compilar y
-actualizar, primero el local y después la laptop de Leo.**
+Matías pidió buscar fallas en todo el sistema y arreglarlas. El 13/11 se leyó el núcleo, las cajas,
+el Panel, la conciliación de emergencia, el Actualizador, el Instalador y el Mantenimiento; el
+14/11, lo que había quedado por arriba: el servicio que corre 24/7, la API remota, el bot de
+Telegram, el Dueño Remoto, el acceso del celular y los scripts de blindaje. **Todo lo de abajo está
+arreglado en `main`, con prueba que falla sin el arreglo (30 pruebas, verdes en Linux y en el CI de
+Windows). NADA de esto está en la PC del local todavía: falta compilar y actualizar, primero el
+local y después la laptop de Leo.**
+
+**Lo que NO se leyó entero** (para no dar por revisado lo que no lo está): `services/api_celular.py`
+y la app Flutter (tienen sus propias pruebas y su trabajo de CI en Windows; solo se miraron el
+acceso por PIN y la lectura de números), y `soporte_remoto.ps1` / `watchdog_celular.ps1` (solo los
+puntos de seguridad).
 
 **Para mirar YA en el local, sin esperar a actualizar (precios que pudieron quedar mal el 11/11):**
 
@@ -120,6 +127,19 @@ con lo que se decide a mano.
 | Una oferta de $ fijo mayor que el precio hacía cobrar $0; un COMMIT que fallaba dejaba la Caja sin cobrar | `ofertas`, `db.transaction` |
 | Un producto de código corto no se encontraba por su código; un Excel con el código como número | `sales.buscar_productos`, `excel_import.texto_de_codigo` |
 
+**Segunda pasada (14/11), lo que corre solo y lo que usa Leo desde su casa:**
+
+| Qué pasaba | Dónde |
+|---|---|
+| **Conciliar un pendrive de emergencia bajaba el stock DOS veces**: el servicio veía las ventas recién grabadas "sin descontar" y las descontaba, y después llegaba el movimiento del pendrive (3 vendidas, 6 menos). Hoy no se nota porque el catálogo está en stock 0: aparece el día del inventario | `reconciliation.aplicar_export_caja`, `stock_service`, `stock_daemon_windows` |
+| La API remota no dejaba NADA escrito: "No se pudo iniciar la API remota" y el error de cada función se perdían (su logger no tenía archivo) | `stock_daemon_windows` |
+| Un `config.ini` mal formado mostraba el TEXTO de la línea rota en el cartel de arranque y en el log (puede ser la del token) | `config.cargar_config` |
+| El mismo aviso de Telegram podía llegar dos veces (lo revisan el servicio y el Panel abierto); el monitor fallaba mudo | `telegram_bot` |
+| El cartel de "no se pudo conectar" del Dueño Remoto traía la IP de Tailscale y el puerto, en inglés | `dueno_backend.RemoteBackend` |
+| Si el Dueño Remoto fallaba al abrir no había cartel ni log; lo mismo la Caja y el Panel si fallaba ARMAR la ventana | `arranque.construir_avisando`, `apps/dueno_remoto` |
+| El Dueño Remoto no abría con su `config.ini` ilegible, y se quedaba en "Probando conexión..." si no podía guardarlo | `apps/dueno_remoto` |
+| En el Panel, una cantidad mal tipeada mostraba el error de Python, y el porcentaje "10,5" no se aceptaba | `apps/master_dueno` |
+
 El detalle de cada uno está en su commit y en la prueba que lo cuida (`tests/README.md`).
 
 **Decisiones que estaban ABIERTAS y esta auditoría cerró** (si Matías las quiere distintas, se
@@ -129,7 +149,11 @@ Mantenimiento por descarte.
 
 **Lo que se encontró y NO se tocó** (está en "Lo que falta hacer"): ARCA sin probar contra
 Homologación, la conciliación de PRECIOS del USB del Dueño, la carpeta `tickets\` que crece sin
-tope, y el `remove` + `install` del StockService en el Actualizador.
+tope, y el `remove` + `install` del StockService en el Actualizador. Del 14/11: `[remoto]
+escuchar_en` distinto de `0.0.0.0` haría que el watchdog y la revisión final den el puerto por
+muerto (prueban `127.0.0.1`; hoy nadie lo usa, quedó escrito en `remote_api.iniciar_servidor`), y
+las pantallas "de hoy" (Dashboard, historial, ARCA) recorren la tabla de ventas entera: con tres
+años de ventas el Dashboard tarda medio segundo en una PC rápida. No es una falla hoy.
 
 **Al desplegar esto:** los pendrives de emergencia ya grabados siguen sirviendo con el Maestro
 nuevo (saltea la carga del catálogo aunque venga en el archivo), pero para que "Preparar
@@ -178,7 +202,7 @@ Excel regenerado de los `.DBF` de ese día: 2622 productos viejos → 4833 filas
 - `blindar_local` — reescrito: ahora vigila el PUERTO y no el estado del servicio, guarda la
   evidencia antes de tocar nada, y cubre batería. **Falta correrlo en la PC del local.**
 - Revisión de los 3 USBs antes de grabarlos: tres fallos encontrados y arreglados, con `tests/`
-  traído al repo (hoy 28 pruebas, todas en verde).
+  traído al repo (hoy 30 pruebas, todas en verde).
 - `16d9652` — memoria del proyecto en `CLAUDE.md`.
 - `3799aae` — pantalla de precios sin depender del Excel, ventanas que entran en pantallas chicas,
   scroll del carrito con barra + flechas.
@@ -856,6 +880,27 @@ producto. Lleva tres columnas nuevas que la carga masiva de siempre ignora: `Rub
   - **La plata de una factura PDF se lee con `precios.leer_numero`**, como toda la plata tipeada.
   - **Una oferta que dejaría el producto en $0 no se aplica**: se rechaza al crearla, y si el
     precio bajó después, la Caja cobra el de lista.
+  - **La salida de stock de una línea de venta se aplica UNA vez, la aplique quien la aplique**
+    (14/11). Venta + producto identifican el descuento (un ticket lleva una sola línea por
+    producto). El servicio (`descontar_por_venta(solo_si_falta=True)`) y la conciliación
+    (`_salida_ya_descontada`) hacen esa pregunta ADENTRO de la transacción que descuenta, que es lo
+    único que los pone en fila. Y la conciliación aplica **primero los movimientos y después las
+    ventas**: así el servicio nunca ve una venta conciliada sin su salida.
+  - **El log del servicio (`stock_daemon.log`) tapa secretos y recibe los errores de la API
+    remota** (solo WARNING para arriba: el renglón por pedido lo llenaría). El tapado vive en
+    `pos_core/registro.py` y lo comparte con la API del celular. Ese log se copia al Escritorio con
+    la evidencia del blindaje y se manda.
+  - **Un `config.ini` mal formado dice EN QUÉ línea, nunca QUÉ dice la línea**
+    (`config.ConfigMalFormadoError`, sigue siendo un error de configparser). El de configparser
+    trae pegado el texto de la línea rota.
+  - **Una alerta de Telegram se RESERVA antes de mandarla** (`Alertas_Enviadas`, en la misma
+    transacción que pregunta por el cooldown) y se devuelve si el envío no sale. Tres rechazos
+    seguidos cortan la vuelta. Con el bot apagado no se escribe nada.
+  - **El cartel de conexión del Dueño Remoto no muestra la dirección** y distingue "no se cambió
+    nada" (el pedido no salió) de "puede que lo haya hecho igual" (se cortó con el local
+    trabajando). `RemoteError` siempre sale con `from None`.
+  - **Todo arranque pasa por `arranque.construir_avisando`**: también el del Dueño Remoto, y
+    también el error al ARMAR la ventana. Un `.exe` sin consola no puede fallar sin cartel.
 
 ### API del celular (octubre 2026)
 
@@ -964,7 +1009,7 @@ de la visita** (guía de la app, sección 2).
 - [x] El botón "Probar" de Telegram (faltaba `telegram_bot` en `dueno_backend`) y las facturas PDF
       que leían "3.500" como 3,5. HECHO el 13/11/2026, junto con la factura con tabla que sumaba
       el stock dos veces.
-- [ ] **Desplegar la auditoría del 13/11/2026** (ver arriba): `build\build_all.bat`, pendrive con
+- [ ] **Desplegar la auditoría del 13 y 14/11/2026** (ver arriba): `build\build_all.bat`, pendrive con
       las 8 carpetas, Actualizador en la PC del local (con la Caja y el Panel cerrados) y después
       en la laptop de Leo. Y mirar los 12 códigos compartidos + PUGLISI CABALLA.
 - [ ] **ARCA, encontrado leyendo el código y SIN PROBAR** (no se toca hasta tener Homologación):
@@ -1031,8 +1076,11 @@ de la visita** (guía de la app, sección 2).
       → "Preparar sincronización" → conciliar en el Maestro con `Ctrl+Shift+M`. **El 13/11/2026 se
       probó por código por primera vez** (`tests/test_emergencia_conciliacion.py`: tres bases, se
       vende, se exporta y se concilia) y aparecieron tres fallas, ya arregladas: ventas que no
-      llegaban, stock duplicado y producto nuevo contado dos veces. Falta la prueba con los
-      pendrives físicos, regrabados con esta versión.
+      llegaban, stock duplicado y producto nuevo contado dos veces. El 14/11 apareció la cuarta:
+      con el servicio de stock corriendo (como está siempre en el local), el stock de lo vendido
+      en la emergencia bajaba dos veces (`tests/test_servicio_stock.py`). Falta la prueba con los
+      pendrives físicos, regrabados con esta versión, **y con stock cargado**: con el catálogo en
+      0, ni el pendrive ni el Maestro descuentan nada y esto no se ve.
 - [ ] Configurar la impresora térmica POS-58 en la PC del local.
 - [ ] Escribir las ACLs de Tailscale antes de sumar un segundo cliente.
 - [x] Cargar el token y el chat_id del bot de Telegram del cliente. HECHO — y en cuanto se

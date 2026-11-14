@@ -268,6 +268,14 @@ def iniciar_servidor(*, puerto: int, token: str, escuchar_en: str = "0.0.0.0") -
     más, se pone la IP de Tailscale (100.x.y.z) en config.ini —
     [remoto] escuchar_en — y entonces el puerto deja de existir para el
     resto de la red del local.
+
+    OJO antes de usarlo: el watchdog de la PC (scripts/blindar_local.ps1), la
+    revisión final del Actualizador y el USB de Mantenimiento prueban el
+    puerto en 127.0.0.1. Con escuchar_en en otra dirección lo van a dar por
+    muerto con la API andando: el watchdog reiniciaría el servicio 3 veces
+    por día y la revisión final diría NO. Hoy nadie lo usa (queda en
+    0.0.0.0); si algún día se usa, primero hay que enseñarles a esos tres a
+    mirar la misma dirección.
     """
     handler = type("_HandlerConfigurado", (_Handler,), {
         "allowlist": _construir_allowlist(),
