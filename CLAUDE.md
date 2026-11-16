@@ -82,7 +82,7 @@ Matías pidió buscar fallas en todo el sistema y arreglarlas. El 13/11 se leyó
 el Panel, la conciliación de emergencia, el Actualizador, el Instalador y el Mantenimiento; el
 14/11, lo que había quedado por arriba: el servicio que corre 24/7, la API remota, el bot de
 Telegram, el Dueño Remoto, el acceso del celular y los scripts de blindaje. **Todo lo de abajo está
-arreglado en `main`, con prueba que falla sin el arreglo (30 pruebas, verdes en Linux y en el CI de
+arreglado en `main`, con prueba que falla sin el arreglo (31 pruebas, verdes en Linux y en el CI de
 Windows). NADA de esto está en la PC del local todavía: falta compilar y actualizar, primero el
 local y después la laptop de Leo.**
 
@@ -140,6 +140,7 @@ con lo que se decide a mano.
 | El Dueño Remoto no abría con su `config.ini` ilegible, y se quedaba en "Probando conexión..." si no podía guardarlo | `apps/dueno_remoto` |
 | En el Panel, una cantidad mal tipeada mostraba el error de Python, y el porcentaje "10,5" no se aceptaba | `apps/master_dueno` |
 | Si el servicio estuvo parado más de 14 días (pasó en septiembre; pasa en vacaciones), al volver hacía la copia de hoy y **borraba todas las anteriores de un saque** | `respaldo.limpiar_viejas` |
+| **Códigos que la caja daba por "no registrados" y el sistema viejo conocía** (16/11): el código interno de casi todos los productos viejos ES su código de barras, y el generador del Excel lo dejaba afuera apenas Leo le agregaba otro código al producto. Al reimportar, Otter le cambiaba el código y el envase de siempre dejaba de escanear (PUGLISI CABALLA el 11/11). **No necesita compilar**: alcanza con regenerar el Excel y correr Ensayo + Aplicar; lo que se perdió vuelve como "código que le faltaba a un producto" | `scripts/generar_lista_precios.codigos_para_otter` |
 
 El detalle de cada uno está en su commit y en la prueba que lo cuida (`tests/README.md`).
 
@@ -203,7 +204,7 @@ Excel regenerado de los `.DBF` de ese día: 2622 productos viejos → 4833 filas
 - `blindar_local` — reescrito: ahora vigila el PUERTO y no el estado del servicio, guarda la
   evidencia antes de tocar nada, y cubre batería. **Falta correrlo en la PC del local.**
 - Revisión de los 3 USBs antes de grabarlos: tres fallos encontrados y arreglados, con `tests/`
-  traído al repo (hoy 30 pruebas, todas en verde).
+  traído al repo (hoy 31 pruebas, todas en verde).
 - `16d9652` — memoria del proyecto en `CLAUDE.md`.
 - `3799aae` — pantalla de precios sin depender del Excel, ventanas que entran en pantallas chicas,
   scroll del carrito con barra + flechas.

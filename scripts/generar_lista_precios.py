@@ -19,6 +19,9 @@ Reglas (no cambiarlas sin avisar, la lista se compara contra las anteriores):
   - Un producto = un registro vivo de MAS_STO. Los borrados de FoxPro se ignoran.
   - El codigo que se carga en Otter es el PRIMER codigo de barras del producto; si no
     tiene ninguno, se usa el codigo interno del sistema viejo.
+  - En el Excel de importacion va una fila por cada codigo con el que el producto se
+    escanea: los de BAR_STO y, si el codigo interno ES un codigo de barras (EAN/UPC con
+    su digito verificador), tambien ese. Ver codigos_para_otter().
   - Si dos productos caen en el mismo codigo, al segundo se le agrega "-2". Quedan
     listados aparte para arreglarlos a mano: un codigo repetido significa que uno de los
     dos no se va a poder escanear.
@@ -27,6 +30,7 @@ Reglas (no cambiarlas sin avisar, la lista se compara contra las anteriores):
 """
 
 import os
+import re
 import sys
 from collections import defaultdict
 from datetime import date
@@ -209,6 +213,47 @@ def escribir_lista(filas: list, colisiones: list, destino: str) -> None:
     wb.save(destino)
 
 
+def es_codigo_de_barras(codigo: str) -> bool:
+    """¿Se puede escanear? EAN-8, UPC-A, EAN-13 o GTIN-14, con el digito
+    verificador bien. Un codigo interno corto ("1722") no lo es."""
+    if not re.fullmatch(r"\d{8}|\d{12,14}", codigo or ""):
+        return False
+    digitos = [int(c) for c in codigo]
+    suma = sum(d * (3 if i % 2 == 0 else 1) for i, d in enumerate(reversed(digitos[:-1])))
+    return (10 - suma % 10) % 10 == digitos[-1]
+
+
+def codigos_para_otter(f: dict) -> list:
+    """Los codigos con los que el producto se escanea en el sistema viejo: uno
+    por fila del Excel de importacion.
+
+    En el sistema viejo el codigo interno de casi todos los productos ES su
+    codigo de barras (1768 de los 2500, en septiembre de 2026): el que esta
+    impreso en el envase. BAR_STO guarda los codigos ADEMAS de ese. Mientras un
+    producto no tiene ninguno en BAR_STO, su codigo interno es el que se carga
+    en Otter. El problema era cuando Leo le agregaba uno (otro envase, otro
+    sabor): desde ese momento el Excel traia solo los de BAR_STO y el codigo
+    impreso desaparecia. Al reimportar, Otter le cambiaba el codigo al producto
+    por el nuevo, y escanear el envase de siempre daba "no registrado" en la
+    caja, mientras el sistema viejo lo seguia conociendo. Le paso el 11/11/2026
+    a PUGLISI CABALLA (7790748235064 -> 7790748235095).
+
+    Con el interno en la lista, el envase de siempre sigue andando, y el que se
+    perdio vuelve en la proxima importacion (lo crea actualizacion_precios como
+    un codigo que le faltaba a un producto que ya estaba).
+
+    Un producto sin nada en BAR_STO queda exactamente como antes (su codigo de
+    Otter, con el "-2" de las colisiones si lo tiene), y un codigo interno que
+    no es de barras ("1722") no se agrega: con ese no se escanea nada.
+    """
+    if not f["barras"]:
+        return [f["codigo_otter"]]
+    codigos = list(f["barras"])
+    if f["interno"] not in codigos and es_codigo_de_barras(f["interno"]):
+        codigos.append(f["interno"])
+    return codigos
+
+
 def nombre_de_grupo(filas: list) -> dict:
     """Como se llama el GRUPO de cada producto viejo, indexado por codigo interno.
 
@@ -217,14 +262,15 @@ def nombre_de_grupo(filas: list) -> dict:
     el dueno les cambia el precio UNA vez. En Otter cada codigo es un producto
     aparte, asi que sin el grupo hay que cambiar 53 precios a mano.
 
-    Solo forman grupo los que tienen MAS DE UN codigo: uno solo no es un grupo.
+    Solo forman grupo los que tienen MAS DE UN codigo (contando el interno cuando
+    se escanea, ver codigos_para_otter): uno solo no es un grupo.
 
     Si dos productos viejos se llaman igual (pasa 8 veces: MATARAZZO FIDEOS, BC
     MERMELADA...) se les agrega el precio al nombre, porque son productos
     distintos y juntarlos haria que un ajuste masivo les ponga el mismo precio.
     """
     from collections import Counter
-    con_grupo = [f for f in filas if len(f["barras"]) > 1]
+    con_grupo = [f for f in filas if len(codigos_para_otter(f)) > 1]
     repetidos = {n for n, c in Counter(f["nombre"] for f in con_grupo).items() if c > 1}
     return {f["interno"]: (f'{f["nombre"]} (${f["precio_venta"]:.0f})'
                             if f["nombre"] in repetidos else f["nombre"])
@@ -263,8 +309,7 @@ def escribir_importacion(filas: list, destino: str) -> None:
     ws.freeze_panes = "A2"
     for f in sorted(filas, key=lambda x: x["nombre"]):
         grupo = grupos.get(f["interno"], "")
-        codigos = f["barras"] or [f["codigo_otter"]]
-        for codigo in codigos:
+        for codigo in codigos_para_otter(f):
             ws.append([codigo, f["nombre"], f["precio_venta"], 0, "",
                         f["rubro"], grupo, f["interno"]])
     wb.save(destino)
