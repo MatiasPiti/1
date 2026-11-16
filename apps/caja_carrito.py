@@ -30,6 +30,10 @@ from tkinter import messagebox, simpledialog
 
 from apps.theme import COLORS, celda_texto, enlazar_rueda_mouse
 
+# Color del código y del precio unitario en las filas del carrito. Para
+# cambiarlo, alcanza con este valor (después hay que recompilar la Caja).
+AZUL_FILAS = "#1D4ED8"
+
 from pos_core import audit
 from pos_core.precios import leer_numero
 
@@ -211,8 +215,11 @@ class CarritoTecladoMixin:
         celda.config(state="readonly")
 
     def _crear_fila_carrito(self, item, bg):
-        colores = (COLORS["muted"], COLORS["text"], COLORS["text"],
-                   COLORS["muted"], COLORS["accent"])
+        # El código y el precio unitario iban en gris (COLORS["muted"]), y en la
+        # fila rayada y en la seleccionada se confundían con el fondo: contraste
+        # 4,3 y 3,9. Con AZUL_FILAS quedan en 6,0 y 5,4 y se leen de lejos.
+        colores = (AZUL_FILAS, COLORS["text"], COLORS["text"],
+                   AZUL_FILAS, COLORS["accent"])
         anclas = ("w", "w", "center", "e", "e")
         widgets = []
         for col in range(5):
