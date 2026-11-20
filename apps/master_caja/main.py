@@ -30,7 +30,7 @@ from pos_core import sales, audit, ticket_printer
 from apps.theme import (COLORS, aplicar_tema, estriar_treeview, tag_fila,
                          habilitar_copiar_pegar_global, abrir_dialogo_impresora,
                          ajustar_ventana)
-from apps.caja_carrito import CarritoTecladoMixin, pedir_importe
+from apps.caja_carrito import CarritoTecladoMixin, pedir_importe, LETRA_BUSCADOR
 
 ORIGEN = "MAESTRO"
 USUARIO = os.environ.get("USERNAME", "cajero")
@@ -43,6 +43,7 @@ class AppCaja(CarritoTecladoMixin, tk.Tk):
     def __init__(self):
         super().__init__()
         aplicar_tema(self)
+        self._preparar_pantalla_de_caja()
         self.title("Otter Caja")
         ajustar_ventana(self, 1180, 780, minimo=(900, 520))
         self._init_carrito()
@@ -51,6 +52,7 @@ class AppCaja(CarritoTecladoMixin, tk.Tk):
         self._configurar_teclado()
         habilitar_copiar_pegar_global(self)
         self._ir_a_buscador()
+        self._maximizar()
 
     def _construir_ui(self):
         top = ttk.Frame(self, padding=(16, 14))
@@ -66,50 +68,31 @@ class AppCaja(CarritoTecladoMixin, tk.Tk):
 
         fila_buscar = ttk.Frame(top)
         fila_buscar.pack(fill="x", pady=(8, 0))
-        self.buscador = ttk.Entry(fila_buscar, width=46, font=("Segoe UI", 12))
+        self.buscador = ttk.Entry(fila_buscar, width=40, font=LETRA_BUSCADOR)
         self.buscador.pack(side="left", ipady=3)
-        ttk.Button(fila_buscar, text="Buscar", command=self._on_buscar).pack(side="left", padx=8)
+        ttk.Button(fila_buscar, text="Buscar", style="Caja.TButton", command=self._on_buscar
+                   ).pack(side="left", padx=8)
+
+        # Antes que el cuerpo: así el total y los botones de cobrar nunca
+        # quedan cortados (ver _armar_pie).
+        self._armar_pie(
+            [("COBRAR SIN FACTURAR (F5)", self._cobrar_sin_facturar, "Caja.Fuerte.TButton"),
+             ("COBRAR Y FACTURAR (F12)", self._cobrar_y_facturar, "Caja.Accent.TButton")],
+            self.TEXTO_AYUDA_TECLADO + "   ·   F5 cobrar   ·   F12 cobrar y facturar")
 
         cuerpo = ttk.Frame(self, padding=(16, 0))
         cuerpo.pack(fill="both", expand=True)
 
-        self.resultados = ttk.Treeview(cuerpo, columns=("codigo", "nombre", "precio"), show="headings", height=5)
+        self.resultados = ttk.Treeview(cuerpo, columns=("codigo", "nombre", "precio"), show="headings",
+                                       height=4, style="Caja.Treeview")
         for col, txt, w in [("codigo", "Código", 130), ("nombre", "Nombre", 420), ("precio", "Precio", 110)]:
             self.resultados.heading(col, text=txt)
             self.resultados.column(col, width=w)
         estriar_treeview(self.resultados)
-        self.resultados.pack(fill="x", pady=(4, 12))
+        self.resultados.pack(fill="x", pady=(4, 10))
 
-        ttk.Label(cuerpo, text="Carrito", style="Header.TLabel").pack(anchor="w", pady=(0, 6))
+        ttk.Label(cuerpo, text="Carrito", style="Header.TLabel").pack(anchor="w", pady=(0, 4))
         self._armar_grilla_carrito(cuerpo)
-
-        bottom = ttk.Frame(self, padding=16, style="Card.TFrame")
-        bottom.pack(fill="x", side="bottom")
-
-        total_box = tk.Frame(bottom, bg=COLORS["accent"])
-        total_box.pack(side="left")
-        tk.Label(total_box, text="TOTAL A PAGAR", bg=COLORS["accent"], fg="white",
-                 font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=20, pady=(10, 0))
-        self.lbl_total = tk.Label(total_box, text="$0.00", bg=COLORS["accent"], fg="white",
-                                   font=("Segoe UI", 30, "bold"))
-        self.lbl_total.pack(anchor="w", padx=20, pady=(0, 12))
-
-        ttk.Label(bottom, text="Pago:").pack(side="left", padx=(28, 6))
-        self.metodo_pago = ttk.Combobox(bottom, values=["EFECTIVO", "TARJETA", "TRANSFERENCIA", "MIXTO"],
-                                         state="readonly", width=15)
-        self.metodo_pago.set("EFECTIVO")
-        self.metodo_pago.pack(side="left")
-
-        ttk.Button(bottom, text="Quitar línea (Supr)", command=self._quitar_linea).pack(side="right", padx=4)
-        ttk.Button(bottom, text="COBRAR Y FACTURAR (F12)", style="Accent.TButton",
-                   command=self._cobrar_y_facturar).pack(side="right", padx=4)
-        ttk.Button(bottom, text="COBRAR SIN FACTURAR (F5)", command=self._cobrar_sin_facturar
-                   ).pack(side="right", padx=4)
-
-        self.lbl_ayuda = ttk.Label(
-            self, style="Muted.TLabel",
-            text=self.TEXTO_AYUDA_TECLADO + "   ·   F5 cobrar   ·   F12 cobrar y facturar")
-        self.lbl_ayuda.pack(fill="x", padx=16, pady=(0, 8))
 
     # ------------------------------------------------------------------ #
     # Manejo por teclado: la caja se usa entera sin mouse.

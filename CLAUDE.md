@@ -82,7 +82,7 @@ Matías pidió buscar fallas en todo el sistema y arreglarlas. El 13/11 se leyó
 el Panel, la conciliación de emergencia, el Actualizador, el Instalador y el Mantenimiento; el
 14/11, lo que había quedado por arriba: el servicio que corre 24/7, la API remota, el bot de
 Telegram, el Dueño Remoto, el acceso del celular y los scripts de blindaje. **Todo lo de abajo está
-arreglado en `main`, con prueba que falla sin el arreglo (31 pruebas, verdes en Linux y en el CI de
+arreglado en `main`, con prueba que falla sin el arreglo (32 pruebas, verdes en Linux y en el CI de
 Windows). NADA de esto está en la PC del local todavía: falta compilar y actualizar, primero el
 local y después la laptop de Leo.**
 
@@ -204,7 +204,7 @@ Excel regenerado de los `.DBF` de ese día: 2622 productos viejos → 4833 filas
 - `blindar_local` — reescrito: ahora vigila el PUERTO y no el estado del servicio, guarda la
   evidencia antes de tocar nada, y cubre batería. **Falta correrlo en la PC del local.**
 - Revisión de los 3 USBs antes de grabarlos: tres fallos encontrados y arreglados, con `tests/`
-  traído al repo (hoy 31 pruebas, todas en verde).
+  traído al repo (hoy 32 pruebas, todas en verde).
 - `16d9652` — memoria del proyecto en `CLAUDE.md`.
 - `3799aae` — pantalla de precios sin depender del Excel, ventanas que entran en pantallas chicas,
   scroll del carrito con barra + flechas.
@@ -690,6 +690,24 @@ producto. Lleva tres columnas nuevas que la carga masiva de siempre ignora: `Rub
     el cajero vendía sin ver el ticket, lo cual no es aceptable igual.
   - **Al testear el carrito, no uses `celda.cget("text")`** (siempre da `""` en un `Entry`) — leé
     `celda.get()`.
+- **La Caja va con letra grande, para que se lea de lejos y la lea gente que ve poco** (20/11/2026,
+  pedido de Matías; antes, el código y el precio unitario pasaron de gris a azul). Los tamaños viven
+  todos al principio de `apps/caja_carrito.py` (`LETRA_*`) y valen para las dos Cajas, en estilos
+  propios `Caja.*` que el Panel no usa. Al agrandarla aparecieron tres cosas que ya estaban mal y la
+  letra grande empeoraba, arregladas juntas:
+  - **La barra del total y de cobrar se arma ANTES que el resto** (`_armar_pie`): con `pack`, lo que
+    se arma primero tiene su lugar asegurado. Antes se armaba al final y, con la ventana del tamaño
+    que toma en el local, **el TOTAL A PAGAR salía cortado por la mitad**. Ahora lo que se achica es
+    el carrito, que tiene barra. Los botones van en dos filas a la derecha: en una no entran.
+  - **Cada columna del carrito tiene su ancho** (`_ANCHOS_CARRITO`): sin eso cada celda pedía las 20
+    letras que trae Tk de fábrica y las de números se comían el nombre ("FIDEOS MATARAZZO TIRAI").
+  - **La fila de arriba de la Caja del pendrive va en dos renglones**, como la del local: en uno,
+    "Cargar productos (Excel)" no entraba.
+  - **Abre maximizada** (`_maximizar`, al final del `__init__`, después de `ajustar_ventana`): sin
+    maximizar, la parte de abajo quedaba detrás de la barra de tareas.
+  - Lo cuida `tests/test_caja_legible.py`, que mira lo que se ve en 1366x768 y falla si la letra
+    baja del tamaño elegido. Si se agranda más, que siga en verde: es lo que garantiza que el total y
+    los botones de cobrar entran.
 - **Al agregar una línea, el carrito baja solo a mostrarla; la selección NO se mueve.** El
   desplazamiento automático ya existía, pero solo seguía a la línea *seleccionada*, y escanear no
   mueve la selección: con el ticket lleno el cajero escaneaba el producto 30, el total subía y la

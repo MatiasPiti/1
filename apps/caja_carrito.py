@@ -26,13 +26,30 @@ _on_buscar(), _agregar_al_carrito() y _usuario_origen().
 """
 
 import tkinter as tk
-from tkinter import messagebox, simpledialog
+from tkinter import messagebox, simpledialog, ttk
 
 from apps.theme import COLORS, celda_texto, enlazar_rueda_mouse
 
 # Color del código y del precio unitario en las filas del carrito. Para
 # cambiarlo, alcanza con este valor (después hay que recompilar la Caja).
 AZUL_FILAS = "#1D4ED8"
+
+# Tamaños de letra de las dos Cajas (la del local y la del pendrive), todos
+# acá. Grandes a propósito: la pantalla se lee desde el teclado y desde el
+# otro lado del mostrador, también por gente que ve poco. Si se agrandan más,
+# tests/test_caja_legible.py avisa si el total o los botones de cobrar dejan
+# de entrar en la pantalla del local (1366x768).
+LETRA = "Segoe UI"
+LETRA_BUSCADOR = (LETRA, 15)
+LETRA_RESULTADOS = (LETRA, 12)
+ALTO_FILA_RESULTADOS = 32
+LETRA_ENCABEZADO_CARRITO = (LETRA, 11, "bold")
+LETRA_TOTAL_TITULO = (LETRA, 13, "bold")
+LETRA_TOTAL = (LETRA, 34, "bold")
+LETRA_BOTON = (LETRA, 12)
+LETRA_BOTON_FUERTE = (LETRA, 12, "bold")
+LETRA_AYUDA = (LETRA, 10)
+MEDIOS_DE_PAGO = ["EFECTIVO", "TARJETA", "TRANSFERENCIA", "MIXTO"]
 
 from pos_core import audit
 from pos_core.precios import leer_numero
@@ -55,6 +72,94 @@ def pedir_importe(parent, titulo: str = "Artículo sin código", texto: str = "I
 
 
 class CarritoTecladoMixin:
+
+    # ------------------------------------------------------------------ #
+    # Pantalla: letra grande y la barra de cobro (las dos Cajas)
+    # ------------------------------------------------------------------ #
+    def _preparar_pantalla_de_caja(self):
+        """Los estilos con letra grande de la Caja.
+
+        Son estilos propios ("Caja.*") y no los de siempre a propósito: los
+        de siempre los usa también el Panel del Dueño, y ahí la letra grande
+        no entra en las pestañas. Se llama después de aplicar_tema().
+        """
+        estilo = ttk.Style(self)
+        estilo.configure("Caja.TButton", font=LETRA_BOTON, padding=(14, 8))
+        estilo.configure("Caja.Fuerte.TButton", font=LETRA_BOTON_FUERTE, padding=(14, 8))
+        estilo.configure("Caja.Accent.TButton", font=LETRA_BOTON_FUERTE, padding=(18, 8))
+        estilo.configure("Caja.Treeview", font=LETRA_RESULTADOS, rowheight=ALTO_FILA_RESULTADOS)
+        estilo.configure("Caja.Treeview.Heading", font=(LETRA, 11, "bold"))
+        estilo.configure("Caja.TLabel", font=LETRA_BOTON, background=COLORS["surface"])
+        estilo.configure("Caja.Muted.TLabel", font=LETRA_AYUDA)
+        # La lista que se despliega al elegir el medio de pago.
+        self.option_add("*TCombobox*Listbox.font", LETRA_BOTON)
+
+    def _maximizar(self):
+        """Abre maximizada: con la letra grande, en la pantalla del local
+        (1366x768) cada centímetro cuenta, y sin maximizar la parte de abajo
+        quedaba detrás de la barra de tareas. Se llama al final del __init__,
+        DESPUÉS de ajustar_ventana, que deja el tamaño para cuando se la
+        achica. En Linux no existe "zoomed" (las pruebas): queda como estaba.
+        """
+        try:
+            self.state("zoomed")
+        except tk.TclError:
+            pass
+
+    def _armar_pie(self, botones_cobro: list, ayuda: str):
+        """Abajo de todo: la barra con el total y los botones de cobrar, y la
+        línea de ayuda del teclado.
+
+        Se arma ANTES que el resto de la pantalla, a propósito: con pack, lo
+        que se arma primero tiene su lugar asegurado y lo que se arma después
+        se achica si no entra. Antes esta barra se armaba al final, y con la
+        ventana del tamaño que toma en el local (1366x768) el TOTAL A PAGAR
+        salía cortado por la mitad. Ahora lo que se achica es el carrito, que
+        tiene barra para moverse.
+
+        `botones_cobro`: [(texto, comando, estilo), ...] para la fila de
+        arriba. Abajo van siempre el medio de pago y "Quitar línea".
+        """
+        self.lbl_ayuda = ttk.Label(self, style="Caja.Muted.TLabel", text=ayuda)
+        self.lbl_ayuda.pack(side="bottom", fill="x", padx=16, pady=(0, 6))
+        # Si no entra en una línea (la ventana sin maximizar), que siga abajo
+        # en vez de cortarse.
+        self.lbl_ayuda.bind("<Configure>",
+                            lambda e: self.lbl_ayuda.configure(wraplength=max(e.width - 4, 200)))
+
+        pie = ttk.Frame(self, padding=(16, 10), style="Card.TFrame")
+        pie.pack(side="bottom", fill="x")
+
+        total_box = tk.Frame(pie, bg=COLORS["accent"])
+        total_box.pack(side="left")
+        tk.Label(total_box, text="TOTAL A PAGAR", bg=COLORS["accent"], fg="white",
+                 font=LETRA_TOTAL_TITULO).pack(anchor="w", padx=20, pady=(8, 0))
+        self.lbl_total = tk.Label(total_box, text="$0.00", bg=COLORS["accent"], fg="white",
+                                  font=LETRA_TOTAL)
+        self.lbl_total.pack(anchor="w", padx=20, pady=(0, 8))
+
+        # A la derecha, en dos filas: arriba cobrar, abajo el medio de pago y
+        # "Quitar línea". En una sola fila no entran con la letra grande.
+        acciones = ttk.Frame(pie, style="Card.TFrame")
+        acciones.pack(side="right")
+        fila_cobro = ttk.Frame(acciones, style="Card.TFrame")
+        fila_cobro.pack(side="top", anchor="e")
+        self.botones_cobro = []
+        for texto, comando, estilo in botones_cobro:
+            boton = ttk.Button(fila_cobro, text=texto, style=estilo, command=comando)
+            boton.pack(side="left", padx=(8, 0))
+            self.botones_cobro.append(boton)
+
+        fila_otros = ttk.Frame(acciones, style="Card.TFrame")
+        fila_otros.pack(side="top", fill="x", pady=(10, 0))
+        self.boton_quitar = ttk.Button(fila_otros, text="Quitar línea (Supr)", style="Caja.TButton",
+                                       command=self._quitar_linea)
+        self.boton_quitar.pack(side="right", padx=(12, 0))
+        ttk.Label(fila_otros, text="Pago:", style="Caja.TLabel").pack(side="left", padx=(8, 6))
+        self.metodo_pago = ttk.Combobox(fila_otros, values=MEDIOS_DE_PAGO, state="readonly",
+                                        width=15, font=LETRA_BOTON)
+        self.metodo_pago.set("EFECTIVO")
+        self.metodo_pago.pack(side="left")
 
     # ------------------------------------------------------------------ #
     # Estado inicial (llamar desde el __init__ de la ventana)
@@ -179,7 +284,7 @@ class CarritoTecladoMixin:
                         ("P. UNIT.", "e"), ("SUBTOTAL", "e")]
         for col, (texto, anchor) in enumerate(encabezados):
             tk.Label(self.carrito_grid, text=texto, bg=COLORS["accent"], fg="white",
-                     font=("Segoe UI", 10, "bold"), padx=10, pady=8, anchor=anchor
+                     font=LETRA_ENCABEZADO_CARRITO, padx=10, pady=8, anchor=anchor
                      ).grid(row=0, column=col, sticky="nsew")
 
     # Cómo se dibuja el carrito, y por qué así:
@@ -195,9 +300,15 @@ class CarritoTecladoMixin:
     # el total se recalcula acá de cero en cada pasada, así que un error
     # de dibujo no puede hacer que se cobre distinto.
     _COLUMNAS_CARRITO = (
-        ("Segoe UI", 10), ("Segoe UI", 12, "bold"), ("Segoe UI", 11),
-        ("Segoe UI", 10), ("Segoe UI", 15, "bold"),
+        (LETRA, 12), (LETRA, 15, "bold"), (LETRA, 14, "bold"),
+        (LETRA, 13), (LETRA, 17, "bold"),
     )
+    # Ancho de cada columna, en letras; el nombre se queda con todo lo que
+    # sobra. Sin esto cada celda pedía 20 letras (lo que trae Tk de fábrica):
+    # las columnas de números se comían el lugar del nombre ("FIDEOS
+    # MATARAZZO TIRAI", "SERENISIMA LECHE ENTER"), y con la letra más grande
+    # se lo comían todavía más. Los de plata entran con siete cifras y centavos.
+    _ANCHOS_CARRITO = (14, 10, 4, 11, 12)
 
     def _textos_de_linea(self, item, subtotal):
         return (item["codigo"], item["nombre"].upper(), str(item["cantidad"]),
@@ -225,6 +336,7 @@ class CarritoTecladoMixin:
         for col in range(5):
             celda = celda_texto(self.carrito_grid, "", font=self._COLUMNAS_CARRITO[col],
                                  color=colores[col], bg=bg, anchor=anclas[col])
+            celda.config(width=self._ANCHOS_CARRITO[col])
             celda.bind("<Button-1>", lambda e, i=item["_id"]: self._seleccionar_linea(i), add="+")
             if col == 2:
                 # La columna CANT. se edita tocándola.
@@ -273,7 +385,7 @@ class CarritoTecladoMixin:
 
             if estado["fila"] != fila:
                 for col, celda in enumerate(estado["widgets"]):
-                    celda.grid(row=fila, column=col, sticky="nsew", ipady=7,
+                    celda.grid(row=fila, column=col, sticky="nsew", ipady=5,
                                padx=(10 if col == 0 else 0, 10))
                 estado["fila"] = fila
             if estado["textos"] != textos:
@@ -368,7 +480,7 @@ class CarritoTecladoMixin:
 
         item = self.carrito[idx]
         entry = tk.Entry(self.carrito_grid, width=6, justify="center",
-                          font=("Segoe UI", 12, "bold"), relief="solid", bd=2,
+                          font=self._COLUMNAS_CARRITO[2], relief="solid", bd=2,
                           bg="white", fg=COLORS["text"], insertbackground=COLORS["text"])
         entry.insert(0, str(item["cantidad"]))
         entry.select_range(0, "end")
