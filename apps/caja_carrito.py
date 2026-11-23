@@ -299,9 +299,14 @@ class CarritoTecladoMixin:
     # OJO: esto es solo dibujo. La plata sale siempre de `self.carrito` y
     # el total se recalcula acá de cero en cada pasada, así que un error
     # de dibujo no puede hacer que se cobre distinto.
+    # El precio por unidad va grande y en negrita para que se lea (pedido de
+    # Matías, 23/11/2026), pero el subtotal sigue siendo el más grande de la
+    # fila (18 contra 15) y de otro color: es el que se cobra, y no se tienen
+    # que confundir. Si se agranda uno, que el otro siga por encima
+    # (tests/test_caja_legible.py lo controla).
     _COLUMNAS_CARRITO = (
         (LETRA, 12), (LETRA, 15, "bold"), (LETRA, 14, "bold"),
-        (LETRA, 13), (LETRA, 17, "bold"),
+        (LETRA, 15, "bold"), (LETRA, 18, "bold"),
     )
     # Ancho de cada columna, en letras; el nombre se queda con todo lo que
     # sobra. Sin esto cada celda pedía 20 letras (lo que trae Tk de fábrica):
@@ -385,7 +390,7 @@ class CarritoTecladoMixin:
 
             if estado["fila"] != fila:
                 for col, celda in enumerate(estado["widgets"]):
-                    celda.grid(row=fila, column=col, sticky="nsew", ipady=5,
+                    celda.grid(row=fila, column=col, sticky="nsew", ipady=4,
                                padx=(10 if col == 0 else 0, 10))
                 estado["fila"] = fila
             if estado["textos"] != textos:

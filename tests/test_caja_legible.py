@@ -51,7 +51,7 @@ for codigo, nombre, precio in LINEAS:
 VENTANAS = ((1366, 697, "maximizada"), (1180, 704, "sin maximizar"))
 
 # Lo que se eligió para que se lea de lejos. Si alguien lo achica, que se note.
-MINIMOS = {"nombre": 15, "codigo": 12, "precio": 12, "subtotal": 17, "total": 34, "buscador": 15, "boton": 12}
+MINIMOS = {"nombre": 15, "codigo": 12, "precio": 15, "subtotal": 18, "total": 34, "buscador": 15, "boton": 12}
 
 
 def tamano(fuente) -> int:
@@ -125,6 +125,13 @@ def letra_minima(app, caja):
         if medidas[que] < minimo:
             problemas.append(f"{caja}: la letra de «{que}» es de {medidas[que]} puntos "
                              f"(se eligió {minimo} para que se lea de lejos)")
+    # El precio por unidad grande no puede confundirse con el subtotal, que es
+    # lo que se cobra: el subtotal sigue más grande y de otro color.
+    if medidas["subtotal"] <= medidas["precio"]:
+        problemas.append(f"{caja}: el subtotal ({medidas['subtotal']} puntos) no es más grande que el "
+                         f"precio por unidad ({medidas['precio']}): se pueden confundir")
+    if celdas[3].cget("fg").lower() == celdas[4].cget("fg").lower():
+        problemas.append(f"{caja}: el precio por unidad y el subtotal van del mismo color")
     return problemas
 
 

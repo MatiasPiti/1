@@ -708,6 +708,10 @@ producto. Lleva tres columnas nuevas que la carga masiva de siempre ignora: `Rub
   - Lo cuida `tests/test_caja_legible.py`, que mira lo que se ve en 1366x768 y falla si la letra
     baja del tamaño elegido. Si se agranda más, que siga en verde: es lo que garantiza que el total y
     los botones de cobrar entran.
+  - **El precio por unidad va en 15 y negrita, y el subtotal en 18** (23/11/2026, pedido de Matías:
+    que el precio se lea sin confundirse con el subtotal, que es lo que se cobra). El subtotal tiene
+    que seguir siendo el más grande de la fila y de otro color: la prueba lo controla. Para que no se
+    pierda una línea a la vista, el relleno de cada fila bajó de 5 a 4 píxeles.
 - **Al agregar una línea, el carrito baja solo a mostrarla; la selección NO se mueve.** El
   desplazamiento automático ya existía, pero solo seguía a la línea *seleccionada*, y escanear no
   mueve la selección: con el ticket lleno el cajero escaneaba el producto 30, el total subía y la
