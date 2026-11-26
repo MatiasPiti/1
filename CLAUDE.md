@@ -83,8 +83,10 @@ el Panel, la conciliación de emergencia, el Actualizador, el Instalador y el Ma
 14/11, lo que había quedado por arriba: el servicio que corre 24/7, la API remota, el bot de
 Telegram, el Dueño Remoto, el acceso del celular y los scripts de blindaje. **Todo lo de abajo está
 arreglado en `main`, con prueba que falla sin el arreglo (32 pruebas, verdes en Linux y en el CI de
-Windows). NADA de esto está en la PC del local todavía: falta compilar y actualizar, primero el
-local y después la laptop de Leo.**
+Windows). En la PC del local lo único que llegó es la Caja**, copiada a mano en noviembre: como se
+compila de `main`, trae los arreglos que corren adentro de ella (ver "Qué versión corre en cada
+lado", abajo). **Todo lo demás falta: compilar y correr el Actualizador, primero en el local y
+después en la laptop de Leo. Los pasos están en `scripts/desplegar_auditoria_PASOS.txt`.**
 
 **Lo que NO se leyó entero** (para no dar por revisado lo que no lo está): `services/api_celular.py`
 y la app Flutter (tienen sus propias pruebas y su trabajo de CI en Windows; solo se miraron el
@@ -140,7 +142,7 @@ con lo que se decide a mano.
 | El Dueño Remoto no abría con su `config.ini` ilegible, y se quedaba en "Probando conexión..." si no podía guardarlo | `apps/dueno_remoto` |
 | En el Panel, una cantidad mal tipeada mostraba el error de Python, y el porcentaje "10,5" no se aceptaba | `apps/master_dueno` |
 | Si el servicio estuvo parado más de 14 días (pasó en septiembre; pasa en vacaciones), al volver hacía la copia de hoy y **borraba todas las anteriores de un saque** | `respaldo.limpiar_viejas` |
-| **Códigos que la caja daba por "no registrados" y el sistema viejo conocía** (16/11): el código interno de casi todos los productos viejos ES su código de barras, y el generador del Excel lo dejaba afuera apenas Leo le agregaba otro código al producto. Al reimportar, Otter le cambiaba el código y el envase de siempre dejaba de escanear (PUGLISI CABALLA el 11/11). **No necesita compilar**: alcanza con regenerar el Excel y correr Ensayo + Aplicar; lo que se perdió vuelve como "código que le faltaba a un producto" | `scripts/generar_lista_precios.codigos_para_otter` |
+| **Códigos que la caja daba por "no registrados" y el sistema viejo conocía** (16/11): el código interno de casi todos los productos viejos ES su código de barras, y el generador del Excel lo dejaba afuera apenas Leo le agregaba otro código al producto. Al reimportar, Otter le cambiaba el código y el envase de siempre dejaba de escanear (PUGLISI CABALLA el 11/11). **Necesita el Panel nuevo en el local.** El Excel regenerado trae el código del envase, pero el que lo crea es el `planificar()` del 13/11: con el Panel del 11/11, que es el que tiene el local, esos códigos van a SIN RESOLVER ("el producto con ese nombre ya lo tomó otra fila del Excel") y siguen sin escanear. Se probó el 26/11 corriendo el Excel nuevo contra el código del 11/11. El 16/11 se le dijo a Matías que no hacía falta compilar, y era un error. Con el Panel nuevo, regenerar el Excel y correr Ensayo + Aplicar: lo que se perdió vuelve como "código que le faltaba a un producto" | `scripts/generar_lista_precios.codigos_para_otter` |
 
 El detalle de cada uno está en su commit y en la prueba que lo cuida (`tests/README.md`).
 
@@ -160,6 +162,35 @@ años de ventas el Dashboard tarda medio segundo en una PC rápida. No es una fa
 **Al desplegar esto:** los pendrives de emergencia ya grabados siguen sirviendo con el Maestro
 nuevo (saltea la carga del catálogo aunque venga en el archivo), pero para que "Preparar
 sincronización" exporte TODO hay que regrabarlos con el `USB_Caja` / `USB_Dueno` nuevos.
+
+### Qué versión corre en cada lado (26/11/2026)
+
+| Dónde | Qué versión | Cómo llegó |
+|---|---|---|
+| PC del local: `MaestroCaja` | `ed4b8eb` (`main` del 23/11) | Copiada a mano, sin build completo, tres veces (16, 20 y 23/11). Matías confirmó el 26/11 que anda bien. |
+| PC del local: `MaestroDueno`, `StockService`, `ApiCelular`, `OtterBlindaje` | la del 11/11 | El Actualizador del 11/11. Matías confirmó el 26/11 que después de eso solo se tocó la Caja. |
+| Laptop de Leo: `DuenoRemoto` | anterior al 11/11 | La última actualización anotada es la del 21/9. |
+| Pendrives `USB_Caja` y `USB_Dueno` | anteriores a la auditoría | Sin la letra grande ni los arreglos de la conciliación. |
+
+- **La Caja nueva convive con el resto viejo, y no es casualidad.** Entre el 11/11 y `ed4b8eb` la
+  base no cambió de forma (ni `sql/` ni las migraciones de `db.py`), y la Caja graba las ventas igual
+  que antes: de `sales.py` solo cambiaron facturar y buscar, no `cerrar_ticket`. Como se compila del
+  `main` entero, la Caja del local ya tiene los arreglos de la auditoría que corren adentro de ella:
+  el doble F5/F12, la oferta que cobraba $0, el COMMIT que la dejaba sin cobrar, el código corto que
+  no se encontraba, la base ocupada que se ofrecía restaurar, el `config.ini` con BOM y la base vacía
+  después de restaurar la copia.
+- **Lo que no llegó y se nota es la reimportación.** El Panel del local sigue siendo el del 11/11,
+  así que los códigos que la caja da por "no registrados" siguen sin entrar (COLON SELECTO DULCE
+  FRESCO, AQUARIUS 1,5L. y unos 86 más; ver la fila del generador en la auditoría, arriba). El 16/11
+  Matías vio que los precios cambiados entraban bien y esos códigos no: es lo que hace ese Panel.
+- **COLON SELECTO DULCE FRESCO no está en los `.DBF` de septiembre**: ahí solo están "COLON SELECTO"
+  (interno `1722`, con 3 códigos) y "COLON SELECTO MALB". No se sabe si es el código que el generador
+  dejaba afuera o un código agregado a un producto que ya existía; los dos se arreglan con el
+  despliegue. Si después sigue sin escanear, el paso 12 de la guía dice qué pedir.
+- En `C:\SistemaDual\` quedan `MaestroCaja.antes_precio` y, si no se borraron, `.antes_azul` y
+  `.antes_letra`. Son las Cajas anteriores, solo programa: la base, el config, los logs y los tickets
+  viven en la carpeta padre. Se pueden borrar (el paso 12 de la guía lo hace) y el Actualizador no
+  las mira.
 
 ### DÓNDE QUEDÓ EL TRABAJO (11/11/2026)
 
@@ -191,7 +222,8 @@ Excel regenerado de los `.DBF` de ese día: 2622 productos viejos → 4833 filas
   le agregaron a ese producto y se crea, con su precio y en su grupo. Si el código interno es otro,
   sigue sin resolver. El informe los cuenta aparte en "Productos nuevos". **Falta: recompilar,
   actualizar el local y volver a correr ensayo + aplicar con un Excel regenerado** (es idempotente:
-  lo ya aplicado no cambia). Un grupo que armó Leo a mano (AQUARIUS 1,5L.…) no los suma: es suyo.
+  lo ya aplicado no cambia; pasos 1 a 10 de `scripts/desplegar_auditoria_PASOS.txt`). Un grupo que
+  armó Leo a mano (AQUARIUS 1,5L.…) no los suma: es suyo.
 - 31 productos de Otter no vienen en el Excel y quedaron intactos.
 - **Leo sigue cambiando los precios en el SISTEMA VIEJO**, no en Otter (confirmado por Matías). Si
   eso cambia, esta reimportación pisaría lo que cambie en Otter: preguntarlo antes de repetirla.
@@ -264,6 +296,58 @@ nuevo — documentados para no perder tiempo re-descubriéndolos:
 - **El editor por defecto de git ahí es Vim**, y salir sin guardar **aborta el commit del merge**
   (parece que el merge no se hizo, pero quedó a medias). Salir es `Esc` y después `:wq`. Para que
   no vuelva a aparecer: `git config --global core.editor notepad`, o mergear con `-m`.
+- **`git pull` en la laptop de Matías puede preguntar `Unlink of file '.git/objects/pack/pack-….idx'
+  failed. Should I try again? (y/n)`** (23/11/2026). Se contesta `n` todas las veces: el código ya
+  bajó, lo dice la línea `Fast-forward`. Es git ordenando sus archivos internos (el auto-gc), y uno
+  de ellos lo tiene abierto otro programa (VS Code, el antivirus). Contestar `y` solo lo hace
+  preguntar de nuevo. Se confirma con `git log --oneline -1`.
+- **Actualizar SOLO la Caja, sin build completo** (16, 20 y 23/11/2026, para cambios que solo
+  tocaban cómo se ve la Caja). Compilar solo `MaestroCaja` tarda unos 3 minutos y se copia a mano,
+  sin el Actualizador. Vale **solo para `MaestroCaja` y `MaestroDueno`**, que guardan todo en la
+  carpeta padre:
+  - **Nunca para `DuenoRemoto`.** Su `config.ini`, con el token real, vive ADENTRO de su carpeta:
+    apartarla lo deja sin conexión, y recuperarlo obliga a tipear el token (regla 4). **Tampoco para
+    `StockService` ni `ApiCelular`**: un servicio se para y se actualiza con `update`, y eso lo hace
+    el Actualizador.
+  - **Lleva todo el `pos_core` de `main`, no solo el cambio que se quería.** Antes, mirar
+    `git diff <versión del local>..HEAD -- sql pos_core/db.py pos_core/sales.py`: si cambió la forma
+    de la base o cómo se graba una venta, la Caja nueva no puede convivir con el servicio y el Panel
+    viejos, y va el build completo.
+  - **El pendrive de emergencia no se entera**: `USB_Caja` queda como estaba hasta el próximo build
+    completo.
+  - **Se revisa el ORIGEN antes de tocar el destino.** El 16/11 los primeros pasos apartaban la Caja
+    con `Rename-Item` y recién después copiaban. En la PC del local el pendrive era `D:` y no `E:`:
+    robocopy falló con `ERROR 3` y la Caja quedó sin carpeta hasta que se volvió a la anterior. El
+    bloque de abajo no toca nada si no encuentra la Caja nueva en el pendrive, y si la copia falla
+    vuelve solo a la anterior. En la PC del local el pendrive entró como **`D:`** las dos veces.
+  - Compilar. Es la línea 1/11 de `build_all.bat`: si esa cambia, cambiar esta.
+    ```
+    venv\Scripts\python -m PyInstaller --noconfirm --clean --onedir --windowed --add-data "sql\schema.sql;sql" --add-data "apps\assets;apps\assets" --icon apps\assets\logo_otter.ico --name MaestroCaja --paths . --hidden-import pos_core.instancia_unica apps\master_caja\main.py
+    ```
+  - Al pendrive, con la letra que tenga en la laptop:
+    ```
+    robocopy dist\MaestroCaja E:\MaestroCaja /MIR /MT:16 /NFL /NDL /NJH /NP; if ($LASTEXITCODE -ge 8) { Write-Host "FALLO ($LASTEXITCODE)" -ForegroundColor Red } else { Write-Host "OK" -ForegroundColor Green }
+    ```
+  - En el local, PowerShell como administrador y la Caja cerrada. `$resp` es el nombre de la copia
+    de la Caja anterior, uno nuevo cada vez: si ya existe, el bloque no toca nada.
+    ```
+    $u = "D:"; $resp = "MaestroCaja.antes_<algo>"
+    if (-not (Test-Path "$u\MaestroCaja\MaestroCaja.exe")) { Write-Host "En $u no esta MaestroCaja (no se toco nada)" -ForegroundColor Red } elseif (Test-Path "C:\SistemaDual\$resp") { Write-Host "Ya existe $resp (no se toco nada)" -ForegroundColor Red } else {
+        Rename-Item C:\SistemaDual\MaestroCaja $resp -ErrorAction Stop
+        robocopy "$u\MaestroCaja" C:\SistemaDual\MaestroCaja /E /XD database logs tickets backups SYNC_DATA /XF config.ini | Out-Null
+        if ($LASTEXITCODE -ge 8 -or -not (Test-Path C:\SistemaDual\MaestroCaja\MaestroCaja.exe)) {
+            Remove-Item C:\SistemaDual\MaestroCaja -Recurse -Force -ErrorAction SilentlyContinue
+            Rename-Item "C:\SistemaDual\$resp" MaestroCaja
+            Write-Host "FALLO la copia: se dejo la Caja de antes" -ForegroundColor Red
+        } else { Write-Host "OK: Caja nueva copiada" -ForegroundColor Green }
+    }
+    ```
+    Si la Caja nueva no abre, se vuelve a la anterior con `Remove-Item C:\SistemaDual\MaestroCaja
+    -Recurse -Force; Rename-Item C:\SistemaDual\<la de $resp> MaestroCaja`.
+  - **En un bloque para pegar en la consola, `} else {` va en la misma línea.** Al pegar, un
+    `if {…}` que cierra al final de la línea se ejecuta ahí mismo, y el `else` de la línea siguiente
+    da error. Y no se puede escribir `"$resp:"`: PowerShell lee `$resp:` como una variable con
+    ámbito (como `$env:`). Va `"$resp (…)"`.
 
 ### El Dueño Remoto se cayó dos veces en el mismo día (septiembre 2026)
 
@@ -1036,9 +1120,16 @@ de la visita** (guía de la app, sección 2).
 - [x] El botón "Probar" de Telegram (faltaba `telegram_bot` en `dueno_backend`) y las facturas PDF
       que leían "3.500" como 3,5. HECHO el 13/11/2026, junto con la factura con tabla que sumaba
       el stock dos veces.
-- [ ] **Desplegar la auditoría del 13 y 14/11/2026** (ver arriba): `build\build_all.bat`, pendrive con
-      las 8 carpetas, Actualizador en la PC del local (con la Caja y el Panel cerrados) y después
-      en la laptop de Leo. Y mirar los 12 códigos compartidos + PUGLISI CABALLA.
+- [ ] **Desplegar la auditoría del 13 y 14/11/2026** (ver arriba), con los 17 pasos de
+      `scripts/desplegar_auditoria_PASOS.txt`: `build\build_all.bat`, pendrive con las 8 carpetas,
+      Actualizador en la PC del local (con la Caja y el Panel cerrados), Excel regenerado + Ensayo +
+      Aplicar, la laptop de Leo y los pendrives de emergencia. Y mirar los 12 códigos compartidos +
+      PUGLISI CABALLA. De todo esto, en el local solo está la Caja. **Hasta que se haga, la caja sigue
+      dando "no registrado" con COLON SELECTO DULCE FRESCO y unos 86 códigos más.**
+- [x] **La Caja más legible**: el código y el precio en azul (16/11), la letra grande con el total que
+      ya no sale cortado (20/11), y el precio por unidad en 15 y negrita con el subtotal en 18 (23/11).
+      Está en la PC del local, copiada a mano, y Matías confirmó el 26/11 que anda bien. La Caja del
+      pendrive de emergencia lo recibe con el build completo (paso 16 de la guía).
 - [ ] **ARCA, encontrado leyendo el código y SIN PROBAR** (no se toca hasta tener Homologación):
       la Factura B se arma con `ImpIVA` en 0 y sin el detalle de alícuotas (para un Responsable
       Inscripto ARCA la rechaza; la C está bien); falta `CondicionIVAReceptorId` (RG 5616); la
@@ -1092,8 +1183,9 @@ de la visita** (guía de la app, sección 2).
       carpeta del Dueño Remoto se reconoce y no se le toca nada (`tipo_de_instalacion` devuelve
       `DUENO_REMOTO` / `DESCONOCIDA`, y el informe dice por qué).
 - [ ] **Desplegar la reimportación de la lista de precios.** APLICADA en la PC del local el
-      11/11/2026 (ver "Dónde quedó el trabajo"). Falta actualizar la laptop de Leo y resolver a
-      mano, si Leo quiere, los 99 sin resolver.
+      11/11/2026 (ver "Dónde quedó el trabajo"). Falta actualizar la laptop de Leo, y los 99 sin
+      resolver: los ~86 códigos agregados a un producto se crean solos con el despliegue de la
+      auditoría (pasos 7 a 10 de la guía), y los 12 códigos compartidos se corrigen a mano (paso 11).
 - [ ] **Rotar los dos tokens del cliente**: el de `[remoto]` y el del bot de Telegram quedaron
       visibles en una captura de pantalla mandada por chat. El de Telegram se revoca con `/revoke`
       en @BotFather; el de `[remoto]` se cambia en `C:\SistemaDual\config.ini`, se reinicia el

@@ -1,0 +1,274 @@
+===========================================================
+ DESPLEGAR LA AUDITORIA (13 y 14/11/2026)
+ build completo + Actualizador + lista de precios
+ Otter - El Galpon Del Nono
+===========================================================
+
+Este archivo alcanza solo: no hace falta abrir ningun otro.
+
+Son 17 pasos, en tres lugares: tu laptop, la PC del local y
+la laptop de Leo. En casa tarda alrededor de una hora (casi
+todo es compilar). En el local, unos 30 minutos con el
+negocio cerrado.
+
+
+-----------------------------------------------------------
+COMO ESTA HOY (26/11/2026)
+-----------------------------------------------------------
+- En la PC del local la CAJA ya esta al dia: se copio a mano
+  en noviembre (letra grande, precio en azul). Todo lo demas
+  sigue como el 11/11: el Panel, el servicio y la API del
+  celular.
+- La laptop de Leo y los pendrives de emergencia tampoco
+  tienen la auditoria.
+- Lo que se nota: la caja sigue dando "no registrado" con
+  codigos que el sistema viejo conoce (COLON SELECTO DULCE
+  FRESCO, AQUARIUS 1,5L. y unos 86 mas). Se arregla RECIEN
+  con este despliegue, porque el que crea esos codigos es el
+  Panel nuevo (pasos 7 a 10). Regenerar el Excel y correrlo
+  con el Panel viejo no alcanza: esos codigos van a
+  "SIN RESOLVER" y siguen sin escanear.
+
+ORDEN: primero la PC del local, despues la laptop de Leo. Al
+reves, el Dueno Remoto nuevo le pide al local funciones que
+el local viejo no conoce ("funcion no permitida").
+
+Si mandas capturas de la consola del local, tapa el token y
+la IP de Tailscale.
+
+
+===========================================================
+ EN CASA, EN TU LAPTOP
+===========================================================
+
+PASO 1 - Traer el codigo y correr las pruebas
+
+    cd "C:\Users\Usuario\Desktop\proyecto para el leo\Otter_final\SistemaDual-src"
+
+    git pull origin main
+
+    venv\Scripts\pip install -r requirements.txt
+
+    venv\Scripts\python tests\correr_todos.py
+
+  Si git pregunta "Unlink of file ... failed. Should I try
+  again? (y/n)", contesta n todas las veces: el codigo ya
+  bajo (lo dice la linea "Fast-forward").
+
+  Tienen que dar 32 en verde. Tarda unos 4 minutos: no uses
+  la PC mientras corre. Si la unica en rojo es
+  test_config_atomico.py, segui: es la que ya conocemos (en
+  Windows falla con la maquina cargada). Si es cualquier
+  otra, frena.
+
+
+PASO 2 - Compilar
+  Antes, cerra cualquier .exe que hayas abierto desde dist\.
+
+    build\build_all.bat
+
+  Al final tiene que decir "ApiCelular: autoprueba OK".
+  Despues confirma que las 11 apps tienen fecha de hoy:
+
+    dir dist\*\*.exe | Sort-Object LastWriteTime | Select-Object LastWriteTime, Name
+
+
+PASO 3 - Copiar al pendrive principal
+  Primero mira que letra agarro:
+
+    Get-Volume | Where-Object DriveLetter | Select-Object DriveLetter, FileSystemLabel
+
+  Pone esa letra en la primera linea y pega el bloque entero:
+
+    $u = "E:"; $fallo = $false
+    foreach ($app in "OtterActualizador","MaestroCaja","MaestroDueno","StockService","DuenoRemoto","ApiCelular","OtterBlindaje","USB_Mantenimiento") {
+        robocopy "dist\$app" "$u\$app" /MIR /MT:16 /NFL /NDL /NJH /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) { Write-Host "FALLO: $app ($LASTEXITCODE)" -ForegroundColor Red; $fallo = $true } else { Write-Host "OK: $app" -ForegroundColor Green }
+    }
+    if ($fallo) { Write-Host "HUBO ERRORES - no vayas al local" -ForegroundColor Red } else { Write-Host "Todo copiado" -ForegroundColor Green }
+
+  Tienen que salir las 8 en OK. Si en el paso 2 ApiCelular no
+  paso la autoprueba, sacalo de la lista antes de pegar.
+
+
+===========================================================
+ EN EL LOCAL, CON EL NEGOCIO CERRADO
+===========================================================
+En esta PC el pendrive entro como D: las dos veces que se
+miro (16 y 23/11). Confirmalo con el Get-Volume del paso 3
+y, si es otra, cambia la letra en cada comando.
+
+
+PASO 4 - Antes de tocar nada, copiar las bases del sistema viejo
+
+    robocopy "C:\mmarket\bases" "D:\bases" /E; if ($LASTEXITCODE -ge 8) { Write-Host "FALLO ($LASTEXITCODE)" -ForegroundColor Red } else { Write-Host "OK" -ForegroundColor Green }
+
+
+PASO 5 - Hablar con Leo
+  - Preguntale si desde el 11/11 cambio algun precio
+    directamente en Otter (en el Panel, la laptop o el
+    celular). Si cambio alguno, no hagas el paso 10 sin
+    resolverlo antes: la reimportacion se lo pisaria con el
+    precio del sistema viejo.
+  - Pedile uno de los codigos que le daban "no registrado", y
+    la botella de COLON SELECTO DULCE FRESCO: los vas a usar
+    en el paso 12.
+
+
+PASO 6 - Preparar la PC
+  - Cerra la Caja y el Panel.
+  - Si no lo hiciste el 20/10, agrega C:\SistemaDual a las
+    excepciones de Avast: Menu -> Configuracion -> General ->
+    Excepciones -> Agregar excepcion.
+
+
+PASO 7 - Actualizar la PC del local
+  - Abri D:\OtterActualizador\OtterActualizador.exe con boton
+    derecho -> "Ejecutar como administrador".
+  - Fijate que el cuadro diga "Se encontro una instalacion de
+    la PC del local en: C:\SistemaDual" y "La API del celular
+    ya esta instalada: se actualiza junto con lo demas".
+  - Deja tildada la copia de seguridad de la base y apreta
+    ACTUALIZAR.
+  - Al terminar aparece la revision final: TODAS las filas
+    tienen que decir SI. Queda guardada en
+    Escritorio\otter_revision_final.txt. Si alguna dice NO,
+    frena y mandala.
+
+
+PASO 8 - Generar el Excel
+  En tu laptop, con el pendrive enchufado, desde la carpeta
+  del repo. Cambia E: por la letra del pendrive en la laptop:
+
+    venv\Scripts\pip install dbfread
+
+    venv\Scripts\python scripts\generar_lista_precios.py E:\bases E:\lista
+
+  (dbfread no esta en requirements.txt porque solo lo usa este
+  script. Si ya estaba instalado, pip lo dice y no hace nada.)
+
+
+PASO 9 - Ensayo (no escribe nada)
+  De vuelta en la PC del local:
+  - Abri el Panel -> pestana Carga Excel ->
+    "1. Ensayar (no toca nada)".
+  - Elegi D:\lista\Otter_importar_<fecha de hoy>.xlsx.
+  - El informe queda en Escritorio\otter_ensayo_precios.txt.
+    Mandalo antes de aplicar.
+
+  Lo que tiene que mostrar:
+  - En "Productos nuevos": "(N son codigos que le faltaban a
+    un producto que ya estaba)", con N de unos 86 para
+    arriba. SI NO APARECE ESA FRASE, frena: lo mas probable es
+    que el Panel siga siendo el viejo y el paso 7 no lo haya
+    actualizado.
+  - "SIN RESOLVER" chico, unas decenas como mucho. Casi todas
+    las filas tienen que decir "ese codigo lo usan 2 productos
+    del sistema viejo con precios distintos". Pueden aparecer
+    DON YEYO LACTAL y PUGLISI CABALLA.
+  - En "Cambian de precio": solo lo que Leo cambio en el
+    sistema viejo desde la ultima importacion.
+
+
+PASO 10 - Aplicar
+  Apreta "2. Actualizar los precios..." y confirma. El
+  resultado queda en Escritorio\otter_actualizacion_precios.txt.
+  Es idempotente: lo que ya estaba aplicado no cambia.
+
+
+PASO 11 - Corregir a mano los 12 codigos compartidos
+  En el sistema viejo cada uno de estos codigos de barras lo
+  usan DOS productos, y la importacion del 11/11 pudo haberle
+  puesto el precio del otro.
+  - En el Panel, pestana Stock -> recuadro "Actualizacion de
+    precios", escanea o tipea cada codigo.
+  - En el ensayo cada uno aparece con dos filas, cada una con
+    su nombre y su precio. Pone en "Precio Venta Final" el de
+    la fila que tiene el mismo nombre que muestra Otter, y
+    apreta GUARDAR CAMBIOS.
+
+    7798434460028   763571733462    0707273535528   7793551001895
+    7793551001888   7793551001840   7622300631574   7622300990213
+    7622300844943   7798349010028   7790742358608   7791519002649
+
+  PUGLISI CABALLA (7790748235095) es distinto: las dos filas
+  tienen el mismo nombre. Agarra la lata y escaneala en el
+  sistema viejo y en Otter. Si no dan el mismo precio, pone
+  en Otter el del sistema viejo.
+
+
+PASO 12 - Probar en la caja
+  - Escanea el codigo que te paso Leo y la botella de COLON
+    SELECTO DULCE FRESCO: ahora tienen que aparecer.
+  - Escanea 2 o 3 productos con precio nuevo.
+  - Sacalos con Supr, sin cobrar.
+
+  Si COLON SELECTO DULCE FRESCO sigue sin aparecer, anota el
+  numero de barras de la botella y manda lo que imprime esto:
+
+    Select-String -Path (Join-Path ([Environment]::GetFolderPath("Desktop")) "otter_ensayo_precios.txt") -Pattern "COLON"
+
+  Opcional: Panel -> Alertas -> "Probar (manda un mensaje)"
+  tiene que decir "Mensaje enviado" (antes ese boton daba
+  error). A Leo le llega un mensaje de prueba por Telegram.
+
+  Si todo anda, borra las Cajas viejas que quedaron de las
+  copias a mano de noviembre. Son solo programa: la base, el
+  config, los logs y los tickets viven en C:\SistemaDual.
+
+    Remove-Item C:\SistemaDual\MaestroCaja.antes_* -Recurse -Force -ErrorAction SilentlyContinue
+
+
+PASO 13 - Exportar la lista para los pendrives
+  Panel -> Carga Excel -> "Exportar lista de precios (Excel)"
+  -> guardala como D:\lista\lista_pendrives.xlsx.
+
+
+===========================================================
+ EN LA LAPTOP DE LEO
+===========================================================
+
+PASO 14 - Actualizar el Dueno Remoto
+  - Abri <letra>:\OtterActualizador\OtterActualizador.exe
+    como administrador.
+  - Tiene que decir "Se encontro una instalacion de la laptop
+    del dueno en: C:\Otter". SI DICE "de la PC del local",
+    FRENA: a esta laptop nunca va el Maestro.
+  - Apreta ACTUALIZAR.
+
+
+PASO 15 - Probar
+  - Abri el Dueno Remoto: tiene que conectar.
+  - En Alertas, los campos del umbral global tienen que
+    mostrar numeros. Si salen vacios, el local quedo con la
+    version vieja (volve al paso 7).
+
+
+===========================================================
+ LOS PENDRIVES DE EMERGENCIA (en tu laptop, de a uno)
+===========================================================
+
+PASO 16 - Reemplazar solo el programa
+  Esto no toca la base del pendrive, su config.ini ni sus
+  exportaciones. NUNCA uses /MIR contra la raiz del pendrive:
+  borraria todo lo que no viene en dist\.
+  Desde la carpeta del repo, en la primera linea pone la
+  letra del pendrive de la Caja y pega el bloque entero:
+
+    $u = "F:"; $app = "USB_Caja"
+    if (Test-Path "$u\$app.exe") {
+        robocopy "dist\$app\_internal" "$u\_internal" /MIR /MT:16 /NFL /NDL /NJH /NP | Out-Null; $a = $LASTEXITCODE
+        robocopy "dist\$app" "$u\" "$app.exe" /NFL /NDL /NJH /NP | Out-Null; $b = $LASTEXITCODE
+        if ($a -ge 8 -or $b -ge 8) { Write-Host "FALLO ($a, $b)" -ForegroundColor Red } else { Write-Host "OK: $app actualizado" -ForegroundColor Green }
+    } else { Write-Host "En $u no esta $app.exe: ese no es el pendrive de $app" -ForegroundColor Red }
+
+  Despues repeti con el pendrive del Dueno, cambiando la
+  primera linea a:   $u = "<letra>"; $app = "USB_Dueno"
+
+
+PASO 17 - Abrir cada pendrive una vez y cargarle la lista
+  Al abrirse, cada uno pone su base al dia solo.
+  - USB_Caja.exe -> "Cargar productos (Excel)" ->
+    lista_pendrives.xlsx.
+  - USB_Dueno.exe -> pestana Carga Excel ->
+    "Subir Excel/CSV..." -> el mismo archivo.
