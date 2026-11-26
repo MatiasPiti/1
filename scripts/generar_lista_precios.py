@@ -285,7 +285,7 @@ def escribir_importacion(filas: list, destino: str) -> None:
     escaneable es un producto propio (asi entro el catalogo: 4587 filas), y una
     fila por producto viejo dejaria sin actualizar los ~2000 codigos restantes.
 
-    Tres columnas que la carga masiva de siempre ignora y que usa
+    Seis columnas que la carga masiva de siempre ignora y que usa
     pos_core.actualizacion_precios:
       - Rubro: el rubro del sistema viejo, para la columna del producto y para
         los 16 grupos por rubro.
@@ -294,24 +294,34 @@ def escribir_importacion(filas: list, destino: str) -> None:
       - Codigo interno: el del sistema viejo. Es lo UNICO estable del grupo: el
         nombre puede llevar el precio (los 8 repetidos) y el precio cambia, asi
         que sin esto cada importacion crearia un filtro nuevo al lado del viejo.
+      - Costo S/IVA, Precio Costo y % Ganancia: los de MAS_STO (COS_SIV, COS_STO,
+        POR_STO), para que la pantalla de Precios abra con el costo cargado.
+        Leo los veia vacios. En los .DBF de septiembre los tres son coherentes
+        con el precio y todos con IVA 21 %, el mismo de Otter. Un costo en 0 va
+        VACIO: en Otter 0 es "nunca se cargo", y asi no pisa uno que haya.
     """
     grupos = nombre_de_grupo(filas)
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Productos"
     ws.append(["Código", "Nombre", "Precio Venta", "Stock Inicial", "Proveedor",
-                "Rubro", "Grupo", "Codigo interno"])
+                "Rubro", "Grupo", "Codigo interno", "Costo S/IVA", "Precio Costo", "% Ganancia"])
     for celda in ws[1]:
         celda.font = _ENCABEZADO
         celda.fill = _FONDO
-    for i, ancho in enumerate([22, 44, 14, 14, 18, 18, 44, 16], start=1):
+    for i, ancho in enumerate([22, 44, 14, 14, 18, 18, 44, 16, 14, 14, 12], start=1):
         ws.column_dimensions[get_column_letter(i)].width = ancho
     ws.freeze_panes = "A2"
     for f in sorted(filas, key=lambda x: x["nombre"]):
         grupo = grupos.get(f["interno"], "")
+        # Sin costo no hay ganancia que mostrar: los tres van juntos o ninguno.
+        if f["precio_costo"] > 0:
+            costos = [f["costo_siva"] or None, f["precio_costo"], f["ganancia"]]
+        else:
+            costos = [None, None, None]
         for codigo in codigos_para_otter(f):
             ws.append([codigo, f["nombre"], f["precio_venta"], 0, "",
-                        f["rubro"], grupo, f["interno"]])
+                        f["rubro"], grupo, f["interno"], *costos])
     wb.save(destino)
 
 

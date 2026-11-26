@@ -225,6 +225,19 @@ Excel regenerado de los `.DBF` de ese día: 2622 productos viejos → 4833 filas
   lo ya aplicado no cambia; pasos 1 a 10 de `scripts/desplegar_auditoria_PASOS.txt`). Un grupo que
   armó Leo a mano (AQUARIUS 1,5L.…) no los suma: es suyo.
 - 31 productos de Otter no vienen en el Excel y quedaron intactos.
+- **Los COSTOS también vienen del sistema viejo (26/11/2026)**: Leo abría un producto en Precios y
+  el Costo S/IVA, el Precio Costo y el % Ganancia estaban vacíos. El generador ahora escribe
+  `Costo S/IVA`, `Precio Costo` y `% Ganancia` (de `COS_SIV`, `COS_STO`, `POR_STO`), y la
+  reimportación los **pisa como al precio** (Leo los cambia allá, y el precio del Excel sale de esos
+  costos). Un costo vacío o en 0 en el viejo no borra el de Otter, y un Excel sin esas columnas no
+  toca costos. Con los `.DBF` de septiembre: 2414 de 2500 productos tienen costo, los tres números
+  son coherentes con el precio y **todos llevan IVA 21 %**, el mismo de Otter
+  (`IVA_POR_DEFECTO`); si aparece otro IVA, la cadena del Panel lo recalcularía con 21. Dio 4398
+  costos cargados y 0 errores. Ojo con la pantalla: **un campo solo recalcula si se cambió**
+  (`_texto_precio_visto`). Con los costos cargados, pasar por un campo con Enter/Tab sin tocarlo
+  recalculaba la cadena y el precio quedaba con centavos que nadie puso ($4601 → $4600,73, en 2380
+  de 2414 productos): el viejo guarda el precio redondo. **No se miró si la app del celular hace
+  lo mismo.** Lo cuida `tests/test_costos_lista.py`.
 - **Leo sigue cambiando los precios en el SISTEMA VIEJO**, no en Otter (confirmado por Matías). Si
   eso cambia, esta reimportación pisaría lo que cambie en Otter: preguntarlo antes de repetirla.
 - Generar el Excel necesita `pip install dbfread` aparte (no está en `requirements.txt`).

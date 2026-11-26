@@ -109,7 +109,9 @@ PASO 5 - Hablar con Leo
     directamente en Otter (en el Panel, la laptop o el
     celular). Si cambio alguno, no hagas el paso 10 sin
     resolverlo antes: la reimportacion se lo pisaria con el
-    precio del sistema viejo.
+    precio del sistema viejo. Lo mismo con los costos: desde
+    esta version tambien se traen el Costo S/IVA, el Precio
+    Costo y el % Ganancia, y pisan los de Otter.
   - Pedile uno de los codigos que le daban "no registrado", y
     la botella de COLON SELECTO DULCE FRESCO: los vas a usar
     en el paso 12.
@@ -168,12 +170,22 @@ PASO 9 - Ensayo (no escribe nada)
     DON YEYO LACTAL y PUGLISI CABALLA.
   - En "Cambian de precio": solo lo que Leo cambio en el
     sistema viejo desde la ultima importacion.
+  - "Productos a los que se les cargan los costos": esta vez
+    unos 4400 (con los .DBF de septiembre dio 4398), porque
+    en Otter estan todos vacios. En una reimportacion
+    siguiente, solo los que cambiaron. SI DICE 0 o NO APARECE,
+    frena: el Excel es del generador viejo (repeti el paso 8
+    con el repo al dia) o el Panel es el viejo.
 
 
 PASO 10 - Aplicar
   Apreta "2. Actualizar los precios..." y confirma. El
   resultado queda en Escritorio\otter_actualizacion_precios.txt.
   Es idempotente: lo que ya estaba aplicado no cambia.
+  Para verificar los costos: pestana Stock -> "Actualizacion
+  de precios", escanea un SAPHIRUS TEXTIL 250ML.: tienen que
+  aparecer Costo S/IVA, Precio Costo y % Ganancia llenos, y el
+  precio final igual al del sistema viejo.
 
 
 PASO 11 - Corregir a mano los 12 codigos compartidos

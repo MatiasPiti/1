@@ -482,7 +482,9 @@ class AppDueno(tk.Tk):
             # cada tecla: ver números cambiar solos mientras se escribe es
             # exactamente lo que hace que una pantalla se sienta rota.
             entrada.bind("<FocusOut>", lambda e, c=clave: self._recalcular_precios(c))
+            entrada.bind("<FocusIn>", lambda e, c=clave: self._anotar_texto_precio(c))
             self.entradas_precio[clave] = entrada
+        self._texto_precio_visto = {}
 
         ttk.Label(datos, text="(opcional — con el precio final alcanza)", style="Muted.TLabel"
                   ).grid(row=2, column=2, columnspan=2, sticky="w", padx=4)
@@ -636,6 +638,7 @@ class AppDueno(tk.Tk):
             # parece un dato real.
             if valor not in (None, "") and float(valor) != 0:
                 entrada.insert(0, self._texto_precio(valor))
+            self._texto_precio_visto[clave] = entrada.get().strip()
 
         self.lbl_precio_anterior.config(
             text=f"Precio actual: ${float(producto.get('precio_venta') or 0):.2f}")
@@ -648,9 +651,22 @@ class AppDueno(tk.Tk):
         self.entradas_precio["precio_final"].focus_set()
         self.entradas_precio["precio_final"].selection_range(0, "end")
 
+    def _anotar_texto_precio(self, clave: str):
+        self._texto_precio_visto[clave] = self.entradas_precio[clave].get().strip()
+
     def _recalcular_precios(self, campo_cambiado: str):
-        """Completa los otros tres números a partir del que se acaba de tocar."""
+        """Completa los otros tres números a partir del que se acaba de tocar.
+
+        Solo si el campo CAMBIÓ desde que se entró en él. Con los costos del
+        sistema viejo cargados, pasar por un campo sin tocarlo (con Enter o
+        Tab) recalculaba la cadena entera y el precio final quedaba con
+        centavos que nadie puso ($4601 pasaba a $4600.73): el sistema viejo
+        guarda el precio redondo, no la cuenta exacta.
+        """
         if self._producto_en_precios is None:
+            return
+        entrada = self.entradas_precio[campo_cambiado]
+        if entrada.get().strip() == self._texto_precio_visto.get(campo_cambiado):
             return
         actuales = {c: e.get() for c, e in self.entradas_precio.items()}
         try:
@@ -671,6 +687,9 @@ class AppDueno(tk.Tk):
                 entrada.delete(0, "end")
                 if texto:
                     entrada.insert(0, texto)
+        # Lo que quedó es lo "visto": volver a salir del campo no recalcula de nuevo.
+        for clave, e in self.entradas_precio.items():
+            self._texto_precio_visto[clave] = e.get().strip()
 
     def _guardar_precios(self):
         if self._producto_en_precios is None:

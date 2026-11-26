@@ -63,6 +63,28 @@ def _clave_nombre(nombre: str) -> str:
 _ALIAS_RUBRO = {"rubro", "categoria", "categoría", "familia"}
 _ALIAS_GRUPO = {"grupo"}
 _ALIAS_COD_VIEJO = {"codigo interno", "código interno", "cod interno", "codigo viejo"}
+# Los costos del sistema viejo (26/11/2026): sin ellos la pantalla de Precios
+# abría con el costo y la ganancia vacíos, y Leo no tenía de dónde partir.
+_ALIAS_COSTOS = {
+    "costo_sin_iva": {"costo s/iva", "costo sin iva", "costo_sin_iva"},
+    "precio_compra": {"precio costo", "precio_costo", "precio compra"},
+    "margen_ganancia": {"% ganancia", "ganancia", "margen"},
+}
+CAMPOS_COSTO = tuple(_ALIAS_COSTOS)
+
+
+def _numero_o_none(valor):
+    """Una celda de costo: None si está vacía, en 0 o no es un número. En Otter
+    un 0 es "nunca se cargó", así que un 0 del Excel no puede borrar un costo."""
+    if valor is None or str(valor).strip() == "":
+        return None
+    from pos_core.precios import leer_numero
+    numero = valor if isinstance(valor, (int, float)) and not isinstance(valor, bool) else leer_numero(valor)
+    try:
+        numero = round(float(numero), 2)
+    except (TypeError, ValueError):
+        return None
+    return numero if numero > 0 else None
 
 
 def _columna(encabezados: list, alias: set):
@@ -86,6 +108,7 @@ def _leer_excel(ruta: str) -> list:
     col_rubro = _columna(encabezados, _ALIAS_RUBRO)
     col_grupo = _columna(encabezados, _ALIAS_GRUPO)
     col_cod_viejo = _columna(encabezados, _ALIAS_COD_VIEJO)
+    col_costos = {campo: _columna(encabezados, alias) for campo, alias in _ALIAS_COSTOS.items()}
 
     leidas, errores = [], []
     for n, fila in enumerate(datos, start=2):
@@ -102,16 +125,36 @@ def _leer_excel(ruta: str) -> list:
             # El código interno también puede llegar como número (1410.0).
             cod_viejo = (texto_de_codigo(fila[col_cod_viejo] or "")
                          if col_cod_viejo is not None and col_cod_viejo < len(fila) else "")
+            costos = {campo: (_numero_o_none(fila[idx]) if idx is not None and idx < len(fila) else None)
+                      for campo, idx in col_costos.items()}
+            # Los tres van juntos: sin precio de costo no hay ganancia que
+            # valga, y cargar solo una parte deja la cadena a medias.
+            if costos["precio_compra"] is None:
+                costos = None
             if not codigo or not nombre:
                 raise ValueError("código o nombre vacío")
             if precio < 0:
                 raise ValueError(f"precio de venta negativo ({precio})")
             leidas.append({"fila": n, "codigo": codigo, "nombre": nombre,
                             "precio": precio, "rubro": rubro,
-                            "grupo": grupo, "cod_viejo": cod_viejo})
+                            "grupo": grupo, "cod_viejo": cod_viejo, "costos": costos})
         except Exception as e:
             errores.append({"fila": n, "error": str(e)})
     return leidas, errores, col_rubro is not None, col_grupo is not None
+
+
+def _costos_que_cambian(actual: dict, costos):
+    """Los costos del Excel si son distintos de los guardados, o None.
+
+    Pisan a los de Otter como el precio, porque Leo los sigue cambiando en el
+    sistema viejo (y el precio del Excel es el que sale de ESOS costos: dejar
+    los de Otter al lado de un precio nuevo armaría una ganancia que no es).
+    Si el Excel no trae costo, el de Otter queda como está."""
+    if not costos:
+        return None
+    if all(abs(float(actual.get(c) or 0) - float(costos[c] or 0)) < 0.005 for c in CAMPOS_COSTO):
+        return None
+    return costos
 
 
 def planificar(ruta: str) -> dict:
@@ -119,7 +162,8 @@ def planificar(ruta: str) -> dict:
     leidas, errores, trae_rubros, trae_grupos = _leer_excel(ruta)
     conn = get_connection()
     productos = [dict(r) for r in conn.execute(
-        "SELECT codigo, nombre, precio_venta, activo, categoria FROM Productos").fetchall()]
+        "SELECT codigo, nombre, precio_venta, activo, categoria, costo_sin_iva, precio_compra, "
+        "margen_ganancia FROM Productos").fetchall()]
 
     por_codigo = {p["codigo"]: p for p in productos}
     por_nombre = {}
@@ -188,7 +232,8 @@ def planificar(ruta: str) -> dict:
                     # Solo se llena la columna Rubro si está vacía: si el dueño
                     # le puso una a mano en la pantalla de Precios, manda la suya
                     # (mismo criterio que con el nombre y el proveedor).
-                    "pone_categoria": bool(item.get("rubro")) and not (actual.get("categoria") or "").strip()}
+                    "pone_categoria": bool(item.get("rubro")) and not (actual.get("categoria") or "").strip(),
+                    "costos": _costos_que_cambian(actual, item.get("costos"))}
         if abs(actual["precio_venta"] - item["precio"]) < 0.005:
             sin_cambios.append(destino)
         else:
@@ -261,7 +306,8 @@ def planificar(ruta: str) -> dict:
                              "grupo": item.get("grupo", ""),
                              "cod_viejo": item.get("cod_viejo", ""),
                              "pone_categoria": bool(item.get("rubro"))
-                                               and not (actual.get("categoria") or "").strip()})
+                                               and not (actual.get("categoria") or "").strip(),
+                             "costos": _costos_que_cambian(actual, item.get("costos"))})
 
     no_vienen = [{"codigo": p["codigo"], "nombre": p["nombre"]}
                   for p in productos if p["activo"] and p["codigo"] not in reclamados]
@@ -272,6 +318,8 @@ def planificar(ruta: str) -> dict:
         "no_vienen": no_vienen, "total_filas": len(leidas) + len(errores),
         "filtros": _impacto_en_filtros(recodifican, ambiguos),
         "trae_rubros": trae_rubros,
+        "costos": sum(1 for i in actualizan + sin_cambios + recodifican if i.get("costos"))
+                  + sum(1 for i in nuevos if i.get("costos")),
     }
     plan["trae_grupos"] = trae_grupos
     plan["grupos"] = _planificar_grupos(plan, trae_rubros, trae_grupos)
@@ -485,7 +533,7 @@ def aplicar(ruta: str, *, usuario: str, origen: str = "MAESTRO") -> dict:
     filtros_cache = {f["nombre"]: f["definicion"] for f in filters.listar_filtros_guardados()
                       if f["definicion"].get("tipo") == "manual"}
 
-    hecho = {"precios": 0, "recodificados": 0, "creados": 0, "rubros": 0,
+    hecho = {"precios": 0, "recodificados": 0, "creados": 0, "rubros": 0, "costos": 0,
               "grupos_creados": [], "grupos_actualizados": [], "grupos_respetados": [],
               "grupos_renombrados": [],
               "ofertas": 0, "umbrales": 0, "filtros": set(), "errores": list(plan["errores"])}
@@ -494,7 +542,8 @@ def aplicar(ruta: str, *, usuario: str, origen: str = "MAESTRO") -> dict:
     # falle no puede tirar abajo las 4586 que estaban bien (regla 6).
     # Los "sin cambios" también pasan por acá cuando hay que ponerles el
     # rubro: el precio ya está bien, pero la columna Rubro puede estar vacía.
-    for item in plan["actualizan"] + [i for i in plan["sin_cambios"] if i.get("pone_categoria")]:
+    for item in plan["actualizan"] + [i for i in plan["sin_cambios"]
+                                       if i.get("pone_categoria") or i.get("costos")]:
         cambia_precio = abs(item["precio_viejo"] - item["precio_nuevo"]) >= 0.005
         try:
             with transaction() as conn:
@@ -509,6 +558,9 @@ def aplicar(ruta: str, *, usuario: str, origen: str = "MAESTRO") -> dict:
                         "UPDATE Productos SET categoria = ? WHERE codigo = ?",
                         (item["rubro"], item["codigo"]))
                     hecho["rubros"] += 1
+                if item.get("costos"):
+                    _escribir_costos(conn, item["codigo"], item["costos"])
+                    hecho["costos"] += 1
         except Exception as e:
             hecho["errores"].append({"fila": item["fila"], "error": str(e)})
 
@@ -523,6 +575,9 @@ def aplicar(ruta: str, *, usuario: str, origen: str = "MAESTRO") -> dict:
                     conn.execute("UPDATE Productos SET categoria = ? WHERE codigo = ?",
                                   (item["rubro"], item["codigo_nuevo"]))
                     hecho["rubros"] += 1
+                if item.get("costos"):
+                    _escribir_costos(conn, item["codigo_nuevo"], item["costos"])
+                    hecho["costos"] += 1
                 tocado = _migrar_referencias(conn, item["codigo_viejo"], item["codigo_nuevo"],
                                               filtros_cache)
             hecho["recodificados"] += 1
@@ -542,6 +597,8 @@ def aplicar(ruta: str, *, usuario: str, origen: str = "MAESTRO") -> dict:
                        VALUES (?,?,?,?,0,?,?,?)""",
                     (str(uuid.uuid4()), item["codigo"], item["nombre"], item["precio"],
                      item.get("rubro") or None, origen, sincronizado))
+                if item.get("costos"):
+                    _escribir_costos(conn, item["codigo"], item["costos"])
                 conn.execute(
                     """INSERT INTO Movimientos_Stock
                        (uuid_unico, producto_codigo, tipo, cantidad, stock_resultante,
@@ -555,6 +612,8 @@ def aplicar(ruta: str, *, usuario: str, origen: str = "MAESTRO") -> dict:
             # 2500 en el INSERT, y un informe que miente no sirve.
             if item.get("rubro"):
                 hecho["rubros"] += 1
+            if item.get("costos"):
+                hecho["costos"] += 1
         except Exception as e:
             hecho["errores"].append({"fila": item["fila"], "error": str(e)})
 
@@ -567,6 +626,17 @@ def aplicar(ruta: str, *, usuario: str, origen: str = "MAESTRO") -> dict:
     hecho["plan"] = plan
     hecho["informe"] = informe_texto(plan, ruta=os.path.basename(ruta), aplicado=hecho)
     return hecho
+
+
+def _escribir_costos(conn, codigo: str, costos: dict) -> None:
+    """Costo S/IVA, Precio Costo y % Ganancia. Un None deja el que había (el
+    margen en 0 del sistema viejo, por ejemplo, no borra nada)."""
+    conn.execute(
+        """UPDATE Productos SET costo_sin_iva = COALESCE(?, costo_sin_iva),
+           precio_compra = COALESCE(?, precio_compra),
+           margen_ganancia = COALESCE(?, margen_ganancia), version = version + 1
+           WHERE codigo = ?""",
+        (costos["costo_sin_iva"], costos["precio_compra"], costos["margen_ganancia"], codigo))
 
 
 def _escribir_grupos(plan: dict, hecho: dict) -> None:
@@ -648,6 +718,8 @@ def informe_texto(plan: dict, *, ruta: str = "", aplicado: dict = None) -> str:
               if agregados else "")]
     L += [f"SIN RESOLVER (mirar abajo):   {len(plan['ambiguos'])}"]
     L += [f"Filas con error en el Excel:  {len(plan['errores'])}", ""]
+    L += [f"Productos a los que se les cargan los costos (Costo S/IVA, Precio Costo, % Ganancia): "
+           f"{plan.get('costos', 0)}", ""]
 
     if plan["recodifican"]:
         L += ["--- Cambian de código de barras ---",
@@ -737,6 +809,7 @@ def informe_texto(plan: dict, *, ruta: str = "", aplicado: dict = None) -> str:
                f"Umbrales arrastrados:   {aplicado['umbrales']}",
                f"Filtros actualizados:   {', '.join(aplicado['filtros']) or 'ninguno'}",
                f"Rubros cargados:        {aplicado['rubros']}",
+               f"Costos cargados:        {aplicado.get('costos', 0)}",
                f"Grupos creados:         {len(aplicado['grupos_creados'])}",
                f"Grupos actualizados:    {len(aplicado['grupos_actualizados'])}",
                f"Grupos renombrados:     {len(aplicado['grupos_renombrados'])}",
