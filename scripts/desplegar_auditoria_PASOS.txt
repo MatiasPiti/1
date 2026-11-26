@@ -55,7 +55,7 @@ PASO 1 - Traer el codigo y correr las pruebas
   again? (y/n)", contesta n todas las veces: el codigo ya
   bajo (lo dice la linea "Fast-forward").
 
-  Tienen que dar 32 en verde. Tarda unos 4 minutos: no uses
+  Tienen que dar 34 en verde. Tarda unos 4 minutos: no uses
   la PC mientras corre. Si la unica en rojo es
   test_config_atomico.py, segui: es la que ya conocemos (en
   Windows falla con la maquina cargada). Si es cualquier
@@ -254,6 +254,15 @@ PASO 15 - Probar
   - En Alertas, los campos del umbral global tienen que
     mostrar numeros. Si salen vacios, el local quedo con la
     version vieja (volve al paso 7).
+  - Stock -> "Actualizacion de precios": escanea o busca un
+    producto. Tienen que aparecer el Costo S/IVA, el Precio
+    Costo y el % Ganancia. Apreta Enter en cada campo: va
+    bajando hasta GUARDAR CAMBIOS (que se oscurece), y un
+    Enter mas guarda. Si pasaste sin cambiar nada, el precio
+    tiene que quedar igual, sin centavos nuevos.
+  - Mostrale a Leo como se usa: al abrir el producto el
+    cursor ya esta en el Precio Final; para cambiar el costo,
+    clic en Costo y despues Enter, Enter...
 
 
 ===========================================================
