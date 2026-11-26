@@ -89,9 +89,19 @@ if precio_guardado() != (0, 3500):
 enfocar(e["precio_costo"])
 e["precio_costo"].delete(0, "end")
 e["precio_costo"].insert(0, "2.000")
-tecla(e["precio_costo"], "KP_Enter")       # el del teclado numérico
+# El Enter del teclado numérico. En Linux se simula y tiene que pasar de campo.
+# En Windows Tk no deja simularlo (event_generate de KP_Enter no llega a
+# ningún lado: se vio en la laptop de Matías el 26/11/2026), y la tecla de
+# verdad la entrega como Return o como KP_Enter según la versión de Tk: el
+# Panel atiende las dos, así que ahí se comprueba que la de KP_Enter esté.
+tecla(e["precio_costo"], "KP_Enter")
 if foco() is not e["margen"]:
-    fallos.append("el Enter del teclado numérico no pasó al campo siguiente")
+    if sys.platform == "win32" and e["precio_costo"].bind("<KP_Enter>"):
+        print("OK: (Windows) el Enter del teclado numérico está atendido; no se puede simular acá")
+        tecla(e["precio_costo"], "Return")
+    else:
+        fallos.append("el Enter del teclado numérico no pasó al campo siguiente")
+        enfocar(e["margen"])     # que una falla no arrastre a las que siguen
 e["margen"].insert(0, "50")
 tecla(e["margen"], "Return")
 if e["precio_final"].get() != "3000.00":
@@ -99,6 +109,7 @@ if e["precio_final"].get() != "3000.00":
 tecla(e["precio_final"], "Return")
 if foco() is not app.btn_guardar_precio:
     fallos.append("Enter en el Precio Final no llevó a GUARDAR CAMBIOS")
+    enfocar(app.btn_guardar_precio)
 tecla(app.btn_guardar_precio, "Return")
 if precio_guardado() != (2000, 3000):
     fallos.append(f"Enter en GUARDAR CAMBIOS no guardó: en la base quedó {precio_guardado()}")
