@@ -796,6 +796,14 @@ producto. Lleva tres columnas nuevas que la carga masiva de siempre ignora: `Rub
     que el precio se lea sin confundirse con el subtotal, que es lo que se cobra). El subtotal tiene
     que seguir siendo el más grande de la fila y de otro color: la prueba lo controla. Para que no se
     pierda una línea a la vista, el relleno de cada fila bajó de 5 a 4 píxeles.
+- **En Precios, Enter pasa al campo siguiente** (26/11/2026, pedido de Leo para el Dueño Remoto):
+  Nombre → Rubro → Subrubro → los cuatro números → GUARDAR CAMBIOS, y Enter en el botón guarda
+  (`_encadenar_enter_precios` en `apps/master_dueno/main.py`). Vale también el Enter del teclado
+  numérico (`KP_Enter`, que Tk trata como otra tecla). Al pasar se recalcula y el campo siguiente
+  queda seleccionado (tipear reemplaza). Al abrir un producto el foco sigue yendo al Precio Final: con
+  eso, Enter y Enter se guarda. El botón con foco se oscurece y lleva anillo blanco (antes el anillo
+  era del color del botón: invisible). Es dibujo puro: **no depende de la versión del local**, alcanza
+  con actualizar la laptop. Lo cuida `tests/test_precios_con_enter.py`.
 - **Al agregar una línea, el carrito baja solo a mostrarla; la selección NO se mueve.** El
   desplazamiento automático ya existía, pero solo seguía a la línea *seleccionada*, y escanear no
   mueve la selección: con el ticket lleno el cajero escaneaba el producto 30, el total subía y la

@@ -482,7 +482,6 @@ class AppDueno(tk.Tk):
             # cada tecla: ver números cambiar solos mientras se escribe es
             # exactamente lo que hace que una pantalla se sienta rota.
             entrada.bind("<FocusOut>", lambda e, c=clave: self._recalcular_precios(c))
-            entrada.bind("<Return>", lambda e, c=clave: self._recalcular_precios(c))
             self.entradas_precio[clave] = entrada
 
         ttk.Label(datos, text="(opcional — con el precio final alcanza)", style="Muted.TLabel"
@@ -498,12 +497,50 @@ class AppDueno(tk.Tk):
         self.btn_guardar_precio = ttk.Button(botones, text="GUARDAR CAMBIOS",
                                               style="Accent.TButton", command=self._guardar_precios)
         self.btn_guardar_precio.pack(side="left")
-        ttk.Label(botones, text="Escaneá el próximo producto para seguir — no hace falta limpiar.",
+        ttk.Label(botones, text="Enter pasa al campo siguiente; en GUARDAR CAMBIOS, Enter guarda. "
+                                "Después escaneá el próximo, no hace falta limpiar.",
                   style="Muted.TLabel").pack(side="left", padx=12)
+        self._encadenar_enter_precios()
 
         self._producto_en_precios = None
         self._mostrar_candidatos([])
         self._precios_habilitar(False)
+
+    def _encadenar_enter_precios(self):
+        """Enter completa el campo y pasa al siguiente, hasta GUARDAR CAMBIOS.
+
+        Pedido de Leo: cargar Costo, Enter, el próximo número, Enter... sin
+        tocar el mouse, y en el botón un Enter más guarda. Va también el Enter
+        del teclado numérico (KP_Enter), que es donde se tipean los precios y
+        que Tk trata como otra tecla. Un ttk.Button no se aprieta con Enter
+        (solo con la barra), así que se le enseña acá.
+        """
+        orden = [self.precio_nombre, self.precio_rubro, self.precio_subrubro]
+        orden += [self.entradas_precio[c] for c, _ in self.CAMPOS_PRECIO]
+        orden.append(self.btn_guardar_precio)
+        for actual, siguiente in zip(orden, orden[1:]):
+            clave = next((c for c, e in self.entradas_precio.items() if e is actual), None)
+            manejador = (lambda e, c=clave, s=siguiente: self._enter_en_precio(c, s))
+            for tecla in ("<Return>", "<KP_Enter>"):
+                actual.bind(tecla, manejador)
+
+        def _guardar_con_enter(event=None):
+            self.btn_guardar_precio.invoke()   # invoke() no hace nada si está deshabilitado
+            return "break"
+        for tecla in ("<Return>", "<KP_Enter>"):
+            self.btn_guardar_precio.bind(tecla, _guardar_con_enter)
+        self.precio_buscar.bind("<KP_Enter>", self._buscar_para_precios)
+
+    def _enter_en_precio(self, clave, siguiente):
+        # Se recalcula ANTES de moverse, así el campo siguiente ya muestra el
+        # número deducido (el FocusOut lo volvería a hacer, con el mismo
+        # resultado: es la misma cuenta sobre los mismos valores).
+        if clave is not None:
+            self._recalcular_precios(clave)
+        siguiente.focus_set()
+        if isinstance(siguiente, ttk.Entry):   # Combobox también es un Entry
+            siguiente.selection_range(0, "end")   # tipear reemplaza lo que había
+        return "break"
 
     # ---------------- helpers de la sección de precios ---------------- #
     def _precios_habilitar(self, habilitado: bool):

@@ -83,9 +83,14 @@ def aplicar_tema(root: tk.Misc) -> ttk.Style:
                      bordercolor=COLORS["border"], focuscolor=COLORS["accent"], padding=(12, 7))
     style.map("TButton", background=[("active", COLORS["stripe"])])
 
+    # El anillo de foco va en blanco y el fondo se oscurece: el de TButton es
+    # del color del acento, o sea invisible sobre este botón, y en Precios se
+    # llega a GUARDAR CAMBIOS con Enter: hay que VER que está ahí antes del
+    # Enter que guarda.
     style.configure("Accent.TButton", background=COLORS["accent"], foreground="#FFFFFF",
-                     padding=(18, 9), font=(FONT_FAMILY, 10, "bold"))
-    style.map("Accent.TButton", background=[("active", COLORS["accent_dark"])])
+                     focuscolor="#FFFFFF", padding=(18, 9), font=(FONT_FAMILY, 10, "bold"))
+    style.map("Accent.TButton", background=[("active", COLORS["accent_dark"]),
+                                            ("focus", COLORS["accent_dark"])])
 
     style.configure("Danger.TButton", background=COLORS["danger"], foreground="#FFFFFF", padding=(12, 7))
     style.map("Danger.TButton", background=[("active", COLORS["danger_dark"])])
