@@ -81,7 +81,7 @@ for i, (actual, siguiente) in enumerate(zip(orden, orden[1:])):
         fallos.append(f"Enter en {nombres[i]} no pasó a {nombres[i + 1]} (el foco quedó en {foco()})")
         break
 else:
-    print("OK: Enter recorre Nombre → Rubro → Subrubro → los cuatro números → GUARDAR CAMBIOS")
+    print("OK: Enter recorre Nombre -> Rubro -> Subrubro -> los cuatro números -> GUARDAR CAMBIOS")
 if precio_guardado() != (0, 3500):
     fallos.append(f"recorrer los campos con Enter guardó algo antes del botón: {precio_guardado()}")
 
