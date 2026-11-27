@@ -100,8 +100,14 @@ y, si es otra, cambia la letra en cada comando.
 
 
 PASO 4 - Antes de tocar nada, copiar las bases del sistema viejo
+  CERRA PRIMERO EL SISTEMA VIEJO (mmarket). El 27/11/2026 la
+  primera copia salio vieja: el Excel traia 2637 productos y 1
+  solo precio cambiado; cerrando y copiando con /IS (que pisa
+  aunque robocopy crea que es igual) salieron 2646 productos y
+  198 modificados desde el 11/11. Mira la linea de MAS_STO.DBF:
+  si la copia trae algo nuevo, dice "Mas reciente".
 
-    robocopy "C:\mmarket\bases" "D:\bases" /E; if ($LASTEXITCODE -ge 8) { Write-Host "FALLO ($LASTEXITCODE)" -ForegroundColor Red } else { Write-Host "OK" -ForegroundColor Green }
+    robocopy "C:\mmarket\bases" "D:\bases" /E /IS; if ($LASTEXITCODE -ge 8) { Write-Host "FALLO ($LASTEXITCODE)" -ForegroundColor Red } else { Write-Host "OK" -ForegroundColor Green }
 
 
 PASO 5 - Hablar con Leo
@@ -143,6 +149,11 @@ PASO 8 - Generar el Excel
   del repo. Cambia E: por la letra del pendrive en la laptop:
 
     venv\Scripts\pip install dbfread
+
+    venv\Scripts\python -c "from dbfread import DBF; import datetime as d; t=list(DBF(r'E:\bases\MAS_STO.DBF',encoding='latin-1',char_decode_errors='replace')); f=[r['ULT_ACT'] for r in t if r['ULT_ACT']]; print('productos:', len(t)); print('ultima modificacion:', max(f))"
+
+  "ultima modificacion" tiene que ser de estos dias. Si no, la
+  copia del paso 4 es vieja: no generes, repeti el paso 4.
 
     venv\Scripts\python scripts\generar_lista_precios.py E:\bases E:\lista
 
